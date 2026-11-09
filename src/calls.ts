@@ -25,14 +25,20 @@ const ENDED = "ended"
 
 export const urlOf = (e: Entry): string => new URL(e.resolve_endpoint, e.endpoint).href
 
-const post = async (url: string, payload: object): Promise<Response> => {
+type Answer = { ok: boolean; status: number; body: unknown; text: string }
+
+const post = async (url: string, payload: object): Promise<Answer> => {
   const init = {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `${AUTH_SCHEME} ${KEY}` },
     body: JSON.stringify(payload),
     timeout: false,
   }
-  return fetch(url, init)
+  const r = await fetch(url, init)
+  if (!r.ok) {
+    return { ok: false, status: r.status, body: null, text: await r.text() }
+  }
+  return { ok: true, status: r.status, body: (await r.json()) as unknown, text: "" }
 }
 
 const ask = async (shape: string): Promise<Entry[]> => {
@@ -40,8 +46,7 @@ const ask = async (shape: string): Promise<Entry[]> => {
   if (!r.ok) {
     process.exit(1)
   }
-  const a = (await r.json()) as { content: { vessels: Entry[] } }
-  return a.content.vessels
+  return (r.body as { content: { vessels: Entry[] } }).content.vessels
 }
 
 export const loopCall = async (shape: string, pointer: object): Promise<unknown> => {
@@ -50,7 +55,7 @@ export const loopCall = async (shape: string, pointer: object): Promise<unknown>
   if (!r.ok) {
     process.exit(1)
   }
-  return r.json()
+  return r.body
 }
 
 export const writeRow = async (row: object): Promise<Row> =>
@@ -64,7 +69,7 @@ export const lookup = async (shape: string): Promise<Capability> => {
 
 const once = async (
   sel: Row, kind: string, url: string, capRef: string, pointer: object, callId: string,
-): Promise<{ ok: boolean }> => {
+): Promise<{ ok: boolean; row?: Row }> => {
   const refs = [sel.id]
   await writeRow({
     shape: HOP, call_id: callId, phase: STARTED, kind, selection_ref: sel.id,
@@ -74,16 +79,17 @@ const once = async (
     const r = await post(url, { impulse: { pointer } })
     if (!r.ok) {
       await writeRow({
-        shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status, body: await r.text(), input_refs: refs,
+        shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status, body: r.text, input_refs: refs,
       })
       return { ok: false }
     }
-    const output = (await r.json()) as unknown
-    await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output, input_refs: refs })
+    await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: r.body, input_refs: refs })
     return { ok: true }
   } catch (e) {
-    await writeRow({ shape: FAILURE, call_id: callId, selection_ref: sel.id, status: 0, body: String(e), input_refs: refs })
-    return { ok: false }
+    return {
+      ok: false,
+      row: await writeRow({ shape: FAILURE, call_id: callId, selection_ref: sel.id, status: 0, body: String(e), input_refs: refs }),
+    }
   }
 }
 
