@@ -92,7 +92,9 @@ const waitForRunner: Runner = async (c, sel) => {
 
 const runRunner: Runner = async (c, sel) => {
   for (const inner of c.calls) {
-    const res = await once(sel, RUN, { ...inner.pointer, type: inner.shape }, crypto.randomUUID())
+    const callId = crypto.randomUUID()
+    const pointer = { ...inner.pointer, type: inner.shape, input_refs: sel.pool_refs, selection_ref: sel.id, call_id: callId }
+    const res = await once(sel, RUN, pointer, callId)
     if (!res.ok) {
       return
     }

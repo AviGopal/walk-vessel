@@ -174,3 +174,39 @@ describe("cell context", () => {
     for (const c of cells) expect(c.split("|")[1]).toBe("channel,shape_schema,world_changed")
   })
 })
+
+describe("a learned template's calls", () => {
+  const realFetch = globalThis.fetch
+  const sent: Array<Record<string, any>> = []
+
+  afterAll(() => {
+    globalThis.fetch = realFetch
+  })
+
+  test("carry the selection, its pool and their own call id, as a produce does", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      sent.push(pointer)
+      return Response.json(pointer.type === "record_write" ? { ...pointer.row, id: "r", seq: 1 } : { ok: true })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-1", seq: 9, pool_refs: ["w1", "ch1"] }
+    await execute({ id: "run/t1", kind: "run", pointer: {}, t: "", calls: [
+      { shape: "answer", pointer: { via_ref: "ch1" } },
+      { shape: "outcome", pointer: { via_ref: "ch1" } },
+    ] }, sel)
+    const calls = sent.filter((p) => p.type === "answer" || p.type === "outcome")
+    expect(calls.map((p) => p.type)).toEqual(["answer", "outcome"])
+    for (const p of calls) {
+      expect(p.selection_ref).toBe("sel-1")
+      expect(p.input_refs).toEqual(["w1", "ch1"])
+      expect(p.via_ref).toBe("ch1")
+      expect(typeof p.call_id).toBe("string")
+    }
+    expect(calls[0].call_id).not.toBe(calls[1].call_id)
+  })
+})
