@@ -38,6 +38,7 @@ const resolve = async (pointer: object): Promise<Answer> => {
 export const loopCall = async (shape: string, pointer: object): Promise<unknown> => {
   const r = await resolve({ ...pointer, type: shape })
   if (!r.ok) {
+    console.error(`${shape} answered ${r.status}: ${r.text}`)
     process.exit(1)
   }
   return r.body
