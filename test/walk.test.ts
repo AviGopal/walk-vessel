@@ -128,3 +128,49 @@ describe("walk vessel process", () => {
     expect(stderr).not.toContain(NODE_KEY)
   })
 })
+
+describe("cell context", () => {
+  let discovery: Fake
+  let vessel: ReturnType<typeof run>
+  let cells: string[] = []
+
+  beforeAll(async () => {
+    const pool = [
+      { shape: "world_changed", id: "w1", seq: 2, writer: "kid-person", role: "person", what: "x" },
+      { shape: "channel", id: "ch1", seq: 3, writer: "owner", role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 4, writer: "owner", role: "owner", target: "answer", inputs: ["world_changed"] },
+      { shape: "selection", id: "own1", seq: 5, writer: "walk-test", role: "walk" },
+      { shape: "failure", id: "own2", seq: 6, writer: "walk-test", role: "walk" },
+    ]
+    discovery = fake((path, body) => {
+      if (path !== "/resolve") return Response.json(path === "/heartbeat" ? { nextHeartbeatMs: 600000 } : { ok: true })
+      const p = body.pointer
+      if (p.type === "record_wait_exact") return Response.json({ shape: "arm", id: "arm1", seq: 1, arm: "treated", as_of_seq: 99 })
+      if (p.type === "record_read") return Response.json(pool)
+      if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+      if (p.type === "posterior") {
+        if (cells.length === 0) cells = p.cells
+        return Response.json({ at_seq: 6, posts: p.cells.map(() => ({ alpha: 1, beta: 1 })) })
+      }
+      if (p.type === "record_write") return Response.json({ ...p.row, id: `r${Math.random()}`, seq: 7 })
+      return new Promise<Response>(() => {})
+    })
+    const port = freePort()
+    vessel = run("src/index.ts", {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: String(port), DISCOVERY_URL: discovery.url,
+      WALK_ENDPOINT: `http://127.0.0.1:${port}`, METABOB_API_KEY: NODE_KEY,
+    })
+    await healthy(port)
+    for (let i = 0; i < 200 && cells.length === 0; i++) await Bun.sleep(25)
+  })
+
+  afterAll(() => {
+    vessel?.kill()
+    discovery?.stop()
+  })
+
+  test("a cell's context is the shapes of rows the walk did not write itself", () => {
+    expect(cells.length).toBeGreaterThan(0)
+    for (const c of cells) expect(c.split("|")[1]).toBe("channel,shape_schema,world_changed")
+  })
+})

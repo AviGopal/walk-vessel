@@ -12,7 +12,7 @@ export const chain = async (): Promise<void> => {
   while (true) {
     const pool = (await loopCall(RECORD_READ, { episode: VESSEL_ID })) as Row[]
     const cands = await applicable(pool)
-    const context = [...new Set(pool.map((r) => r.shape))].sort()
+    const context = [...new Set(pool.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))].sort()
     const cells = cands.map((c) => [c.id, context.join(",")].join("|"))
     const post = (await loopCall(POSTERIOR, { cells, as_of_seq: asOf })) as { at_seq: number; posts: Post[] }
     const seed = Date.now() >>> 0
