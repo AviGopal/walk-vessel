@@ -22,7 +22,7 @@ export const chain = async (): Promise<void> => {
     const sel = await writeRow({
       shape: SELECTION,
       arm,
-      cands: cands.map((c) => ({ id: c.id, kind: c.kind, capability_ref: c.capability_ref })),
+      cands: cands.map((c) => ({ id: c.id, kind: c.kind })),
       posts: post.posts.map((p) => ({ alpha: p.alpha, beta: p.beta })),
       posts_seq: post.at_seq,
       seed,
