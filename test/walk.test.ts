@@ -72,6 +72,19 @@ describe("candidates", () => {
     expect(JSON.stringify(cands)).not.toContain("http")
   })
 
+  test("a schema written again offers its produce once, under the newest row's rules", async () => {
+    const twice = [
+      ...pool,
+      { shape: "shape_schema", id: "s1-again", seq: 7, target: "answer", inputs: ["world_changed"] },
+    ]
+    expect((await applicable(twice)).map((c) => c.id).filter((id) => id === "produce/answer/ch1")).toEqual(["produce/answer/ch1"])
+    const stricter = [
+      ...pool,
+      { shape: "shape_schema", id: "s1-newer", seq: 8, target: "answer", inputs: ["world_changed", "not_in_pool"] },
+    ]
+    expect((await applicable(stricter)).map((c) => c.id)).not.toContain("produce/answer/ch1")
+  })
+
   test("producers are asked of discovery as vesselCapability, by shape", () => {
     expect(asked.length).toBeGreaterThan(0)
     for (const p of asked) expect(p.type).toBe("vesselCapability")

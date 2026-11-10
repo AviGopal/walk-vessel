@@ -14,7 +14,10 @@ const base = { pointer: {}, calls: [] as Inner[], t: "" }
 
 export const applicable = async (pool: Row[]): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
-  const schemas = pool.filter((r) => SCHEMAS.has(r.shape))
+  // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a schema
+  // written again offers its produce once, under the rules it has now.
+  const newest = new Map(pool.filter((r) => SCHEMAS.has(r.shape)).sort((a, b) => a.seq - b.seq).map((r) => [String(r.target), r]))
+  const schemas = [...newest.values()]
   const channels = pool.filter((r) => CHANNELS.has(r.shape))
   const ready = schemas.filter((s) => (s.inputs as string[]).every((x) => have.has(x)))
 
