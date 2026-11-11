@@ -150,6 +150,18 @@ describe("candidates", () => {
   const o1 = { shape: "outcome", id: "o1", seq: 7, role: "described", input_refs: ["w1", "a1"], evidence_refs: ["a1"] }
   const ids = async (rows: any[]) => (await applicable(rows)).map((c) => c.id)
 
+  test("[MUST-FAIL] a produce refused as not fitting its schema is not asked again over the same rows", async () => {
+    const s = sch("answer", [])
+    const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] }
+    const refused = { shape: "failure", id: "f1", seq: 6, role: "walk", status: 422, selection_ref: "sel1" }
+    expect(await ids([ask, ch, s, sel, refused])).not.toContain("produce/answer/ch1")
+    // a channel that was down is not a refusal: asked again
+    expect(await ids([ask, ch, s, sel, { ...refused, status: 502 }])).toContain("produce/answer/ch1")
+    // a new row to answer from is asked for
+    const ask2 = { ...ask, id: "w2", seq: 7 }
+    expect(await ids([ask, ch, s, sel, refused, ask2])).toContain("produce/answer/ch1")
+  })
+
   test("[MUST-FAIL] a repeat answer or due for the same request waits for the first one's grade", async () => {
     expect(await ids([ask, ch, hop, sch("answer", ["hop"]), a1])).not.toContain("produce/answer/ch1")
     expect(await ids([ask, ch, sch("due", []), d1])).not.toContain("produce/due/ch1")
