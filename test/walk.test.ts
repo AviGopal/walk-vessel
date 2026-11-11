@@ -323,6 +323,23 @@ describe("candidates", () => {
     expect(await waits([gap, chan], true)).toHaveLength(0)
   })
 
+  test("[MUST-FAIL] a schema's variant is another way to make the same shape: each is offered from its own inputs", async () => {
+    const plain = { shape: "shape_schema", id: "s-plain", seq: 3, role: "owner", target: "answer", inputs: ["world_changed"] }
+    const fromGap = { shape: "shape_schema", id: "s-gap", seq: 4, role: "owner", target: "answer", variant: "gap", inputs: ["gap"] }
+    const gapRow = { shape: "gap", id: "g1", seq: 5, role: "detector", gap_id: "x", status: "open" }
+    expect(await ids([ask, ch, plain, fromGap])).toEqual(expect.arrayContaining(["produce/answer/ch1"]))
+    expect(await ids([ask, ch, plain, fromGap])).not.toContain("produce/answer/gap/ch1")
+    const onGap = (await applicable([gapRow, ch, plain, fromGap] as any)).filter((c) => c.kind === "produce")
+    expect(onGap.map((c) => c.id)).toEqual(["produce/answer/gap/ch1"])
+    expect(onGap[0].pointer).toEqual({ type: "answer", shape: "answer", via_ref: "ch1", variant: "gap" })
+  })
+
+  test("an older schema row a newer one of the same variant superseded stays superseded, whatever its inputs (a guard)", async () => {
+    const older = { shape: "shape_schema", id: "s-old", seq: 3, role: "owner", target: "answer", inputs: ["world_changed"] }
+    const newer = { shape: "shape_schema", id: "s-new", seq: 4, role: "owner", target: "answer", inputs: ["world_changed", "nothing_here"] }
+    expect(await ids([ask, ch, older, newer])).not.toContain("produce/answer/ch1")
+  })
+
   test("producers are asked of discovery as vesselCapability, by shape", () => {
     expect(asked.length).toBeGreaterThan(0)
     for (const p of asked) expect(p.type).toBe("vesselCapability")

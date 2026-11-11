@@ -31,8 +31,11 @@ export type Seen = { overdue?: boolean; awaits?: boolean }
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
   // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a schema
-  // written again offers its produce once, under the rules it has now.
-  const newest = new Map(pool.filter((r) => SCHEMAS.has(r.shape)).sort((a, b) => a.seq - b.seq).map((r) => [String(r.target), r]))
+  // written again offers its produce once, under the rules it has now. A row may name a variant: another way the owner
+  // makes the same shape, from other inputs (a request from a detector's gap rather than from a person's ask). Each
+  // variant is superseded only by a newer row of the same variant; a row naming none is the variant "".
+  const variant = (r: Row): string => String(r.variant ?? "")
+  const newest = new Map(pool.filter((r) => SCHEMAS.has(r.shape)).sort((a, b) => a.seq - b.seq).map((r) => [`${String(r.target)}|${variant(r)}`, r]))
   const schemas = [...newest.values()]
   const channels = pool.filter((r) => CHANNELS.has(r.shape))
   const ready = schemas.filter((s) => (s.inputs as string[]).every((x) => have.has(x)))
@@ -98,11 +101,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const produce = await Promise.all(ready.filter((s) => !pending(s) && judgeable(s)).map(async (s) => {
     const target = String(s.target)
     const served = await exists(target)
+    const v = variant(s)
     return channels.filter(() => served).map((ch): Cand => ({
       ...base,
-      id: [PRODUCE, target, ch.id].join("/"),
+      id: [PRODUCE, target, ...(v ? [v] : []), ch.id].join("/"),
       kind: PRODUCE,
-      pointer: { type: target, shape: target, via_ref: ch.id },
+      pointer: { type: target, shape: target, via_ref: ch.id, ...(v ? { variant: v } : {}) },
     }))
   }))
 
