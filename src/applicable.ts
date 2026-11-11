@@ -82,7 +82,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }))
 
   // A request is answered once a call made for it ENDED (a hop the call's selection wrote): it is not offered again.
-  // A call that failed leaves it callable, and the call's cell learns from the failure.
+  // A call that failed leaves it callable. When the vessel called refused it (a 4xx), records counts that as r 0 for the
+  // call's cell (records fold.ts moveFailures), so selection learns; an outage leaves the cell as it was.
   const ended = new Set(pool.filter((r) => r.shape === HOP && r.phase === ENDED && r.kind === CALL).map((r) => String(r.selection_ref)))
   const answered = new Set(pool.filter((r) => r.shape === SELECTION && r.from !== undefined && ended.has(r.id)).map((r) => String(r.from)))
   const latest = new Map<string, Row>()
