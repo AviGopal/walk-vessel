@@ -2,7 +2,7 @@
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
-  PERSON, WALK,
+  DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -120,9 +120,15 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // deadline ahead there is nothing anyone will write to wait for, so waiting is not offered and the walk produces (a
   // due, among others) instead.
   const idle = pool.some((x) => x.shape === ARM)
-  // The request's deadline is its FIRST deadline row, as records reads it: a later one does not move it. Once that has
-  // passed, waiting is not offered; grading the lapse is the move.
-  const first = pool.filter((x) => DUES.has(x.shape)).filter((x) => Number.isFinite(Number(x.at))).sort((a, b) => a.seq - b.seq)[0]
+  // The request's deadline is its FIRST deadline row, read as records reads it (lapsed()): written by the producer
+  // (role described) with a within_ms records turned into at, citing the request. A later one does not move it, and a
+  // due-shaped row anyone else wrote is not a deadline. Once it has passed, waiting is not offered; grading the lapse is
+  // the move.
+  const asks = new Set(pool.filter((x) => x.role === PERSON || x.role === OWNER).map((x) => x.id))
+  const first = pool
+    .filter((x) => DUES.has(x.shape) && x.role === DESCRIBED && typeof x.within_ms === "number" && typeof x.at === "number")
+    .filter((x) => [x.input_refs].flat().some((id) => asks.has(String(id))))
+    .sort((a, b) => a.seq - b.seq)[0]
   const ahead = first !== undefined && Number(first.at) > now ? [Number(first.at)] : []
   const bound = ahead.length > 0 ? { until: ahead[0] } : {}
   const targets = [...new Set(schemas.map((s) => String(s.target)))]

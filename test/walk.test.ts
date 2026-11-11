@@ -119,17 +119,23 @@ describe("candidates", () => {
     const soon = Date.now() + 600_000
     const later = Date.now() + 1_200_000
     const passed = Date.now() - 60_000
-    expect(await waits(pool)).toEqual([])
-    expect(await waits([...pool, { shape: "due", id: "d0", seq: 7, at: passed }])).toEqual([])
+    const asked = [...pool, { shape: "world_changed", id: "w9", seq: 6, role: "person" }]
+    const due = (id: string, seq: number, at: number, extra: Record<string, unknown> = {}) =>
+      ({ shape: "due", id, seq, at, within_ms: 60_000, role: "described", input_refs: ["w9"], ...extra })
+    expect(await waits(asked)).toEqual([])
+    expect(await waits([...asked, due("d0", 7, passed)])).toEqual([])
     // a later deadline ahead does not reopen waiting once the first has passed
-    expect(await waits([...pool, { shape: "due", id: "d0", seq: 7, at: passed }, { shape: "due", id: "d2", seq: 9, at: soon }])).toEqual([])
+    expect(await waits([...asked, due("d0", 7, passed), due("d2", 9, soon)])).toEqual([])
     // nor does a sooner later one shorten it: the first deadline bounds the wait
-    const bounded = await waits([...pool,
-      { shape: "due", id: "d1", seq: 8, at: later },
-      { shape: "due", id: "d2", seq: 9, at: soon },
-    ])
+    const bounded = await waits([...asked, due("d1", 8, later), due("d2", 9, soon)])
     expect(bounded.length).toBeGreaterThan(0)
     for (const c of bounded) expect(c.pointer.until).toBe(later)
+    // a due-shaped row a person wrote, or one without within_ms, is not a deadline, as records does not read it as one
+    for (const odd of [due("p0", 7, passed, { role: "person" }), due("n0", 7, passed, { within_ms: undefined })]) {
+      const w = await waits([...asked, odd, due("d1", 8, later)])
+      expect(w.length).toBeGreaterThan(0)
+      for (const c of w) expect(c.pointer.until).toBe(later)
+    }
     const idle = await waits([...pool, { shape: "arm", id: "arm1", seq: 7, arm: "treated" }])
     expect(idle.length).toBeGreaterThan(0)
     for (const c of idle) expect("until" in c.pointer).toBe(false)
@@ -137,7 +143,9 @@ describe("candidates", () => {
 
   test("[MUST-FAIL] no wait blind to new rows is offered: a deadline ahead bounds a wait-for, which also ends on a new row", async () => {
     const soon = Date.now() + 600_000
-    const kinds = (await applicable([...pool, { shape: "due", id: "d2", seq: 9, at: soon }])).map((c) => c.kind)
+    const asker = { shape: "world_changed", id: "w9", seq: 6, role: "person" }
+    const due = { shape: "due", id: "d2", seq: 9, at: soon, within_ms: 60_000, role: "described", input_refs: ["w9"] }
+    const kinds = (await applicable([...pool, asker, due])).map((c) => c.kind)
     expect(kinds).toContain("wait-for")
     expect(kinds).not.toContain("wait-until")
   })
@@ -506,8 +514,8 @@ describe("choosing among open requests", () => {
     const fresh = { shape: "world_changed", id: "w2308", seq: 10, role: "person", t: "2026-01-01T11:59:30Z" }
     const answer = { shape: "answer", id: "a117", seq: 5, role: "described", input_refs: ["w117"] }
     const self = { shape: "outcome", id: "o117", seq: 6, role: "described", r: 1, input_refs: ["w117", "a117"], evidence_refs: ["a117"] }
-    const soonDue = { shape: "due", id: "d117", seq: 7, role: "described", at: now + 60_000, input_refs: ["w117"] }
-    const laterDue = { shape: "due", id: "d2308", seq: 11, role: "described", at: now + 600_000, input_refs: ["w2308"] }
+    const soonDue = { shape: "due", id: "d117", seq: 7, role: "described", within_ms: 60_000, at: now + 60_000, input_refs: ["w117"] }
+    const laterDue = { shape: "due", id: "d2308", seq: 11, role: "described", within_ms: 600_000, at: now + 600_000, input_refs: ["w2308"] }
     const got = await choices(shared as any, [
       { root: old as any, rows: [old, answer, self, soonDue] as any },
       { root: fresh as any, rows: [fresh, laterDue] as any },
