@@ -262,6 +262,25 @@ describe("candidates", () => {
     expect(await ids([ask, ch, sch("outcome", ["answer", "due"]), a1, o1, d1])).toContain("produce/outcome/ch1")
   })
 
+  test("[MUST-FAIL] a grade is not offered before there is something to judge: an answer, or a deadline that passed", async () => {
+    // the outcome schema's context as the owner writes it
+    const grade = sch("outcome", ["answer", "due", "hop"])
+    const request = { shape: "request", id: "q9", seq: 5, role: "described", input_refs: ["w1"], pointer: { type: "git_status" } }
+    expect(await ids([ask, ch, grade])).not.toContain("produce/outcome/ch1")
+    // a described row the grade does not read as context (a request) is nothing to judge
+    expect(await ids([ask, ch, grade, request])).not.toContain("produce/outcome/ch1")
+    // nor is the producer's own deadline while it is still ahead, though the grade reads dues
+    const ahead = { ...d1, within_ms: 60_000, at: Date.now() + 600_000 }
+    expect(await ids([ask, ch, grade, ahead])).not.toContain("produce/outcome/ch1")
+    expect(await ids([ask, ch, grade, ahead, a1])).toContain("produce/outcome/ch1")
+    const passed = { ...d1, within_ms: 60_000, at: Date.now() - 60_000 }
+    expect(await ids([ask, ch, grade, passed])).toContain("produce/outcome/ch1")
+  })
+
+  test("a produce of any other shape is offered as before, with nothing to judge (a guard)", async () => {
+    expect(await ids([ask, ch, sch("answer", ["hop"])])).toContain("produce/answer/ch1")
+  })
+
   test("producers are asked of discovery as vesselCapability, by shape", () => {
     expect(asked.length).toBeGreaterThan(0)
     for (const p of asked) expect(p.type).toBe("vesselCapability")

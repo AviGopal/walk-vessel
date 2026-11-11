@@ -76,7 +76,15 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       refusedOver(String(s.target), sees).includes(now)
   }
 
-  const produce = await Promise.all(ready.filter((s) => !pending(s)).map(async (s) => {
+  // A grade judges something: an answer (a described row of a shape the grade reads as context, other than a grade or a
+  // deadline) or a deadline that has passed. A deadline still ahead is nothing to judge yet. Before either exists, a grade
+  // is of the ask alone (records counts none such, and the person sees an ask graded before it was answered), so it is
+  // not offered.
+  const judgeable = (s: Row): boolean => String(s.target) !== OUTCOME ||
+    pool.some((r) => r.role === DESCRIBED && r.shape !== OUTCOME && !DUES.has(r.shape) && [s.context ?? []].flat().map(String).includes(r.shape)) ||
+    pool.some((r) => DUES.has(r.shape) && r.role === DESCRIBED && typeof r.at === "number" && r.at <= now)
+
+  const produce = await Promise.all(ready.filter((s) => !pending(s) && judgeable(s)).map(async (s) => {
     const target = String(s.target)
     const served = await exists(target)
     return channels.filter(() => served).map((ch): Cand => ({
