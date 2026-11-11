@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, HOP, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -24,22 +24,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<
   const channels = pool.filter((r) => CHANNELS.has(r.shape))
   const ready = schemas.filter((s) => (s.inputs as string[]).every((x) => have.has(x)))
 
-  // A produce of T is not offered while the pool holds a T row citing the same input rows (the schema's inputs, not its
-  // context) that no outcome has graded yet: an ungraded duplicate cannot be useful, because the first one's grade has
-  // not come. Whether to produce T again once it is graded is left to selection, not decided here.
-  const byId = new Map(pool.map((r) => [r.id, r]))
-  const graded = new Set(pool.filter((r) => r.shape === OUTCOME).flatMap((r) => [r.input_refs, r.evidence_refs].flat().map(String)))
-  const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
-  const pending = (s: Row): boolean => {
-    const inputs = new Set((s.inputs as string[]).map(String))
-    const cites = key(pool.filter((r) => inputs.has(r.shape)).map((r) => r.id))
-    return pool
-      .filter((r) => r.shape === String(s.target))
-      .filter((r) => !graded.has(r.id))
-      .some((r) => key([r.input_refs].flat().map(String).filter((id) => inputs.has(String(byId.get(id)?.shape)))) === cites)
-  }
-
-  const produce = await Promise.all(ready.filter((s) => !pending(s)).map(async (s) => {
+  const produce = await Promise.all(ready.map(async (s) => {
     const target = String(s.target)
     const served = await exists(target)
     return channels.filter(() => served).map((ch): Cand => ({

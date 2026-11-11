@@ -133,20 +133,6 @@ describe("candidates", () => {
     for (const c of idle) expect("until" in c.pointer).toBe(false)
   })
 
-  test("[MUST-FAIL] a produce is not offered while an ungraded row of its target cites the same inputs", async () => {
-    const ids = async (rows: any[]) => (await applicable(rows)).map((c) => c.id)
-    const schema = { shape: "shape_schema", id: "s-answer", seq: 7, target: "answer", inputs: ["world_changed"] }
-    // the live pattern: an answer already made from the same request, not yet graded
-    const pending = [...pool, schema, { shape: "answer", id: "a1", seq: 8, role: "described", input_refs: ["w1", "h0"] }]
-    expect(await ids(pending)).not.toContain("produce/answer/ch1")
-    // once an outcome cites it, a further produce is selection's choice again
-    expect(await ids([...pending, { shape: "outcome", id: "o1", seq: 9, input_refs: ["w1", "a1"], evidence_refs: ["a1"] }]))
-      .toContain("produce/answer/ch1")
-    // a row of the target made from other input rows does not block
-    expect(await ids([...pool, schema, { shape: "answer", id: "a2", seq: 8, role: "described", input_refs: ["w-other"] }]))
-      .toContain("produce/answer/ch1")
-  })
-
   test("producers are asked of discovery as vesselCapability, by shape", () => {
     expect(asked.length).toBeGreaterThan(0)
     for (const p of asked) expect(p.type).toBe("vesselCapability")
