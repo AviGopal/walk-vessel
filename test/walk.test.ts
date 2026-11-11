@@ -340,6 +340,41 @@ describe("candidates", () => {
     expect(await ids([ask, ch, older, newer])).not.toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a call the owner preconditions is offered only once the root holds what it requires", async () => {
+    const req = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    const cw = (wanted: boolean) => ({ shape: "change_wanted", id: `cw-${wanted}`, seq: 8, role: "described", wanted, input_refs: ["w1"] })
+    const calls = async (rows: any[]) => (await applicable(rows)).map((c) => c.id).filter((id) => id === "call/fileContent")
+    expect(await calls([...pool])).toEqual(["call/fileContent"]) // no precondition: as before
+    expect(await calls([...pool, req])).toEqual([])
+    expect(await calls([...pool, req, cw(false)])).toEqual([])
+    expect(await calls([...pool, req, cw(true)])).toEqual(["call/fileContent"])
+  })
+
+  test("[MUST-FAIL] several preconditions for one call are alternatives: any one met offers it", async () => {
+    const wants = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    const gapOpen = { shape: "requires", id: "rq2", seq: 8, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" } }
+    const gap = (status: string) => ({ shape: "gap", id: `g-${status}`, seq: 9, role: "detector", status })
+    const calls = async (rows: any[]) => (await applicable(rows)).map((c) => c.id).filter((id) => id === "call/fileContent")
+    expect(await calls([...pool, wants, gapOpen, gap("closed")])).toEqual([])
+    expect(await calls([...pool, wants, gapOpen, gap("open")])).toEqual(["call/fileContent"])
+  })
+
+  test("[MUST-FAIL] a template calling a preconditioned shape is not run until the root meets it, and the skip says why", async () => {
+    const req = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    const t = { shape: "activity_template", id: "t-req", seq: 6, role: "described", sig: { in: ["world_changed"], out: ["fileContent"] }, calls: [{ shape: "fileContent", pointer: {} }] }
+    const skipped: Array<{ id: string; unserved: string[] }> = []
+    const ids = (await applicable([...pool, t, req] as any, skipped)).map((c) => c.id)
+    expect(ids).not.toContain("run/t-req")
+    expect(skipped.find((x) => x.id === "t-req")?.unserved).toEqual(["fileContent (requires change_wanted)"])
+    const met = { shape: "change_wanted", id: "cw1", seq: 8, role: "described", wanted: true }
+    expect((await applicable([...pool, t, req, met] as any)).map((c) => c.id)).toContain("run/t-req")
+  })
+
+  test("a precondition row not written by the owner binds nothing (a guard)", async () => {
+    const forged = { shape: "requires", id: "rq9", seq: 7, role: "walk", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    expect((await applicable([...pool, forged] as any)).map((c) => c.id)).toContain("call/fileContent")
+  })
+
   test("producers are asked of discovery as vesselCapability, by shape", () => {
     expect(asked.length).toBeGreaterThan(0)
     for (const p of asked) expect(p.type).toBe("vesselCapability")

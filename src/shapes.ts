@@ -15,6 +15,8 @@ export const OUTCOME = "outcome"
 export const ACTIVITY_TEMPLATE = "activity_template"
 export const CHANNEL = "channel"
 export const SHAPE_SCHEMA = "shape_schema"
+// The owner's precondition on a call (records): {for, needs, where}.
+export const REQUIRES = "requires"
 export const WALK_HEARTBEAT = "walk_heartbeat"
 export const PRODUCE = "produce"
 export const CALL = "call"

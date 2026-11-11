@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
@@ -47,6 +47,16 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // So a new answer or due re-offers an outcome, while a repeat answer or due for the same request waits for a grade.
   // Whether to produce T again once it is graded is left to selection, not decided here.
   const byId = new Map(pool.map((r) => [r.id, r]))
+  // The owner's preconditions on calls: a shape some requires row names is called (on its own or in a template) only when
+  // the root holds a row of the shape one of those rows needs, with every field its where names equal. Several rows for one
+  // shape are alternatives. Which shapes, and what they need, are the owner's rows: the walk names none.
+  const reqs = pool.filter((r) => r.shape === REQUIRES && r.role === OWNER)
+  const meets = (q: Row): boolean => pool.some((x) => x.shape === String(q.needs) &&
+    Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => JSON.stringify(x[k]) === JSON.stringify(v)))
+  const unmet = (shape: string): string[] => {
+    const rs = reqs.filter((q) => String(q.for) === shape)
+    return rs.length === 0 || rs.some(meets) ? [] : [`${shape} (requires ${[...new Set(rs.map((q) => String(q.needs)))].join(" or ")})`]
+  }
   // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
   // came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that ended, it
   // is new information for a schema that reads failures, and it settles the request that made the call: the same pointer
@@ -128,7 +138,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
     const served = await exists(type)
-    return [r].filter(() => served && !answered.has(r.id)).map((): Cand => ({
+    return [r].filter(() => served && !answered.has(r.id) && unmet(type).length === 0).map((): Cand => ({
       ...base,
       id: [CALL, type].join("/"),
       kind: CALL,
@@ -150,7 +160,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const served = await Promise.all(shapes.map(exists))
     const channelless = [...new Set(calls.filter((c) => produced.has(c.shape) && !(c.pointer as { via_ref?: unknown } | undefined)?.via_ref)
       .map((c) => `${c.shape} (no channel)`))]
-    return [...shapes.filter((_, i) => !served[i]), ...channelless]
+    return [...shapes.filter((_, i) => !served[i]), ...channelless, ...shapes.flatMap(unmet)]
   }))
   templates.forEach((r, i) => { if (unserved[i].length > 0) skipped.push({ id: r.id, unserved: unserved[i] }) })
   const run = templates
