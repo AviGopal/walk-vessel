@@ -59,6 +59,8 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
   const refs = [sel.id]
   await writeRow({
     shape: HOP, call_id: callId, phase: STARTED, kind, selection_ref: sel.id, pointer_type: String(pointer.type), input_refs: refs,
+    // A wait's bound, when it has one, so how long the walk agreed to wait is in the row, not only in the request.
+    ...(pointer.until !== undefined ? { until: pointer.until } : {}),
   })
   try {
     const r = await resolve(pointer)

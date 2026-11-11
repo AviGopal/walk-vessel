@@ -275,6 +275,31 @@ describe("a template the walk will not run", () => {
   })
 })
 
+describe("a wait-for's row", () => {
+  const realFetch = globalThis.fetch
+  afterAll(() => { globalThis.fetch = realFetch })
+
+  test("[MUST-FAIL] records the until it waited by, and nothing when the wait has none", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    const written: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      if (pointer.type === "record_write") { written.push(pointer.row); return Response.json({ ...pointer.row, id: "r", seq: 1 }) }
+      return Response.json(null)
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-4", seq: 12, posts_seq: 3 } as any
+    await execute({ id: "wait-for", kind: "wait-for", pointer: { shapes: [], until: 1_900_000_000_000 }, calls: [], t: "" }, sel)
+    expect(written.find((r) => r.shape === "hop" && r.phase === "started")?.until).toBe(1_900_000_000_000)
+    written.length = 0
+    await execute({ id: "wait-for", kind: "wait-for", pointer: { shapes: [] }, calls: [], t: "" }, sel)
+    expect("until" in (written.find((r) => r.shape === "hop" && r.phase === "started") ?? {})).toBe(false)
+  })
+})
+
 describe("a learned template's calls", () => {
   const realFetch = globalThis.fetch
   const sent: Array<Record<string, any>> = []
