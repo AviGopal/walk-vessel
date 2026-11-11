@@ -141,6 +141,12 @@ describe("candidates", () => {
     for (const c of idle) expect("until" in c.pointer).toBe(false)
   })
 
+  test("[MUST-FAIL] the only wait is for the next person or owner row; none waits for a shape only the walk's own moves write", async () => {
+    const waits = (await applicable([...pool, { shape: "arm", id: "arm1", seq: 7, arm: "treated" }])).filter((c) => c.kind === "wait-for")
+    expect(waits.map((c) => c.id)).toEqual(["wait-for"])
+    expect(waits[0].pointer.shapes).toEqual([])
+  })
+
   test("[MUST-FAIL] no wait blind to new rows is offered: a deadline ahead bounds a wait-for, which also ends on a new row", async () => {
     const soon = Date.now() + 600_000
     const asker = { shape: "world_changed", id: "w9", seq: 6, role: "person" }

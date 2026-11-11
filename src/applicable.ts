@@ -150,9 +150,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .sort((a, b) => a.seq - b.seq)[0]
   const ahead = first !== undefined && Number(first.at) > now ? [Number(first.at)] : []
   const bound = ahead.length > 0 ? { until: ahead[0] } : {}
-  const targets = [...new Set(schemas.map((s) => String(s.target)))]
+  // One wait: for the next row a person or the owner writes. The walk runs one move at a time, so while it waits none of
+  // its own produces or calls is in flight, and nothing else writes the shapes they make: a wait for one of those (an
+  // answer, a due, a template) could only time out. records answers any wait with the next person or owner row.
   const waitFor = idle || ahead.length > 0
-    ? [...targets.map((x) => [x]), []].map((shapes): Cand => ({
+    ? [[] as string[]].map((shapes): Cand => ({
       ...base,
       id: [WAIT_FOR, ...shapes].join("/"),
       kind: WAIT_FOR,
