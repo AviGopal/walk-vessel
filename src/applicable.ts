@@ -17,6 +17,9 @@ const BOOKKEEPING = new Set([SELECTION, HOP, FAILURE])
 // reasoned from. For a schema that reads hops (a request's context), a new one is new information, so the produce is
 // offered again over it: ask, call, see the result, ask the next step. A started hop, a wait, a produce and a failure
 // carry no result to reason from, and stay bookkeeping.
+// A schema's inputs and context entry is a shape, or {shape, where, ...} naming which rows of it the producer is shown
+// (described-shape reads where). The walk reads only the shape: which hops are information is informs, below.
+const shapeOf = (e: unknown): string => typeof e === "object" && e !== null ? String((e as { shape?: unknown }).shape) : String(e)
 const informs = (r: Row): boolean => r.shape === HOP && r.phase === ENDED && (r.kind === CALL || r.kind === RUN)
 
 const base = { pointer: {}, calls: [] as Inner[], t: "" }
@@ -87,7 +90,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .flatMap((o) => [...refs(o, "input_refs"), ...refs(o, "evidence_refs")].filter((id) => counts(o, id))))
   const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
   const seen = (s: Row) => {
-    const shapes = new Set([s.inputs, s.context ?? []].flat().map(String))
+    const shapes = new Set([s.inputs, s.context ?? []].flat().map(shapeOf))
     return (r: Row | undefined): boolean =>
       r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r))
   }
@@ -121,7 +124,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // is of the ask alone (records counts none such, and the person sees an ask graded before it was answered), so it is
   // not offered.
   const judgeable = (s: Row): boolean => String(s.target) !== OUTCOME ||
-    pool.some((r) => r.role === DESCRIBED && r.shape !== OUTCOME && !DUES.has(r.shape) && [s.context ?? []].flat().map(String).includes(r.shape)) ||
+    pool.some((r) => r.role === DESCRIBED && r.shape !== OUTCOME && !DUES.has(r.shape) && [s.context ?? []].flat().map(shapeOf).includes(r.shape)) ||
     pool.some((r) => DUES.has(r.shape) && r.role === DESCRIBED && typeof r.at === "number" && r.at <= now)
 
   const produce = await Promise.all(ready.filter((s) => !pending(s) && judgeable(s)).map(async (s) => {

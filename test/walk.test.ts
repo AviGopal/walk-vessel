@@ -240,6 +240,15 @@ describe("candidates", () => {
     expect(await ids([ask, ch, s, r1, psel, f("request")])).not.toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a context entry {shape, where} is read by its shape: a new ended call hop is new information, a produce hop is not", async () => {
+    const s = { ...sch("answer", []), context: [{ shape: "hop", where: { phase: "ended", kind: ["call", "run"] } }] }
+    const ended = (id: string, seq: number, kind: string) => ({ shape: "hop", id, seq, role: "walk", phase: "ended", kind, call_id: id, output: {} })
+    const r1 = { shape: "answer", id: "r1", seq: 6, role: "described", input_refs: ["w1", "he1"] }
+    expect(await ids([ask, ch, s, ended("he1", 5, "call"), r1])).not.toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, ended("he1", 5, "call"), r1, ended("he2", 7, "call")])).toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, ended("he1", 5, "call"), r1, ended("hp1", 7, "produce")])).not.toContain("produce/answer/ch1")
+  })
+
   test("[MUST-FAIL] a produce refused as not fitting its schema is not asked again over the same rows", async () => {
     const s = sch("answer", [])
     const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] }
