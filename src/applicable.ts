@@ -43,6 +43,14 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // So a new answer or due re-offers an outcome, while a repeat answer or due for the same request waits for a grade.
   // Whether to produce T again once it is graded is left to selection, not decided here.
   const byId = new Map(pool.map((r) => [r.id, r]))
+  // A call the vessel answered with a refusal (a 200 carrying an error, or a 4xx that blames the request) also carries
+  // what came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that
+  // ended, it is new information for a schema that reads failures, and it settles the request that made the call: the
+  // same pointer would get the same answer. An outage (5xx, no answer), a busy callee (408, 429) or a credential refused
+  // (401, 403) is not the request's fault, and leaves it callable.
+  const spoke = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === undefined && typeof r.status === "number" &&
+    r.status >= 200 && r.status < 500 && ![401, 403, 408, 429].includes(r.status) &&
+    [CALL, RUN].some((k) => String(byId.get(String(r.selection_ref))?.a ?? "").startsWith(`${k}/`))
   // A row counts as graded when an outcome judged it with something the row itself did not carry: a person's verdict, a
   // grade at r 0 (which asks for another try), or a grade whose inputs reach past the row and what the row saw. An r 1
   // made from only the row and its own inputs is the producer agreeing with itself (grade independence is information,
@@ -59,7 +67,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const seen = (s: Row) => {
     const shapes = new Set([s.inputs, s.context ?? []].flat().map(String))
     return (r: Row | undefined): boolean =>
-      r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r))
+      r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r))
   }
   // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
   // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other
@@ -98,10 +106,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     }))
   }))
 
-  // A request is answered once a call made for it ENDED (a hop the call's selection wrote): it is not offered again.
-  // A call that failed leaves it callable. When the vessel called refused it (a 4xx), records counts that as r 0 for the
-  // call's cell (records fold.ts moveFailures), so selection learns; an outage leaves the cell as it was.
+  // A request is answered once a call made for it ENDED (a hop the call's selection wrote), or the vessel called refused
+  // it (spoke, above): it is not offered again. A call that failed otherwise leaves it callable. A refusal by a 4xx also
+  // counts as r 0 for the call's cell (records fold.ts moveFailures), so selection learns; an outage leaves the cell as
+  // it was.
   const ended = new Set(pool.filter((r) => r.shape === HOP && r.phase === ENDED && r.kind === CALL).map((r) => String(r.selection_ref)))
+  for (const f of pool.filter(spoke)) ended.add(String(f.selection_ref))
   const answered = new Set(pool.filter((r) => r.shape === SELECTION && r.from !== undefined && ended.has(r.id)).map((r) => String(r.from)))
   // A request row without a pointer to call is the producer saying no further call is needed (a decline). When the
   // newest request of the root is one, no call is offered for it, older ones included; one written later asks again.

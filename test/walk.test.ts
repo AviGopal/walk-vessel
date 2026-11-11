@@ -212,6 +212,30 @@ describe("candidates", () => {
     ]) expect(await ids([ask, ch, s, a1, quiet])).not.toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a call the vessel refused settles its request; an outage, a busy callee or a refused key leaves it callable", async () => {
+    const refused = (status: number) => [...pool,
+      { shape: "selection", id: "sel-1", seq: 7, role: "walk", a: "call/fileContent", from: "q1" },
+      { shape: "failure", id: "f1", seq: 8, role: "walk", selection_ref: "sel-1", status, body: "old_string not found. The closest real text is ..." },
+    ]
+    for (const status of [200, 422, 400]) expect(`${status}: ${(await applicable(refused(status))).map((c) => c.id).includes("call/fileContent")}`).toBe(`${status}: false`)
+    for (const status of [502, 0, 429, 408, 401, 403]) expect(`${status}: ${(await applicable(refused(status))).map((c) => c.id).includes("call/fileContent")}`).toBe(`${status}: true`)
+  })
+
+  test("[MUST-FAIL] a call the vessel refused is new information: a schema reading failures is offered again over it", async () => {
+    // the producer's earlier row over the same rows (an answer here; the fake discovery serves it) makes it pending
+    const s = sch("answer", ["hop", "failure"])
+    const r1 = { shape: "answer", id: "r1", seq: 5, role: "described", input_refs: ["w1"] }
+    const sel = { shape: "selection", id: "sel-1", seq: 6, role: "walk", a: "call/fs_edit", from: "q9" }
+    const f = (status: number) => ({ shape: "failure", id: "f1", seq: 7, role: "walk", selection_ref: "sel-1", status, body: "old_string not found" })
+    expect(await ids([ask, ch, s, r1, sel])).not.toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, r1, sel, f(200)])).toContain("produce/answer/ch1")
+    // an outage brings no new fact: the same request is simply called again
+    expect(await ids([ask, ch, s, r1, sel, f(503)])).not.toContain("produce/answer/ch1")
+    // a produce's own refusal is not a call's answer, and stays as it was
+    const psel = { ...sel, a: "produce/answer/ch1" }
+    expect(await ids([ask, ch, s, r1, psel, f(422)])).not.toContain("produce/answer/ch1")
+  })
+
   test("[MUST-FAIL] a produce refused as not fitting its schema is not asked again over the same rows", async () => {
     const s = sch("answer", [])
     const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] }
