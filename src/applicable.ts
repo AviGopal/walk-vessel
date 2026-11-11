@@ -48,11 +48,20 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // Whether to produce T again once it is graded is left to selection, not decided here.
   const byId = new Map(pool.map((r) => [r.id, r]))
   // The owner's preconditions on calls: a shape some requires row names is called (on its own or in a template) only when
-  // the root holds a row of the shape one of those rows needs, with every field its where names equal. Several rows for one
-  // shape are alternatives. Which shapes, and what they need, are the owner's rows: the walk names none.
+  // the root's latest row of the shape one of those rows needs has every field its where names equal. Several rows for
+  // one shape are alternatives. Which shapes, and what they need, are the owner's rows: the walk names none.
   const reqs = pool.filter((r) => r.shape === REQUIRES && r.role === OWNER)
-  const meets = (q: Row): boolean => pool.some((x) => x.shape === String(q.needs) &&
-    Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => JSON.stringify(x[k]) === JSON.stringify(v)))
+  // A requirement is met by the root's LATEST row of the shape it needs, so a later judgment revokes an earlier one. When
+  // rows of that shape each speak for something different (one gap or another), the requires row names the field that
+  // tells them apart (latest_by), and the latest row of each counts: any one meeting where meets it. The field is the
+  // owner's to name; the walk knows none.
+  const meets = (q: Row): boolean => {
+    const by = typeof q.latest_by === "string" ? q.latest_by : undefined
+    const latest = new Map<string, Row>()
+    for (const x of pool.filter((r) => r.shape === String(q.needs)).sort((a, b) => a.seq - b.seq)) latest.set(by ? JSON.stringify(x[by]) : "", x)
+    return [...latest.values()].some((x) =>
+      Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => JSON.stringify(x[k]) === JSON.stringify(v)))
+  }
   const unmet = (shape: string): string[] => {
     const rs = reqs.filter((q) => String(q.for) === shape)
     return rs.length === 0 || rs.some(meets) ? [] : [`${shape} (requires ${[...new Set(rs.map((q) => String(q.needs)))].join(" or ")})`]

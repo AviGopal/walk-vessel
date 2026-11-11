@@ -370,6 +370,24 @@ describe("candidates", () => {
     expect((await applicable([...pool, t, req, met] as any)).map((c) => c.id)).toContain("run/t-req")
   })
 
+  test("[MUST-FAIL] a later judgment revokes an earlier one: the root's latest row of the needed shape decides", async () => {
+    const req = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    const cw = (id: string, seq: number, wanted: boolean) => ({ shape: "change_wanted", id, seq, role: "described", wanted })
+    const calls = async (rows: any[]) => (await applicable(rows)).map((c) => c.id).filter((id) => id === "call/fileContent")
+    expect(await calls([...pool, req, cw("cw1", 8, true), cw("cw2", 9, false)])).toEqual([]) // revoked
+    expect(await calls([...pool, req, cw("cw1", 8, false), cw("cw2", 9, true)])).toEqual(["call/fileContent"])
+  })
+
+  test("[MUST-FAIL] rows that speak for different things are judged each by its own latest: another gap's newer row does not hide this one", async () => {
+    const req = { shape: "requires", id: "rq2", seq: 7, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" }, latest_by: "gap_id" }
+    const gap = (id: string, seq: number, gapId: string, status: string) => ({ shape: "gap", id, seq, role: "detector", gap_id: gapId, status })
+    const calls = async (rows: any[]) => (await applicable(rows)).map((c) => c.id).filter((id) => id === "call/fileContent")
+    // an older open gap A and a newer closed gap B: A's latest is open, so the requirement is met
+    expect(await calls([...pool, req, gap("ga", 8, "A", "open"), gap("gb", 9, "B", "closed")])).toEqual(["call/fileContent"])
+    // A's own later row closing it: A's latest is closed, B is closed: unmet
+    expect(await calls([...pool, req, gap("ga", 8, "A", "open"), gap("gb", 9, "B", "closed"), gap("ga2", 10, "A", "closed")])).toEqual([])
+  })
+
   test("a precondition row not written by the owner binds nothing (a guard)", async () => {
     const forged = { shape: "requires", id: "rq9", seq: 7, role: "walk", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     expect((await applicable([...pool, forged] as any)).map((c) => c.id)).toContain("call/fileContent")
