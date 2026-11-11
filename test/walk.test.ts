@@ -164,6 +164,15 @@ describe("candidates", () => {
     expect(await ids([ask, ch, s, mine, { ...self1, role: "person", input_refs: ["a1"] }])).toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a row the walk recorded from a tool's answer is an input like any other: a new one offers the produce again", async () => {
+    const s = { shape: "shape_schema", id: "s-v", seq: 4, target: "answer", inputs: ["world_changed", "gitDiff"] }
+    const d1 = { shape: "gitDiff", id: "g1", seq: 5, role: "walk", tree: "t1" }
+    const made = { shape: "answer", id: "v1", seq: 6, role: "described", input_refs: ["w1", "g1"] }
+    expect(await ids([ask, ch, s, d1, made])).not.toContain("produce/answer/ch1")
+    const d2 = { shape: "gitDiff", id: "g2", seq: 7, role: "walk", tree: "t2" }
+    expect(await ids([ask, ch, s, d1, made, d2])).toContain("produce/answer/ch1")
+  })
+
   test("[MUST-FAIL] a produce refused as not fitting its schema is not asked again over the same rows", async () => {
     const s = sch("answer", [])
     const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] }
@@ -421,6 +430,32 @@ describe("a learned template's calls", () => {
     expect(rows.some((r) => r.shape === "failure" && String(r.body).includes("unauthorized"))).toBe(true)
     expect(rows.some((r) => r.shape === "hop" && r.phase === "ended")).toBe(false)
     expect(sent.some((p) => p.type === "outcome")).toBe(false)
+  })
+
+  test("[MUST-FAIL] a tool's answer naming its own shape is recorded as a row; one naming a shape others serve is not", async () => {
+    sent.length = 0
+    const servedBy: Record<string, string> = { git_diff: "tools", gitDiff: "tools", request: "described", fs_read: "tools" }
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      sent.push(pointer)
+      if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
+      if (pointer.type === "vesselCapability") return Response.json({ content: { vessels: servedBy[pointer.shape] ? [{ vesselId: servedBy[pointer.shape] }] : [] } })
+      if (pointer.type === "git_diff") return Response.json({ shape: "gitDiff", tree: "t1", diff: "+x", id: "spoof", role: "person" })
+      if (pointer.type === "fs_read") return Response.json({ shape: "request", pointer: { type: "bounded_shell" } })
+      return Response.json({ shape: "answer", text: "same shape as called" })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-r", seq: 12, pool_refs: ["w1", "ch1"] }
+    await execute({ id: "run/t3", kind: "run", pointer: {}, t: "", calls: [
+      { shape: "git_diff", pointer: { cwd: "/c" } }, { shape: "fs_read", pointer: { path: "/p" } }, { shape: "answer", pointer: {} },
+    ] }, sel)
+    const rows = sent.filter((p) => p.type === "record_write").map((p) => p.row).filter((r) => r.shape !== "hop")
+    expect(rows.map((r) => r.shape)).toEqual(["gitDiff"])
+    expect(rows[0].tree).toBe("t1")
+    expect(rows[0].input_refs).toEqual(["w1", "ch1"])
+    expect(rows[0].selection_ref).toBe("sel-r")
+    expect(rows[0].id).toBeUndefined()
+    expect(rows[0].role).toBeUndefined()
   })
 
   test("[MUST-FAIL] a failure keeps the producer's word for what kind of refusal it was, and only that", async () => {

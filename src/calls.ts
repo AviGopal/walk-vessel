@@ -55,6 +55,25 @@ export const exists = async (shape: string): Promise<boolean> => {
   return cap.content.vessels.length > 0
 }
 
+// A tool's answer that names its own shape (git_diff answers shape gitDiff) is recorded as a row of that shape, so a
+// producer can take it as an input: the walk stays the one recorder of what happened. Only when the shape is served by a
+// vessel that also serves the shape called, so a tool can name its own output but cannot mint a request, an answer or an
+// outcome, which other vessels serve. (Named debt: discovery does not say which of those vessels answered this call.)
+const OWN_FIELDS = new Set(["id", "seq", "t", "writer", "role", "shape"])
+const servers = async (shape: string): Promise<Set<string> | null> => {
+  const r = await resolve({ type: VESSEL_CAPABILITY, shape })
+  const vessels = (r.body as { content?: { vessels?: Array<{ vesselId?: unknown }> } } | null)?.content?.vessels
+  return r.ok && Array.isArray(vessels) ? new Set(vessels.map((v) => String(v.vesselId))) : null
+}
+const recordAnswer = async (sel: Row, called: string, body: Record<string, unknown>, callId: string): Promise<void> => {
+  const shape = body.shape
+  if (typeof shape !== "string" || shape === called) return
+  const [mine, its] = await Promise.all([servers(called), servers(shape)])
+  if (!mine || !its || ![...its].some((v) => mine.has(v))) return
+  const fields = Object.fromEntries(Object.entries(body).filter(([k]) => !OWN_FIELDS.has(k)))
+  await writeRow({ ...fields, shape, selection_ref: sel.id, call_id: callId, input_refs: [sel.pool_refs].flat().map(String) })
+}
+
 const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, callId: string): Promise<{ ok: boolean; row?: Row }> => {
   const refs = [sel.id]
   await writeRow({
@@ -81,6 +100,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       return { ok: false }
     }
     await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: r.body, input_refs: refs })
+    if (kind === CALL || kind === RUN) await recordAnswer(sel, String(pointer.type), body as Record<string, unknown>, callId)
     return { ok: true }
   } catch (e) {
     return {

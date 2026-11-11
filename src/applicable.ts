@@ -10,6 +10,9 @@ const CHANNELS = new Set([CHANNEL])
 const REQUESTS = new Set([REQUEST])
 const TEMPLATES = new Set([ACTIVITY_TEMPLATE])
 const DUES = new Set([DUE])
+// How the walk got here, not what a producer answers: its own records of choices and calls. A tool's answer the walk
+// recorded as a row of its own shape (calls.ts) is not bookkeeping: a producer may take it as an input.
+const BOOKKEEPING = new Set([SELECTION, HOP, FAILURE])
 
 const base = { pointer: {}, calls: [] as Inner[], t: "" }
 
@@ -27,8 +30,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
 
   // A produce of T is not offered while the pool holds a T row that saw exactly what this produce would see and that no
   // outcome has graded yet: an ungraded duplicate cannot be useful, because the first one's grade has not come. "What it
-  // sees" is every pool row of the schema's inputs and context shapes except the walk's own bookkeeping (rows written
-  // with role walk: hops, failures, selections), since those are how the walk got here, not what the producer answers.
+  // sees" is every pool row of the schema's inputs and context shapes except the walk's own bookkeeping (its hops,
+  // failures and selections), since those are how the walk got here, not what the producer answers.
   // So a new answer or due re-offers an outcome, while a repeat answer or due for the same request waits for a grade.
   // Whether to produce T again once it is graded is left to selection, not decided here.
   const byId = new Map(pool.map((r) => [r.id, r]))
@@ -47,7 +50,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
   const seen = (s: Row) => {
     const shapes = new Set([s.inputs, s.context ?? []].flat().map(String))
-    return (r: Row | undefined): boolean => r !== undefined && shapes.has(r.shape) && r.role !== WALK
+    return (r: Row | undefined): boolean => r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape))
   }
   // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
   // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other
