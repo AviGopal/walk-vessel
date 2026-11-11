@@ -150,6 +150,20 @@ describe("candidates", () => {
   const o1 = { shape: "outcome", id: "o1", seq: 7, role: "described", input_refs: ["w1", "a1"], evidence_refs: ["a1"] }
   const ids = async (rows: any[]) => (await applicable(rows)).map((c) => c.id)
 
+  test("[MUST-FAIL] an answer the walk graded r 1 from only what it saw is not produced again; a grade with more counts", async () => {
+    const s = sch("answer", [])
+    const mine = { shape: "answer", id: "a1", seq: 5, role: "described", input_refs: ["w1"] }
+    const self1 = { shape: "outcome", id: "o1", seq: 6, role: "described", r: 1, input_refs: ["w1", "a1"], evidence_refs: ["a1"] }
+    expect(await ids([ask, ch, s, mine, self1])).not.toContain("produce/answer/ch1")
+    // an r 1 that also read something the answer never saw is a grade with information: another answer may be produced
+    const extra = { shape: "fileContent", id: "fc1", seq: 6, role: "described" }
+    const informed = { ...self1, input_refs: ["w1", "a1", "fc1"] }
+    expect(await ids([ask, ch, s, mine, extra, informed])).toContain("produce/answer/ch1")
+    // a self r 0 asks for another try, and a person's verdict always counts
+    expect(await ids([ask, ch, s, mine, { ...self1, r: 0 }])).toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, mine, { ...self1, role: "person", input_refs: ["a1"] }])).toContain("produce/answer/ch1")
+  })
+
   test("[MUST-FAIL] a produce refused as not fitting its schema is not asked again over the same rows", async () => {
     const s = sch("answer", [])
     const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] }
@@ -260,7 +274,7 @@ describe("cell context", () => {
 
   beforeAll(async () => {
     const pool = [
-      { shape: "world_changed", id: "w1", seq: 2, writer: "kid-person", role: "person", what: "x" },
+      { shape: "world_changed", id: "w1", seq: 2, writer: "kid-person", role: "person", what: "x", t: new Date().toISOString() },
       { shape: "channel", id: "ch1", seq: 3, writer: "owner", role: "owner", calls: [] },
       { shape: "shape_schema", id: "s1", seq: 4, writer: "owner", role: "owner", target: "answer", inputs: ["world_changed"] },
       { shape: "selection", id: "own1", seq: 5, writer: "walk-test", role: "walk" },
@@ -270,7 +284,9 @@ describe("cell context", () => {
       if (path !== "/resolve") return Response.json(path === "/heartbeat" ? { nextHeartbeatMs: 600000 } : { ok: true })
       const p = body.pointer
       if (p.type === "record_wait_exact") return Response.json({ shape: "arm", id: "arm1", seq: 1, arm: "treated", as_of_seq: 99 })
-      if (p.type === "record_read") return Response.json(pool)
+      if (p.type === "record_read" && p.roots === "all") {
+        return Response.json({ shared: pool.slice(1, 3), roots: [{ root: pool[0], rows: [pool[0], ...pool.slice(3)] }] })
+      }
       if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
       if (p.type === "posterior") {
         if (cells.length === 0) cells = p.cells
@@ -293,9 +309,9 @@ describe("cell context", () => {
     discovery?.stop()
   })
 
-  test("a cell's context is the shapes of rows the walk did not write itself", () => {
+  test("a cell's context is the shapes of rows the walk did not write itself, then the root's asker and age", () => {
     expect(cells.length).toBeGreaterThan(0)
-    for (const c of cells) expect(c.split("|")[1]).toBe("channel,shape_schema,world_changed")
+    for (const c of cells) expect(c.split("|")[1]).toBe("channel,shape_schema,world_changed,asker:person,age:0")
   })
 })
 
@@ -424,5 +440,52 @@ describe("a learned template's calls", () => {
     const failures = sent.filter((p) => p.type === "record_write" && p.row.shape === "failure").map((p) => p.row)
     expect(failures.find((r) => r.selection_ref === "sel-answer")?.refused).toBe("schema")
     expect("refused" in (failures.find((r) => r.selection_ref === "sel-outcome") ?? {})).toBe(false)
+  })
+})
+
+describe("choosing among open requests", () => {
+  const realFetch = globalThis.fetch
+  afterAll(() => { globalThis.fetch = realFetch })
+
+  test("[MUST-FAIL] every open request offers its own moves, tagged with it; one already answered and self-graded does not", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+    const { choices } = await import("../src/loop")
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    const shared = [
+      { shape: "channel", id: "ch1", seq: 1, role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 2, role: "owner", target: "answer", inputs: ["world_changed"] },
+      { shape: "shape_schema", id: "s2", seq: 3, role: "owner", target: "due", inputs: ["world_changed"] },
+    ]
+    const old = { shape: "world_changed", id: "w117", seq: 4, role: "owner", t: "2026-01-01T10:00:00Z" }
+    const fresh = { shape: "world_changed", id: "w2308", seq: 10, role: "person", t: "2026-01-01T11:59:30Z" }
+    const answer = { shape: "answer", id: "a117", seq: 5, role: "described", input_refs: ["w117"] }
+    const self = { shape: "outcome", id: "o117", seq: 6, role: "described", r: 1, input_refs: ["w117", "a117"], evidence_refs: ["a117"] }
+    const soonDue = { shape: "due", id: "d117", seq: 7, role: "described", at: now + 60_000, input_refs: ["w117"] }
+    const laterDue = { shape: "due", id: "d2308", seq: 11, role: "described", at: now + 600_000, input_refs: ["w2308"] }
+    const got = await choices(shared as any, [
+      { root: old as any, rows: [old, answer, self, soonDue] as any },
+      { root: fresh as any, rows: [fresh, laterDue] as any },
+    ], now)
+    const of = (root: string, id: string) => got.filter((o) => o.root === root && o.cand.id === id)
+    expect(of("w2308", "produce/answer/ch1")).toHaveLength(1)
+    expect(of("w117", "produce/answer/ch1")).toHaveLength(0)
+    expect(of("w2308", "produce/answer/ch1")[0].context).toContain("asker:person")
+    expect(of("w2308", "produce/answer/ch1")[0].context).toContain("age:0")
+    expect(got.find((o) => o.root === "w117")?.context).toContain("age:6")
+    // one wait per kind, bounded by the earliest deadline ahead across both requests
+    const waits = got.filter((o) => o.cand.kind === "wait-for")
+    expect(new Set(waits.map((o) => o.cand.id)).size).toBe(waits.length)
+    for (const w of waits) expect(w.cand.pointer.until).toBe(now + 60_000)
+  })
+
+  test("a records that answers the single episode as a list is worked as one root", async () => {
+    const { asEpisodes } = await import("../src/loop")
+    const rows = [{ shape: "world_changed", id: "w1", seq: 1 }, { shape: "channel", id: "ch1", seq: 2 }]
+    expect(asEpisodes(rows)).toEqual({ shared: [], roots: [{ root: rows[0], rows }] } as any)
+    expect(asEpisodes({ shared: [], roots: [] })).toEqual({ shared: [], roots: [] })
   })
 })

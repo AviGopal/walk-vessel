@@ -2,7 +2,7 @@
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
-  WALK,
+  PERSON, WALK,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -16,7 +16,7 @@ const base = { pointer: {}, calls: [] as Inner[], t: "" }
 /** A template not run because it calls shapes nothing serves: the loop records it (calls.ts recordSkipped). */
 export type Skipped = { id: string; unserved: string[] }
 
-export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<Cand[]> => {
+export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now()): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
   // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a schema
   // written again offers its produce once, under the rules it has now.
@@ -32,7 +32,18 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<
   // So a new answer or due re-offers an outcome, while a repeat answer or due for the same request waits for a grade.
   // Whether to produce T again once it is graded is left to selection, not decided here.
   const byId = new Map(pool.map((r) => [r.id, r]))
-  const graded = new Set(pool.filter((r) => r.shape === OUTCOME).flatMap((r) => [r.input_refs, r.evidence_refs].flat().map(String)))
+  // A row counts as graded when an outcome judged it with something the row itself did not carry: a person's verdict, a
+  // grade at r 0 (which asks for another try), or a grade whose inputs reach past the row and what the row saw. An r 1
+  // made from only the row and its own inputs is the producer agreeing with itself (grade independence is information,
+  // not who wrote it), so the row stays pending: the walk does not produce it again until a grade with something new comes.
+  const refs = (r: Row | undefined, k: string): string[] => [r?.[k]].flat().filter((x) => x !== undefined).map(String)
+  const counts = (o: Row, judged: string): boolean => {
+    if (o.role === PERSON || Number(o.r) === 0) return true
+    const own = new Set([judged, ...refs(byId.get(judged), "input_refs")])
+    return refs(o, "input_refs").some((id) => !own.has(id))
+  }
+  const graded = new Set(pool.filter((r) => r.shape === OUTCOME)
+    .flatMap((o) => [...refs(o, "input_refs"), ...refs(o, "evidence_refs")].filter((id) => counts(o, id))))
   const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
   const seen = (s: Row) => {
     const shapes = new Set([s.inputs, s.context ?? []].flat().map(String))
@@ -106,7 +117,6 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<
   // deadline ahead there is nothing anyone will write to wait for, so waiting is not offered and the walk produces (a
   // due, among others) instead.
   const idle = pool.some((x) => x.shape === ARM)
-  const now = Date.now()
   const ahead = pool.filter((x) => DUES.has(x.shape)).map((x) => Number(x.at)).filter((at) => Number.isFinite(at) && at > now)
   const bound = ahead.length > 0 ? { until: Math.min(...ahead) } : {}
   const targets = [...new Set(schemas.map((s) => String(s.target)))]
