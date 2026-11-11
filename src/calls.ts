@@ -59,7 +59,8 @@ export const exists = async (shape: string): Promise<boolean> => {
 // producer can take it as an input: the walk stays the one recorder of what happened. Only when the shape is served by a
 // vessel that also serves the shape called, so a tool can name its own output but cannot mint a request, an answer or an
 // outcome, which other vessels serve. (Named debt: discovery does not say which of those vessels answered this call.)
-const OWN_FIELDS = new Set(["id", "seq", "t", "writer", "role", "shape"])
+// Never copied: a stored row's own stamps, and r and refused, so a recorded answer can never read as a grade or a refusal.
+const OWN_FIELDS = new Set(["id", "seq", "t", "writer", "role", "shape", "r", "refused"])
 const servers = async (shape: string): Promise<Set<string> | null> => {
   const r = await resolve({ type: VESSEL_CAPABILITY, shape })
   const vessels = (r.body as { content?: { vessels?: Array<{ vesselId?: unknown }> } } | null)?.content?.vessels
@@ -68,6 +69,8 @@ const servers = async (shape: string): Promise<Set<string> | null> => {
 const recordAnswer = async (sel: Row, called: string, body: Record<string, unknown>, callId: string): Promise<void> => {
   const shape = body.shape
   if (typeof shape !== "string" || shape === called) return
+  // An answer that is itself a stored row (a records read or wait answering one) is a row already, not a tool's answer.
+  if ("seq" in body || "writer" in body) return
   const [mine, its] = await Promise.all([servers(called), servers(shape)])
   if (!mine || !its || ![...its].some((v) => mine.has(v))) return
   const fields = Object.fromEntries(Object.entries(body).filter(([k]) => !OWN_FIELDS.has(k)))

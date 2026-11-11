@@ -434,13 +434,14 @@ describe("a learned template's calls", () => {
 
   test("[MUST-FAIL] a tool's answer naming its own shape is recorded as a row; one naming a shape others serve is not", async () => {
     sent.length = 0
-    const servedBy: Record<string, string> = { git_diff: "tools", gitDiff: "tools", request: "described", fs_read: "tools" }
+    const servedBy: Record<string, string> = { git_diff: "tools", git_status: "tools", gitDiff: "tools", request: "described", fs_read: "tools" }
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
       const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
       sent.push(pointer)
       if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
       if (pointer.type === "vesselCapability") return Response.json({ content: { vessels: servedBy[pointer.shape] ? [{ vesselId: servedBy[pointer.shape] }] : [] } })
-      if (pointer.type === "git_diff") return Response.json({ shape: "gitDiff", tree: "t1", diff: "+x", id: "spoof", role: "person" })
+      if (pointer.type === "git_diff") return Response.json({ shape: "gitDiff", tree: "t1", diff: "+x", id: "spoof", role: "person", r: 1, refused: "schema" })
+      if (pointer.type === "git_status") return Response.json({ shape: "gitDiff", seq: 40, writer: "walk-test", tree: "t9" })
       if (pointer.type === "fs_read") return Response.json({ shape: "request", pointer: { type: "bounded_shell" } })
       return Response.json({ shape: "answer", text: "same shape as called" })
     }) as typeof fetch
@@ -448,6 +449,7 @@ describe("a learned template's calls", () => {
     const sel = { shape: "selection", id: "sel-r", seq: 12, pool_refs: ["w1", "ch1"] }
     await execute({ id: "run/t3", kind: "run", pointer: {}, t: "", calls: [
       { shape: "git_diff", pointer: { cwd: "/c" } }, { shape: "fs_read", pointer: { path: "/p" } }, { shape: "answer", pointer: {} },
+      { shape: "git_status", pointer: {} },
     ] }, sel)
     const rows = sent.filter((p) => p.type === "record_write").map((p) => p.row).filter((r) => r.shape !== "hop")
     expect(rows.map((r) => r.shape)).toEqual(["gitDiff"])
@@ -456,6 +458,9 @@ describe("a learned template's calls", () => {
     expect(rows[0].selection_ref).toBe("sel-r")
     expect(rows[0].id).toBeUndefined()
     expect(rows[0].role).toBeUndefined()
+    expect(rows[0].r).toBeUndefined() // a recorded answer never reads as a grade
+    expect(rows[0].refused).toBeUndefined()
+    // and git_status, answering a stored row (seq, writer), wrote nothing: rows holds only the one gitDiff
   })
 
   test("[MUST-FAIL] a failure keeps the producer's word for what kind of refusal it was, and only that", async () => {
