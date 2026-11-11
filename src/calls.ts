@@ -74,7 +74,20 @@ const recordAnswer = async (sel: Row, called: string, body: Record<string, unkno
   const [mine, its] = await Promise.all([servers(called), servers(shape)])
   if (!mine || !its || ![...its].some((v) => mine.has(v))) return
   const fields = Object.fromEntries(Object.entries(body).filter(([k]) => !OWN_FIELDS.has(k)))
+  // An answer too big to read whole is not made a row: every prompt that took it as an input would carry it.
+  if (JSON.stringify(fields).length > RECORDED_MAX) return
   await writeRow({ ...fields, shape, selection_ref: sel.id, call_id: callId, input_refs: [sel.pool_refs].flat().map(String) })
+}
+
+// What the walk keeps of a call's answer. A hop is shown to producers as context, so a tool's whole stdout (a 237 KB
+// untracked listing, recorded on every call) would ride along in every prompt after it. Past the bound the hop keeps a
+// marked start of the answer, and says how big it was. A recorded answer row may be bigger (a gitDiff is capped at
+// 64 KiB where it is made), but not unbounded.
+const HOP_OUTPUT_MAX = 16 * 1024
+const RECORDED_MAX = 64 * 1024 + 1024
+const bounded = (value: unknown, max: number): unknown => {
+  const whole = JSON.stringify(value ?? null)
+  return whole.length <= max ? value : { cut: true, bytes: whole.length, start: whole.slice(0, max) }
 }
 
 const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, callId: string): Promise<{ ok: boolean; row?: Row }> => {
@@ -102,7 +115,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       })
       return { ok: false }
     }
-    await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: r.body, input_refs: refs })
+    await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: bounded(r.body, HOP_OUTPUT_MAX), input_refs: refs })
     if (kind === CALL || kind === RUN) await recordAnswer(sel, String(pointer.type), body as Record<string, unknown>, callId)
     return { ok: true }
   } catch (e) {

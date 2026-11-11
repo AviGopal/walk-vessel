@@ -473,6 +473,25 @@ describe("a learned template's calls", () => {
     // and git_status, answering a stored row (seq, writer), wrote nothing: rows holds only the one gitDiff
   })
 
+  test("[MUST-FAIL] a huge answer is kept cut in its hop and is not recorded as a row", async () => {
+    sent.length = 0
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      sent.push(pointer)
+      if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
+      if (pointer.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "tools" }] } })
+      return Response.json({ shape: "gitStatus", stdout: "?? x\n".repeat(60_000) })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    await execute({ id: "run/t4", kind: "run", pointer: {}, t: "", calls: [{ shape: "git_status", pointer: {} }] },
+      { shape: "selection", id: "sel-big", seq: 13, pool_refs: ["w1"] })
+    const rows = sent.filter((p) => p.type === "record_write").map((p) => p.row)
+    const ended = rows.find((r) => r.shape === "hop" && r.phase === "ended")
+    expect(ended.output.cut).toBe(true)
+    expect(JSON.stringify(ended).length).toBeLessThan(20_000)
+    expect(rows.some((r) => r.shape === "gitStatus")).toBe(false)
+  })
+
   test("[MUST-FAIL] a failure keeps the producer's word for what kind of refusal it was, and only that", async () => {
     sent.length = 0
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
