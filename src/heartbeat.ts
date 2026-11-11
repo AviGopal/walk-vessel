@@ -21,8 +21,14 @@ const post = async (path: string, payload: object): Promise<Answer> => {
   return (await r.json()) as Answer
 }
 
-export const register = async (shapes: string[]): Promise<void> => {
-  await post(REGISTER, { vesselId: VESSEL_ID, endpoint: ENDPOINT, shapes, resolve_timeout_ms: NO_LIMIT_MS })
+// shapes: what this vessel serves. written: rows it writes but does not serve, each with what it is (discovery keeps
+// them apart, as data_shapes, so none of them is ever routed or offered as a call).
+export const register = async (shapes: string[], written: Record<string, string> = {}): Promise<void> => {
+  const writes = Object.keys(written)
+  await post(REGISTER, {
+    vesselId: VESSEL_ID, endpoint: ENDPOINT, shapes, resolve_timeout_ms: NO_LIMIT_MS,
+    ...(writes.length > 0 ? { writes, shape_descriptions: written } : {}),
+  })
 }
 
 export const beat = async (): Promise<void> => {

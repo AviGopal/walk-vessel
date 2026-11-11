@@ -174,6 +174,18 @@ describe("walk vessel process", () => {
     expect((reg?.body as { resolve_timeout_ms: number }).resolve_timeout_ms).toBe(2147483647)
   })
 
+  test("[MUST-FAIL] describes the rows it writes as written, never as shapes it serves", () => {
+    const body = discovery.seen.find((s) => s.path === "/register")?.body as {
+      shapes: string[]; writes: string[]; shape_descriptions: Record<string, string>
+    }
+    expect([...body.writes].sort()).toEqual(["failure", "hop", "selection"])
+    for (const w of body.writes) {
+      expect(body.shapes).not.toContain(w)
+      expect(body.shape_descriptions[w]?.length ?? 0).toBeGreaterThan(0)
+    }
+    expect(body.shape_descriptions.hop).toContain("pointer_type")
+  })
+
   test("its first call goes to discovery /resolve by shape: the wait for its own arm row", () => {
     const first = discovery.seen.find((s) => s.path === "/resolve")
     expect(first?.auth).toBe(`ApiKey ${NODE_KEY}`)
