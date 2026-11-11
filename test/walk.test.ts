@@ -531,6 +531,25 @@ describe("a learned template's calls", () => {
     globalThis.fetch = realFetch
   })
 
+  test("[MUST-FAIL] a call names the selection it is made for, as a template's calls do", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    const seen: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      seen.push(pointer)
+      return Response.json(pointer.type === "record_write" ? { ...pointer.row, id: "r", seq: 1 } : { shape: "gitWorktree", cwd: "/x" })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-7", seq: 9, pool_refs: ["w1"] }
+    await execute({ id: "call/git_worktree", kind: "call", pointer: { type: "git_worktree", repo: "super" }, t: "", calls: [] }, sel)
+    const call = seen.find((p) => p.type === "git_worktree")
+    expect(call?.selection_ref).toBe("sel-7")
+    expect(call?.repo).toBe("super")
+  })
+
   test("carry the selection, its pool and their own call id, as a produce does", async () => {
     Object.assign(process.env, {
       WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",

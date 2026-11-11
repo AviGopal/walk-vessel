@@ -135,8 +135,10 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
   }
 }
 
+// A call names the selection it is made for, as a template's calls do, so a tool that keeps something per request (a
+// change clone) can tell which request is asking.
 const callRunner: Runner = async (c, sel) => {
-  await once(sel, CALL, c.pointer, crypto.randomUUID())
+  await once(sel, CALL, { ...c.pointer, selection_ref: sel.id }, crypto.randomUUID())
 }
 
 const produceRunner: Runner = async (c, sel) => {
