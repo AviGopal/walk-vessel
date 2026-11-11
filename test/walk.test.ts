@@ -490,6 +490,10 @@ describe("a learned template's calls", () => {
     expect(ended.output.cut).toBe(true)
     expect(JSON.stringify(ended).length).toBeLessThan(20_000)
     expect(rows.some((r) => r.shape === "gitStatus")).toBe(false)
+    const skipped = rows.find((r) => r.shape === "failure" && r.kind === "too_big")
+    expect(skipped?.unrecorded).toBe("gitStatus")
+    expect(skipped?.bytes).toBeGreaterThan(96 * 1024)
+    expect(skipped?.selection_ref).toBe("sel-big")
   })
 
   test("[MUST-FAIL] a failure keeps the producer's word for what kind of refusal it was, and only that", async () => {

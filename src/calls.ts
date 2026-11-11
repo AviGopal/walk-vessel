@@ -74,8 +74,13 @@ const recordAnswer = async (sel: Row, called: string, body: Record<string, unkno
   const [mine, its] = await Promise.all([servers(called), servers(shape)])
   if (!mine || !its || ![...its].some((v) => mine.has(v))) return
   const fields = Object.fromEntries(Object.entries(body).filter(([k]) => !OWN_FIELDS.has(k)))
-  // An answer too big to read whole is not made a row: every prompt that took it as an input would carry it.
-  if (JSON.stringify(fields).length > RECORDED_MAX) return
+  // An answer too big to read whole is not made a row: every prompt that took it as an input would carry it. The skip is
+  // a failure row, so a landing that waits for that row is not left waiting on silence.
+  const bytes = JSON.stringify(fields).length
+  if (bytes > RECORDED_MAX) {
+    await writeRow({ shape: FAILURE, kind: "too_big", call_id: callId, selection_ref: sel.id, unrecorded: shape, bytes, input_refs: [sel.id] })
+    return
+  }
   await writeRow({ ...fields, shape, selection_ref: sel.id, call_id: callId, input_refs: [sel.pool_refs].flat().map(String) })
 }
 
@@ -84,7 +89,8 @@ const recordAnswer = async (sel: Row, called: string, body: Record<string, unkno
 // marked start of the answer, and says how big it was. A recorded answer row may be bigger (a gitDiff is capped at
 // 64 KiB where it is made), but not unbounded.
 const HOP_OUTPUT_MAX = 16 * 1024
-const RECORDED_MAX = 64 * 1024 + 1024
+// The same bound described-shape shows an input row whole by: a gitDiff capped at 64 KiB of text, JSON-escaped.
+const RECORDED_MAX = 96 * 1024
 const bounded = (value: unknown, max: number): unknown => {
   const whole = JSON.stringify(value ?? null)
   return whole.length <= max ? value : { cut: true, bytes: whole.length, start: whole.slice(0, max) }

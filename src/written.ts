@@ -12,5 +12,6 @@ export const WRITTEN: Record<string, string> = {
     "its cell and context, arm (treated or control, which decides whether a grade credits it), and pool_refs, the rows " +
     "it saw.",
   [FAILURE]: "A call that did not end well, with the status and body the producer answered; or, with kind skip, a " +
-    "template the walk did not run because a shape it calls (unserved) is served by nothing (template_ref).",
+    "template the walk did not run because a shape it calls (unserved) is served by nothing (template_ref); or, with kind " +
+    "too_big, an answer not kept as a row of its shape (unrecorded) because it was bytes long.",
 }
