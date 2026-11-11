@@ -183,9 +183,11 @@ export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): 
 }
 
 export const execute = async (c: Cand, sel: Row): Promise<void> => {
+  // A candidate of a kind the walk has no runner for never reaches another vessel, so its failure is the walk's own,
+  // marked as such (kind unrunnable), not a callee's answer.
   if (!RUNNERS.has(c.kind)) {
     await writeRow({
-      shape: FAILURE, call_id: crypto.randomUUID(), selection_ref: sel.id, status: 400, body: c.kind, input_refs: [sel.id],
+      shape: FAILURE, kind: "unrunnable", call_id: crypto.randomUUID(), selection_ref: sel.id, status: 400, body: c.kind, input_refs: [sel.id],
     })
     return
   }

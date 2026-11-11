@@ -562,3 +562,25 @@ describe("choosing among open requests", () => {
     expect(asEpisodes({ shared: [], roots: [] })).toEqual({ shared: [], roots: [] })
   })
 })
+
+describe("a move the walk cannot run", () => {
+  const realFetch = globalThis.fetch
+  afterAll(() => { globalThis.fetch = realFetch })
+
+  test("[MUST-FAIL] leaves a failure marked as the walk's own, not as a callee's answer", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    const written: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      if (pointer.type === "record_write") { written.push(pointer.row); return Response.json({ ...pointer.row, id: "r", seq: 1 }) }
+      return Response.json(null)
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    await execute({ id: "wait-until", kind: "wait-until", pointer: {}, calls: [], t: "" }, { shape: "selection", id: "sel-u", seq: 1 } as any)
+    expect(written).toHaveLength(1)
+    expect(written[0].kind).toBe("unrunnable")
+  })
+})

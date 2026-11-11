@@ -13,5 +13,6 @@ export const WRITTEN: Record<string, string> = {
     "it saw.",
   [FAILURE]: "A call that did not end well, with the status and body the producer answered; or, with kind skip, a " +
     "template the walk did not run because a shape it calls (unserved) is served by nothing (template_ref); or, with kind " +
-    "too_big, an answer not kept as a row of its shape (unrecorded) because it was bytes long.",
+    "too_big, an answer not kept as a row of its shape (unrecorded) because it was bytes long; or, with kind " +
+    "unrunnable, a move of a kind the walk cannot run.",
 }
