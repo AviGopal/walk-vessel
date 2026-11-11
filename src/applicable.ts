@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, HOP, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
+  WALK,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -24,7 +25,29 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<
   const channels = pool.filter((r) => CHANNELS.has(r.shape))
   const ready = schemas.filter((s) => (s.inputs as string[]).every((x) => have.has(x)))
 
-  const produce = await Promise.all(ready.map(async (s) => {
+  // A produce of T is not offered while the pool holds a T row that saw exactly what this produce would see and that no
+  // outcome has graded yet: an ungraded duplicate cannot be useful, because the first one's grade has not come. "What it
+  // sees" is every pool row of the schema's inputs and context shapes except the walk's own bookkeeping (rows written
+  // with role walk: hops, failures, selections), since those are how the walk got here, not what the producer answers.
+  // So a new answer or due re-offers an outcome, while a repeat answer or due for the same request waits for a grade.
+  // Whether to produce T again once it is graded is left to selection, not decided here.
+  const byId = new Map(pool.map((r) => [r.id, r]))
+  const graded = new Set(pool.filter((r) => r.shape === OUTCOME).flatMap((r) => [r.input_refs, r.evidence_refs].flat().map(String)))
+  const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
+  const seen = (s: Row) => {
+    const shapes = new Set([s.inputs, s.context ?? []].flat().map(String))
+    return (r: Row | undefined): boolean => r !== undefined && shapes.has(r.shape) && r.role !== WALK
+  }
+  const pending = (s: Row): boolean => {
+    const sees = seen(s)
+    const now = key(pool.filter(sees).map((r) => r.id))
+    return pool
+      .filter((r) => r.shape === String(s.target))
+      .filter((r) => !graded.has(r.id))
+      .some((r) => key([r.input_refs].flat().map(String).filter((id) => sees(byId.get(id)))) === now)
+  }
+
+  const produce = await Promise.all(ready.filter((s) => !pending(s)).map(async (s) => {
     const target = String(s.target)
     const served = await exists(target)
     return channels.filter(() => served).map((ch): Cand => ({

@@ -18,7 +18,7 @@ describe("Thompson draw", () => {
 })
 
 describe("candidates", () => {
-  const served = new Set(["answer", "fileContent"])
+  const served = new Set(["answer", "fileContent", "outcome", "due"])
   const asked: Array<Record<string, unknown>> = []
   let applicable: (pool: any[]) => Promise<Array<{ id: string; kind: string; pointer: Record<string, unknown> }>>
   const realFetch = globalThis.fetch
@@ -131,6 +131,32 @@ describe("candidates", () => {
     const idle = await waits([...pool, { shape: "arm", id: "arm1", seq: 7, arm: "treated" }])
     expect(idle.length).toBeGreaterThan(0)
     for (const c of idle) expect("until" in c.pointer).toBe(false)
+  })
+
+  // Rows for the duplicate rule: a request, a channel, the walk's own hop, and owner schemas.
+  const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person" }
+  const ch = { shape: "channel", id: "ch1", seq: 2, calls: [] }
+  const hop = { shape: "hop", id: "h1", seq: 3, role: "walk" }
+  const sch = (target: string, context: string[]) => ({ shape: "shape_schema", id: `s-${target}`, seq: 4, target, inputs: ["world_changed"], context })
+  const a1 = { shape: "answer", id: "a1", seq: 5, role: "described", input_refs: ["w1", "h1"] }
+  const d1 = { shape: "due", id: "d1", seq: 6, role: "described", input_refs: ["w1"] }
+  const o1 = { shape: "outcome", id: "o1", seq: 7, role: "described", input_refs: ["w1", "a1"], evidence_refs: ["a1"] }
+  const ids = async (rows: any[]) => (await applicable(rows)).map((c) => c.id)
+
+  test("[MUST-FAIL] a repeat answer or due for the same request waits for the first one's grade", async () => {
+    expect(await ids([ask, ch, hop, sch("answer", ["hop"]), a1])).not.toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, sch("due", []), d1])).not.toContain("produce/due/ch1")
+  })
+
+  test("[MUST-FAIL] an earlier outcome does not block grading a new answer", async () => {
+    const outcome = sch("outcome", ["answer", "due"])
+    expect(await ids([ask, ch, outcome, a1, o1])).not.toContain("produce/outcome/ch1")
+    const a2 = { shape: "answer", id: "a2", seq: 8, role: "described", input_refs: ["w1", "h1"] }
+    expect(await ids([ask, ch, outcome, a1, o1, a2])).toContain("produce/outcome/ch1")
+  })
+
+  test("[MUST-FAIL] an earlier outcome does not block grading a due that has since appeared (a lapse)", async () => {
+    expect(await ids([ask, ch, sch("outcome", ["answer", "due"]), a1, o1, d1])).toContain("produce/outcome/ch1")
   })
 
   test("producers are asked of discovery as vesselCapability, by shape", () => {
