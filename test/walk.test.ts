@@ -456,7 +456,7 @@ describe("a learned template's calls", () => {
       return Response.json({ shape: "answer", text: "same shape as called" })
     }) as typeof fetch
     const { execute } = await import("../src/calls")
-    const sel = { shape: "selection", id: "sel-r", seq: 12, pool_refs: ["w1", "ch1"] }
+    const sel = { shape: "selection", id: "sel-r", seq: 12, root: "w1", pool_refs: ["w1", "ch1", "x2", "x3"] }
     await execute({ id: "run/t3", kind: "run", pointer: {}, t: "", calls: [
       { shape: "git_diff", pointer: { cwd: "/c" } }, { shape: "fs_read", pointer: { path: "/p" } }, { shape: "answer", pointer: {} },
       { shape: "git_status", pointer: {} },
@@ -464,7 +464,7 @@ describe("a learned template's calls", () => {
     const rows = sent.filter((p) => p.type === "record_write").map((p) => p.row).filter((r) => r.shape !== "hop")
     expect(rows.map((r) => r.shape)).toEqual(["gitDiff"])
     expect(rows[0].tree).toBe("t1")
-    expect(rows[0].input_refs).toEqual(["w1", "ch1"])
+    expect(rows[0].input_refs).toEqual(["w1"]) // its request only, not the selection's whole pool
     expect(rows[0].selection_ref).toBe("sel-r")
     expect(rows[0].id).toBeUndefined()
     expect(rows[0].role).toBeUndefined()

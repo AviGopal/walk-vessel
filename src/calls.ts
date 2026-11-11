@@ -81,7 +81,10 @@ const recordAnswer = async (sel: Row, called: string, body: Record<string, unkno
     await writeRow({ shape: FAILURE, kind: "too_big", call_id: callId, selection_ref: sel.id, unrecorded: shape, bytes, input_refs: [sel.id] })
     return
   }
-  await writeRow({ ...fields, shape, selection_ref: sel.id, call_id: callId, input_refs: [sel.pool_refs].flat().map(String) })
+  // It cites the request it was made for (the selection's root): what a reader needs to tie it to that request, without
+  // the selection's whole pool, which grows with the request and would make the row too big to read whole.
+  const cites = typeof sel.root === "string" ? [sel.root] : [sel.pool_refs].flat().map(String)
+  await writeRow({ ...fields, shape, selection_ref: sel.id, call_id: callId, input_refs: cites })
 }
 
 // What the walk keeps of a call's answer. A hop is shown to producers as context, so a tool's whole stdout (a 237 KB
