@@ -2,7 +2,7 @@
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
-  DESCRIBED, OWNER, PERSON, WALK,
+  DESCRIBED, DETECTOR, GAP, OWNER, PERSON, WALK,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -24,7 +24,10 @@ const base = { pointer: {}, calls: [] as Inner[], t: "" }
 /** A template not run because it calls shapes nothing serves: the loop records it (calls.ts recordSkipped). */
 export type Skipped = { id: string; unserved: string[] }
 
-export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now()): Promise<Cand[]> => {
+/** What a root's moves leave out that choices() must know across roots: a first deadline that has already passed. */
+export type Seen = { overdue?: boolean }
+
+export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
   // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a schema
   // written again offers its produce once, under the rules it has now.
@@ -146,7 +149,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // records answers "nothing yet" then. A deadline already passed is not waited through: grading the lapse is the move. With no
   // deadline ahead there is nothing anyone will write to wait for, so waiting is not offered and the walk produces (a
   // due, among others) instead.
-  const idle = pool.some((x) => x.shape === ARM)
+  // A gap a detector opened is a root no one is waiting on an answer for: like idling, the walk may wait for the next row,
+  // unbounded, rather than produce until something comes (records answers a wait with a new ask or gap row).
+  const idle = pool.some((x) => x.shape === ARM) || pool.some((x) => x.shape === GAP && x.role === DETECTOR)
   // The request's deadline is its FIRST deadline row, read as records reads it (lapsed()): written by the producer
   // (role described) with a within_ms records turned into at, citing the request. A later one does not move it, and a
   // due-shaped row anyone else wrote is not a deadline. Once it has passed, waiting is not offered; grading the lapse is
@@ -157,6 +162,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .filter((x) => [x.input_refs].flat().some((id) => asks.has(String(id))))
     .sort((a, b) => a.seq - b.seq)[0]
   const ahead = first !== undefined && Number(first.at) > now ? [Number(first.at)] : []
+  // A passed first deadline holds every wait back only while grading its lapse is on offer this turn. Once that grade is
+  // pending (the walk graded what it saw and nothing new came), waiting is the walk's move again: otherwise a request
+  // graded but never closed would keep the walk from ever waiting.
+  if (first !== undefined && ahead.length === 0 && produce.flat().some((c) => c.pointer.type === OUTCOME)) note.overdue = true
   const bound = ahead.length > 0 ? { until: ahead[0] } : {}
   // One wait: for the next row a person or the owner writes. The walk runs one move at a time, so while it waits none of
   // its own produces or calls is in flight, and nothing else writes the shapes they make: a wait for one of those (an

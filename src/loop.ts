@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-import { type Skipped, applicable } from "./applicable"
+import { type Seen, type Skipped, applicable } from "./applicable"
 import { type Cand, type Row, execute, loopCall, recordSkipped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw } from "./draw"
-import { ARM, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
+import { ARM, DESCRIBED, DUE, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[] }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string }
@@ -19,16 +19,20 @@ const ageBucket = (root: Row, now: number): number => {
  * Every open request is a root, and what to do next is chosen among the moves of all of them. Each root's moves are
  * worked out over the rows it shares with the others plus its own, never another request's, and carry the root's
  * asker (role) and age as context, so selection learns which requests are worth taking. Waiting is one move, bounded
- * by the earliest deadline ahead across every root, so one root's wait never lets another's deadline pass unseen.
+ * by the earliest deadline ahead across every root, and not offered once any root's deadline has passed, so one root's
+ * wait never lets another's deadline pass unseen.
  */
 export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, now = Date.now()): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
+  let overdue = false
   for (const { root, rows } of roots) {
     const ids = new Set(rows.map((r) => r.id))
     const pool = [...shared.filter((r) => !ids.has(r.id)), ...rows].sort((x, y) => x.seq - y.seq)
     const skipped: Skipped[] = []
-    const cands = await applicable(pool, skipped, now)
+    const seen: Seen = {}
+    const cands = await applicable(pool, skipped, now, seen)
+    overdue = overdue || seen.overdue === true
     const context = [
       ...[...new Set(pool.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))].sort(),
       `asker:${String(root.role)}`, `age:${ageBucket(root, now)}`,
@@ -41,7 +45,20 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
       if (!seen || until(cand) < until(seen.cand)) waits.set(cand.id, o)
     }
   }
-  return [...out, ...waits.values()]
+  // A root whose first deadline has passed offers no wait of its own: grading the lapse is its move. Nor may another
+  // root's wait be taken then, or a wait with no bound (an idle or gap root's) would keep that lapse ungraded until a row
+  // happened to come.
+  const offered = [...out, ...(overdue ? [] : waits.values())]
+  if (offered.length > 0 || roots.length === 0) return offered
+  // Nothing to do on any root (every produce pending, nothing to call, no wait offered): the walk waits for the next row
+  // rather than having no move. A deadline still ahead bounds it, since one passing makes a lapse gradable.
+  const ahead = roots.flatMap(({ rows }) => rows).filter((r) => r.shape === DUE && r.role === DESCRIBED && typeof r.at === "number" && r.at > now)
+    .map((r) => Number(r.at))
+  const { root, rows } = roots[0]
+  const pool = [...shared, ...rows].sort((x, y) => x.seq - y.seq)
+  const cand: Cand = { pointer: { shapes: [], ...(ahead.length > 0 ? { until: Math.min(...ahead) } : {}) }, calls: [], t: "", id: WAIT_FOR, kind: WAIT_FOR }
+  const context = [`asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
+  return [{ cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped: [], root: root.id }]
 }
 
 // A records that does not know roots answers its single episode as a list: worked as one root, its first row.

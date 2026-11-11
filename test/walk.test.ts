@@ -281,6 +281,16 @@ describe("candidates", () => {
     expect(await ids([ask, ch, sch("answer", ["hop"])])).toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a gap a detector opened may wait for the next row, unbounded, as an idle walk does", async () => {
+    const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "failing-test-x", status: "open" }
+    const waits = (await applicable([gap, { shape: "channel", id: "ch1", seq: 2, calls: [] }])).filter((c) => c.kind === "wait-for")
+    expect(waits).toHaveLength(1)
+    expect("until" in waits[0].pointer).toBe(false)
+    // a gap-shaped row anyone else wrote is not one
+    const forged = (await applicable([{ ...gap, role: "walk" }])).filter((c) => c.kind === "wait-for")
+    expect(forged).toHaveLength(0)
+  })
+
   test("producers are asked of discovery as vesselCapability, by shape", () => {
     expect(asked.length).toBeGreaterThan(0)
     for (const p of asked) expect(p.type).toBe("vesselCapability")
@@ -662,6 +672,74 @@ describe("choosing among open requests", () => {
     const produce = (root: string) => got.filter((o) => o.root === root && o.cand.id === "produce/answer/ch1")
     expect(produce("wa")).toHaveLength(0)
     expect(produce("wb")).toHaveLength(1)
+  })
+
+  test("[MUST-FAIL] once any request's first deadline has passed, no wait is offered: not even another root's unbounded one", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+    const { choices } = await import("../src/loop")
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    const shared = [
+      { shape: "channel", id: "ch1", seq: 1, role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 2, role: "owner", target: "outcome", inputs: ["world_changed"], context: ["answer"] },
+    ]
+    const gap = { shape: "gap", id: "g1", seq: 3, role: "detector", gap_id: "x", status: "open", t: "2026-01-01T11:00:00Z" }
+    const ask = { shape: "world_changed", id: "w1", seq: 4, role: "person", t: "2026-01-01T11:00:00Z" }
+    const other = { shape: "world_changed", id: "w2", seq: 6, role: "person", t: "2026-01-01T11:00:00Z" }
+    const due = (id: string, of: string, at: number) => ({ shape: "due", id, seq: 7, role: "described", within_ms: 60_000, at, input_refs: [of] })
+    const waitsWith = async (at: number) => (await choices(shared as any, [
+      { root: gap as any, rows: [gap] as any },
+      { root: ask as any, rows: [ask, due("d1", "w1", at)] as any },
+      { root: other as any, rows: [other, due("d2", "w2", now + 600_000)] as any },
+    ], now)).filter((o) => o.cand.kind === "wait-for")
+    expect(await waitsWith(now - 1)).toHaveLength(0)
+    // with every deadline still ahead, the wait is offered, bounded by the earliest
+    const ahead = await waitsWith(now + 60_000)
+    expect(ahead).toHaveLength(1)
+    expect(ahead[0].cand.pointer.until).toBe(now + 60_000)
+  })
+
+  test("a request whose lapse grade is pending (graded what it saw, not closed) does not hold the other waits back (a guard)", async () => {
+    globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+    const { choices } = await import("../src/loop")
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    const shared = [
+      { shape: "channel", id: "ch1", seq: 1, role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 2, role: "owner", target: "outcome", inputs: ["world_changed"], context: ["answer", "due", "hop"] },
+    ]
+    // the live pattern: a passed first due, an answer, and the walk's r 0 over both; the request stays open
+    const ask = { shape: "world_changed", id: "w1", seq: 3, role: "person", t: "2026-01-01T11:00:00Z" }
+    const due = { shape: "due", id: "d1", seq: 4, role: "described", within_ms: 60_000, at: now - 60_000, input_refs: ["w1"] }
+    const answer = { shape: "answer", id: "a1", seq: 5, role: "described", input_refs: ["w1"] }
+    const graded = { shape: "outcome", id: "o1", seq: 6, role: "described", r: 0, input_refs: ["w1", "d1", "a1"], evidence_refs: ["a1"] }
+    const other = { shape: "world_changed", id: "w2", seq: 7, role: "person", t: "2026-01-01T11:00:00Z" }
+    const due2 = { shape: "due", id: "d2", seq: 8, role: "described", within_ms: 600_000, at: now + 600_000, input_refs: ["w2"] }
+    const got = await choices(shared as any, [
+      { root: ask as any, rows: [ask, due, answer, graded] as any },
+      { root: other as any, rows: [other, due2] as any },
+    ], now)
+    const waits = got.filter((o) => o.cand.kind === "wait-for")
+    expect(waits).toHaveLength(1)
+    expect(waits[0].cand.pointer.until).toBe(now + 600_000)
+  })
+
+  test("[MUST-FAIL] with no move on any request, the walk waits, bounded by the next deadline ahead, rather than having none", async () => {
+    globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+    const { choices } = await import("../src/loop")
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person", t: "2026-01-01T11:00:00Z" }
+    const passed = { shape: "due", id: "d0", seq: 2, role: "described", within_ms: 60_000, at: now - 60_000, input_refs: ["w1"] }
+    const later = { shape: "due", id: "d2", seq: 3, role: "described", within_ms: 60_000, at: now + 300_000, input_refs: ["w1"] }
+    const bounded = await choices([], [{ root: ask as any, rows: [ask, passed, later] as any }], now)
+    expect(bounded.map((o) => o.cand.kind)).toEqual(["wait-for"])
+    expect(bounded[0].cand.pointer.until).toBe(now + 300_000)
+    expect(bounded[0].root).toBe("w1")
+    const open = await choices([], [{ root: ask as any, rows: [ask] as any }], now)
+    expect(open.map((o) => o.cand.kind)).toEqual(["wait-for"])
+    expect("until" in open[0].cand.pointer).toBe(false)
   })
 
   test("a records that answers the single episode as a list is worked as one root", async () => {
