@@ -183,6 +183,29 @@ describe("candidates", () => {
     expect(await ids([ask, ch, s, d1, made, d2])).toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a call that ended is new information: a schema reading hops is offered again, once per result", async () => {
+    const s = sch("answer", ["hop"])
+    const a1 = { shape: "answer", id: "a1", seq: 5, role: "described", input_refs: ["w1"] }
+    const h1 = { shape: "hop", id: "h1", seq: 6, role: "walk", phase: "ended", kind: "call", selection_ref: "x" }
+    expect(await ids([ask, ch, s, a1])).not.toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, a1, h1])).toContain("produce/answer/ch1")
+    // no churn: once a2 is made over that result, nothing is offered until the next call ends
+    const a2 = { shape: "answer", id: "a2", seq: 7, role: "described", input_refs: ["w1", "h1"] }
+    expect(await ids([ask, ch, s, a1, h1, a2])).not.toContain("produce/answer/ch1")
+    const h2 = { ...h1, id: "h2", seq: 8, kind: "run" }
+    expect(await ids([ask, ch, s, a1, h1, a2, h2])).toContain("produce/answer/ch1")
+  })
+
+  test("a started hop, a wait, a produce or a failure brings nothing new (guards against widening)", async () => {
+    const s = sch("answer", ["hop", "failure"])
+    const a1 = { shape: "answer", id: "a1", seq: 5, role: "described", input_refs: ["w1"] }
+    const hop = (id: string, f: Record<string, unknown>) => ({ shape: "hop", id, seq: 6, role: "walk", selection_ref: "x", ...f })
+    for (const quiet of [
+      hop("hs", { phase: "started", kind: "call" }), hop("hw", { phase: "ended", kind: "wait-for" }),
+      hop("hp", { phase: "ended", kind: "produce" }), { shape: "failure", id: "f1", seq: 6, role: "walk", status: 422, selection_ref: "x" },
+    ]) expect(await ids([ask, ch, s, a1, quiet])).not.toContain("produce/answer/ch1")
+  })
+
   test("[MUST-FAIL] a produce refused as not fitting its schema is not asked again over the same rows", async () => {
     const s = sch("answer", [])
     const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] }
@@ -553,6 +576,27 @@ describe("choosing among open requests", () => {
     const waits = got.filter((o) => o.cand.kind === "wait-for")
     expect(new Set(waits.map((o) => o.cand.id)).size).toBe(waits.length)
     for (const w of waits) expect(w.cand.pointer.until).toBe(now + 60_000)
+  })
+
+  test("[MUST-FAIL] a call that ended for one request offers nothing again for another", async () => {
+    const { choices } = await import("../src/loop")
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    const shared = [
+      { shape: "channel", id: "ch1", seq: 1, role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 2, role: "owner", target: "answer", inputs: ["world_changed"], context: ["hop"] },
+    ]
+    const ra = { shape: "world_changed", id: "wa", seq: 3, role: "person", t: "2026-01-01T11:59:00Z" }
+    const rb = { shape: "world_changed", id: "wb", seq: 4, role: "person", t: "2026-01-01T11:59:00Z" }
+    const aa = { shape: "answer", id: "aa", seq: 5, role: "described", input_refs: ["wa"] }
+    const ab = { shape: "answer", id: "ab", seq: 6, role: "described", input_refs: ["wb"] }
+    const hb = { shape: "hop", id: "hb", seq: 7, role: "walk", phase: "ended", kind: "call", selection_ref: "sb" }
+    const got = await choices(shared as any, [
+      { root: ra as any, rows: [ra, aa] as any },
+      { root: rb as any, rows: [rb, ab, hb] as any },
+    ], now)
+    const produce = (root: string) => got.filter((o) => o.root === root && o.cand.id === "produce/answer/ch1")
+    expect(produce("wa")).toHaveLength(0)
+    expect(produce("wb")).toHaveLength(1)
   })
 
   test("a records that answers the single episode as a list is worked as one root", async () => {

@@ -13,6 +13,11 @@ const DUES = new Set([DUE])
 // How the walk got here, not what a producer answers: its own records of choices and calls. A tool's answer the walk
 // recorded as a row of its own shape (calls.ts) is not bookkeeping: a producer may take it as an input.
 const BOOKKEEPING = new Set([SELECTION, HOP, FAILURE])
+// Except one kind of hop: a call (or a template's call) that ENDED carries what came back, the result the next step is
+// reasoned from. For a schema that reads hops (a request's context), a new one is new information, so the produce is
+// offered again over it: ask, call, see the result, ask the next step. A started hop, a wait, a produce and a failure
+// carry no result to reason from, and stay bookkeeping.
+const informs = (r: Row): boolean => r.shape === HOP && r.phase === ENDED && (r.kind === CALL || r.kind === RUN)
 
 const base = { pointer: {}, calls: [] as Inner[], t: "" }
 
@@ -50,7 +55,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
   const seen = (s: Row) => {
     const shapes = new Set([s.inputs, s.context ?? []].flat().map(String))
-    return (r: Row | undefined): boolean => r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape))
+    return (r: Row | undefined): boolean =>
+      r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r))
   }
   // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
   // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other
