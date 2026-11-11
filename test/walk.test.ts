@@ -210,6 +210,10 @@ describe("walk vessel process", () => {
       expect(body.shape_descriptions[w]?.length ?? 0).toBeGreaterThan(0)
     }
     expect(body.shape_descriptions.hop).toContain("pointer_type")
+    expect(body.shape_descriptions.hop).toContain("never a shape to call")
+    expect(body.shape_descriptions.hop).toContain("until")
+    expect(body.shape_descriptions.selection).toContain("arm")
+    for (const w of body.writes) expect(body.shape_descriptions[w].length).toBeLessThanOrEqual(1024)
   })
 
   test("its first call goes to discovery /resolve by shape: the wait for its own arm row", () => {
