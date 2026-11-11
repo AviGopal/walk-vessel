@@ -127,11 +127,13 @@ const RUNNERS = new Map<string, Runner>([
 
 // A template not run because a shape it calls is unserved leaves a failure row naming those shapes, once per template
 // in the episode (a row already naming it in the pool is enough), so the class is visible rather than a silent skip.
+// kind "skip" says no call was made: the row has no call_id and no status, which belong to calls discovery answered.
+// The selection only carries it, so it stays in the episode's pool; it is not what that selection chose.
 export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): Promise<void> => {
   const seen = new Set(pool.filter((r) => r.shape === FAILURE).map((r) => String(r.template_ref)))
   for (const t of skipped.filter((x) => !seen.has(x.id))) {
     await writeRow({
-      shape: FAILURE, call_id: crypto.randomUUID(), selection_ref: sel.id, status: 404, template_ref: t.id, unserved: t.unserved,
+      shape: FAILURE, kind: "skip", selection_ref: sel.id, template_ref: t.id, unserved: t.unserved,
       body: `template ${t.id} calls shapes nothing serves: ${t.unserved.join(", ")}`, input_refs: [sel.id, t.id],
     })
   }

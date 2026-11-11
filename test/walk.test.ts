@@ -255,7 +255,8 @@ describe("a template the walk will not run", () => {
     const sel = { shape: "selection", id: "sel-3", seq: 11 } as any
     await recordSkipped([], [{ id: "t-hop", unserved: ["hop"] }], sel)
     expect(written).toHaveLength(1)
-    expect(written[0]).toMatchObject({ shape: "failure", template_ref: "t-hop", unserved: ["hop"], selection_ref: "sel-3" })
+    expect(written[0]).toMatchObject({ shape: "failure", kind: "skip", template_ref: "t-hop", unserved: ["hop"], selection_ref: "sel-3" })
+    expect("call_id" in written[0] || "status" in written[0]).toBe(false)
     expect(String(written[0].body)).toContain("hop")
     await recordSkipped([{ shape: "failure", id: "f1", seq: 12, template_ref: "t-hop" } as any], [{ id: "t-hop", unserved: ["hop"] }], sel)
     expect(written).toHaveLength(1)
