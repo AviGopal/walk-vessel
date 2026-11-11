@@ -6,7 +6,7 @@ import { FAILURE, HOP, SELECTION } from "./shapes"
 
 export const WRITTEN: Record<string, string> = {
   [HOP]: "The record of one call the walk made, not a shape to call. pointer_type is the shape it called; kind (produce, " +
-    "call, run, wait-for or wait-until) is how the walk chose the call, never a shape to call. Also phase (started or " +
+    "call, run or wait-for; wait-until on older rows) is how the walk chose the call, never a shape to call. Also phase (started or " +
     "ended), selection_ref, until on a wait (the deadline it waited by) and, on ended, output: what came back.",
   [SELECTION]: "The walk's choice at one step: the candidates it had (cands) with their posteriors, the one it chose (a), " +
     "its cell and context, arm (treated or control, which decides whether a grade credits it), and pool_refs, the rows " +

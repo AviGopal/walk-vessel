@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
   WALK,
 } from "./shapes"
 
@@ -110,11 +110,5 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<
     }))
     : []
 
-  const due = new Map<string, Row>()
-  for (const r of pool.filter((x) => DUES.has(x.shape))) {
-    due.set(WAIT_UNTIL, r)
-  }
-  const waitUntil = [...due.values()].map((r): Cand => ({ ...base, id: WAIT_UNTIL, kind: WAIT_UNTIL, t: String(r.at) }))
-
-  return [...produce.flat(), ...call.flat(), ...run, ...waitFor, ...waitUntil]
+  return [...produce.flat(), ...call.flat(), ...run, ...waitFor]
 }

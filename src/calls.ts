@@ -3,7 +3,7 @@ import type { Skipped } from "./applicable"
 import { DISCOVERY_URL, KEY, VESSEL_ID } from "./config"
 import { AUTH_SCHEME, RESOLVE } from "./routes"
 import {
-  CALL, FAILURE, HOP, PRODUCE, RECORD_WAIT, RECORD_WRITE, RUN, VESSEL_CAPABILITY, WAIT_FOR, WAIT_UNTIL, WALK,
+  CALL, FAILURE, HOP, PRODUCE, RECORD_WAIT, RECORD_WRITE, RUN, VESSEL_CAPABILITY, WAIT_FOR, WALK,
 } from "./shapes"
 
 export type Row = { shape: string; id: string; seq: number; [k: string]: unknown }
@@ -112,19 +112,11 @@ const runRunner: Runner = async (c, sel) => {
   }
 }
 
-const waitUntilRunner: Runner = async (c, sel) => {
-  const callId = crypto.randomUUID()
-  await writeRow({ shape: HOP, call_id: callId, phase: STARTED, kind: WAIT_UNTIL, selection_ref: sel.id, input_refs: [sel.id] })
-  await Bun.sleep(new Date(c.t))
-  await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind: WAIT_UNTIL, selection_ref: sel.id, input_refs: [sel.id] })
-}
-
 const RUNNERS = new Map<string, Runner>([
   [CALL, callRunner],
   [PRODUCE, produceRunner],
   [WAIT_FOR, waitForRunner],
   [RUN, runRunner],
-  [WAIT_UNTIL, waitUntilRunner],
 ])
 
 // A template not run because a shape it calls is unserved leaves a failure row naming those shapes, once per template

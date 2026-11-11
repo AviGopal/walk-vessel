@@ -133,6 +133,13 @@ describe("candidates", () => {
     for (const c of idle) expect("until" in c.pointer).toBe(false)
   })
 
+  test("[MUST-FAIL] no wait blind to new rows is offered: a deadline ahead bounds a wait-for, which also ends on a new row", async () => {
+    const soon = Date.now() + 600_000
+    const kinds = (await applicable([...pool, { shape: "due", id: "d2", seq: 9, at: soon }])).map((c) => c.kind)
+    expect(kinds).toContain("wait-for")
+    expect(kinds).not.toContain("wait-until")
+  })
+
   // Rows for the duplicate rule: a request, a channel, the walk's own hop, and owner schemas.
   const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person" }
   const ch = { shape: "channel", id: "ch1", seq: 2, calls: [] }
