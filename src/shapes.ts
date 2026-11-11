@@ -24,6 +24,3 @@ export const WALK = "walk"
 export const PERSON = "person"
 export const OWNER = "owner"
 export const DESCRIBED = "described"
-// A detector's gap: work no one asked for, a root while it is open (records).
-export const GAP = "gap"
-export const DETECTOR = "detector"

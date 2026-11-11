@@ -2,7 +2,7 @@
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
-  DESCRIBED, DETECTOR, GAP, OWNER, PERSON, WALK,
+  DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -24,8 +24,9 @@ const base = { pointer: {}, calls: [] as Inner[], t: "" }
 /** A template not run because it calls shapes nothing serves: the loop records it (calls.ts recordSkipped). */
 export type Skipped = { id: string; unserved: string[] }
 
-/** What a root's moves leave out that choices() must know across roots: a first deadline that has already passed. */
-export type Seen = { overdue?: boolean }
+/** What a root's moves leave out that choices() must know across roots: a first deadline that has already passed. And
+ * what records says of the root (awaits: false when no one awaits an answer on it), passed in. */
+export type Seen = { overdue?: boolean; awaits?: boolean }
 
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
@@ -43,13 +44,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // So a new answer or due re-offers an outcome, while a repeat answer or due for the same request waits for a grade.
   // Whether to produce T again once it is graded is left to selection, not decided here.
   const byId = new Map(pool.map((r) => [r.id, r]))
-  // A call the vessel answered with a refusal (a 200 carrying an error, or a 4xx that blames the request) also carries
-  // what came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that
-  // ended, it is new information for a schema that reads failures, and it settles the request that made the call: the
-  // same pointer would get the same answer. An outage (5xx, no answer), a busy callee (408, 429) or a credential refused
-  // (401, 403) is not the request's fault, and leaves it callable.
-  const spoke = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === undefined && typeof r.status === "number" &&
-    r.status >= 200 && r.status < 500 && ![401, 403, 408, 429].includes(r.status) &&
+  // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
+  // came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that ended, it
+  // is new information for a schema that reads failures, and it settles the request that made the call: the same pointer
+  // would get the same answer. Whom a failure blames is records' to say (one rule, which its fold debits by too); any
+  // other failure leaves the request callable.
+  const spoke = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.blames === "request" &&
     [CALL, RUN].some((k) => String(byId.get(String(r.selection_ref))?.a ?? "").startsWith(`${k}/`))
   // A row counts as graded when an outcome judged it with something the row itself did not carry: a person's verdict, a
   // grade at r 0 (which asks for another try), or a grade whose inputs reach past the row and what the row saw. An r 1
@@ -159,9 +159,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // records answers "nothing yet" then. A deadline already passed is not waited through: grading the lapse is the move. With no
   // deadline ahead there is nothing anyone will write to wait for, so waiting is not offered and the walk produces (a
   // due, among others) instead.
-  // A gap a detector opened is a root no one is waiting on an answer for: like idling, the walk may wait for the next row,
-  // unbounded, rather than produce until something comes (records answers a wait with a new ask or gap row).
-  const idle = pool.some((x) => x.shape === ARM) || pool.some((x) => x.shape === GAP && x.role === DETECTOR)
+  // A root no one awaits an answer on (records says so: the walk's arm, a gap a detector opened) is worked like idling:
+  // the walk may wait for the next row, unbounded, rather than produce until something comes. A records that does not
+  // say is read as before: idle only on the walk's arm.
+  const idle = note.awaits === false || (note.awaits === undefined && pool.some((x) => x.shape === ARM))
   // The request's deadline is its FIRST deadline row, read as records reads it (lapsed()): written by the producer
   // (role described) with a within_ms records turned into at, citing the request. A later one does not move it, and a
   // due-shaped row anyone else wrote is not a deadline. Once it has passed, waiting is not offered; grading the lapse is

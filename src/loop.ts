@@ -5,7 +5,7 @@ import { VESSEL_ID } from "./config"
 import { type Post, draw } from "./draw"
 import { ARM, DESCRIBED, DUE, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
 
-type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[] }> }
+type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string }
 
 // How long a root has waited, coarsely: 0 for its first minute, then one more per doubling of minutes. Context for
@@ -22,15 +22,15 @@ const ageBucket = (root: Row, now: number): number => {
  * by the earliest deadline ahead across every root, and not offered once any root's deadline has passed, so one root's
  * wait never lets another's deadline pass unseen.
  */
-export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, now = Date.now()): Promise<Option[]> => {
+export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now()): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
   let overdue = false
-  for (const { root, rows } of roots) {
+  for (const { root, rows, awaits } of roots) {
     const ids = new Set(rows.map((r) => r.id))
     const pool = [...shared.filter((r) => !ids.has(r.id)), ...rows].sort((x, y) => x.seq - y.seq)
     const skipped: Skipped[] = []
-    const seen: Seen = {}
+    const seen: Seen = { awaits }
     const cands = await applicable(pool, skipped, now, seen)
     overdue = overdue || seen.overdue === true
     const context = [

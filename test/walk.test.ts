@@ -212,28 +212,32 @@ describe("candidates", () => {
     ]) expect(await ids([ask, ch, s, a1, quiet])).not.toContain("produce/answer/ch1")
   })
 
-  test("[MUST-FAIL] a call the vessel refused settles its request; an outage, a busy callee or a refused key leaves it callable", async () => {
-    const refused = (status: number) => [...pool,
+  test("[MUST-FAIL] a call whose failure records stamped as blaming the request settles it; any other failure leaves it callable", async () => {
+    const failed = (f: Record<string, unknown>) => [...pool,
       { shape: "selection", id: "sel-1", seq: 7, role: "walk", a: "call/fileContent", from: "q1" },
-      { shape: "failure", id: "f1", seq: 8, role: "walk", selection_ref: "sel-1", status, body: "old_string not found. The closest real text is ..." },
+      { shape: "failure", id: "f1", seq: 8, role: "walk", selection_ref: "sel-1", body: "old_string not found. The closest real text is ...", ...f },
     ]
-    for (const status of [200, 422, 400]) expect(`${status}: ${(await applicable(refused(status))).map((c) => c.id).includes("call/fileContent")}`).toBe(`${status}: false`)
-    for (const status of [502, 0, 429, 408, 401, 403]) expect(`${status}: ${(await applicable(refused(status))).map((c) => c.id).includes("call/fileContent")}`).toBe(`${status}: true`)
+    const callable = async (f: Record<string, unknown>) => (await applicable(failed(f))).map((c) => c.id).includes("call/fileContent")
+    expect(await callable({ status: 200, blames: "request" })).toBe(false)
+    expect(await callable({ status: 422, blames: "request" })).toBe(false)
+    expect(await callable({ status: 503, blames: "callee" })).toBe(true)
+    // the walk decides nothing from a status: a refusal records did not stamp leaves the request callable
+    for (const status of [200, 422]) expect(await callable({ status })).toBe(true)
   })
 
-  test("[MUST-FAIL] a call the vessel refused is new information: a schema reading failures is offered again over it", async () => {
+  test("[MUST-FAIL] a call whose failure blames the request is new information: a schema reading failures is offered again", async () => {
     // the producer's earlier row over the same rows (an answer here; the fake discovery serves it) makes it pending
     const s = sch("answer", ["hop", "failure"])
     const r1 = { shape: "answer", id: "r1", seq: 5, role: "described", input_refs: ["w1"] }
     const sel = { shape: "selection", id: "sel-1", seq: 6, role: "walk", a: "call/fs_edit", from: "q9" }
-    const f = (status: number) => ({ shape: "failure", id: "f1", seq: 7, role: "walk", selection_ref: "sel-1", status, body: "old_string not found" })
+    const f = (blames: string) => ({ shape: "failure", id: "f1", seq: 7, role: "walk", selection_ref: "sel-1", status: 200, blames, body: "old_string not found" })
     expect(await ids([ask, ch, s, r1, sel])).not.toContain("produce/answer/ch1")
-    expect(await ids([ask, ch, s, r1, sel, f(200)])).toContain("produce/answer/ch1")
-    // an outage brings no new fact: the same request is simply called again
-    expect(await ids([ask, ch, s, r1, sel, f(503)])).not.toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, r1, sel, f("request")])).toContain("produce/answer/ch1")
+    // a failure blaming the callee brings no new fact: the same request is simply called again
+    expect(await ids([ask, ch, s, r1, sel, f("callee")])).not.toContain("produce/answer/ch1")
     // a produce's own refusal is not a call's answer, and stays as it was
     const psel = { ...sel, a: "produce/answer/ch1" }
-    expect(await ids([ask, ch, s, r1, psel, f(422)])).not.toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, r1, psel, f("request")])).not.toContain("produce/answer/ch1")
   })
 
   test("[MUST-FAIL] a produce refused as not fitting its schema is not asked again over the same rows", async () => {
@@ -305,14 +309,18 @@ describe("candidates", () => {
     expect(await ids([ask, ch, sch("answer", ["hop"])])).toContain("produce/answer/ch1")
   })
 
-  test("[MUST-FAIL] a gap a detector opened may wait for the next row, unbounded, as an idle walk does", async () => {
-    const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "failing-test-x", status: "open" }
-    const waits = (await applicable([gap, { shape: "channel", id: "ch1", seq: 2, calls: [] }])).filter((c) => c.kind === "wait-for")
-    expect(waits).toHaveLength(1)
-    expect("until" in waits[0].pointer).toBe(false)
-    // a gap-shaped row anyone else wrote is not one
-    const forged = (await applicable([{ ...gap, role: "walk" }])).filter((c) => c.kind === "wait-for")
-    expect(forged).toHaveLength(0)
+  test("[MUST-FAIL] a root records says no one awaits an answer on may wait unbounded, whatever its shape is called", async () => {
+    const chan = { shape: "channel", id: "ch1", seq: 2, calls: [] }
+    const waits = async (rows: any[], awaits?: boolean) =>
+      (await applicable(rows, [], Date.now(), awaits === undefined ? {} : { awaits })).filter((c) => c.kind === "wait-for")
+    const anyName = { shape: "zzz_unknown", id: "z1", seq: 1, role: "detector" }
+    const idle = await waits([anyName, chan], false)
+    expect(idle).toHaveLength(1)
+    expect("until" in idle[0].pointer).toBe(false)
+    // the walk knows no shape by name: a "gap" row records did not mark is an ordinary root, and so is one it says awaits
+    const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "x", status: "open" }
+    expect(await waits([gap, chan])).toHaveLength(0)
+    expect(await waits([gap, chan], true)).toHaveLength(0)
   })
 
   test("producers are asked of discovery as vesselCapability, by shape", () => {
@@ -715,7 +723,7 @@ describe("choosing among open requests", () => {
     const other = { shape: "world_changed", id: "w2", seq: 6, role: "person", t: "2026-01-01T11:00:00Z" }
     const due = (id: string, of: string, at: number) => ({ shape: "due", id, seq: 7, role: "described", within_ms: 60_000, at, input_refs: [of] })
     const waitsWith = async (at: number) => (await choices(shared as any, [
-      { root: gap as any, rows: [gap] as any },
+      { root: gap as any, rows: [gap] as any, awaits: false },
       { root: ask as any, rows: [ask, due("d1", "w1", at)] as any },
       { root: other as any, rows: [other, due("d2", "w2", now + 600_000)] as any },
     ], now)).filter((o) => o.cand.kind === "wait-for")
