@@ -114,20 +114,22 @@ describe("candidates", () => {
     expect(skipped).toEqual([{ id: "t-hop", unserved: ["hop"] }])
   })
 
-  test("[MUST-FAIL] while a request is open, a wait ends by a deadline still ahead, and without one is not offered", async () => {
+  test("[MUST-FAIL] while a request is open, a wait ends by its FIRST deadline; once that has passed, none is offered", async () => {
     const waits = async (rows: any[]) => (await applicable(rows)).filter((c) => c.kind === "wait-for")
     const soon = Date.now() + 600_000
     const later = Date.now() + 1_200_000
     const passed = Date.now() - 60_000
     expect(await waits(pool)).toEqual([])
     expect(await waits([...pool, { shape: "due", id: "d0", seq: 7, at: passed }])).toEqual([])
+    // a later deadline ahead does not reopen waiting once the first has passed
+    expect(await waits([...pool, { shape: "due", id: "d0", seq: 7, at: passed }, { shape: "due", id: "d2", seq: 9, at: soon }])).toEqual([])
+    // nor does a sooner later one shorten it: the first deadline bounds the wait
     const bounded = await waits([...pool,
-      { shape: "due", id: "d0", seq: 7, at: passed },
       { shape: "due", id: "d1", seq: 8, at: later },
       { shape: "due", id: "d2", seq: 9, at: soon },
     ])
     expect(bounded.length).toBeGreaterThan(0)
-    for (const c of bounded) expect(c.pointer.until).toBe(soon)
+    for (const c of bounded) expect(c.pointer.until).toBe(later)
     const idle = await waits([...pool, { shape: "arm", id: "arm1", seq: 7, arm: "treated" }])
     expect(idle.length).toBeGreaterThan(0)
     for (const c of idle) expect("until" in c.pointer).toBe(false)
