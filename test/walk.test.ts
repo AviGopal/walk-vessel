@@ -85,6 +85,32 @@ describe("candidates", () => {
     expect((await applicable(stricter)).map((c) => c.id)).not.toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a request answered by a call that ENDED is not called again; one whose call failed still is", async () => {
+    const first = (await applicable(pool)).find((c) => c.id === "call/fileContent") as { from?: string } | undefined
+    expect(first?.from).toBe("q1")
+    const failed = [...pool,
+      { shape: "selection", id: "sel-bad", seq: 7, from: "q1" },
+      { shape: "failure", id: "f1", seq: 8, selection_ref: "sel-bad", status: 502 },
+    ]
+    expect((await applicable(failed)).map((c) => c.id)).toContain("call/fileContent")
+    const answered = [...failed,
+      { shape: "selection", id: "sel-ok", seq: 9, from: "q1" },
+      { shape: "hop", id: "h1", seq: 10, phase: "ended", kind: "call", selection_ref: "sel-ok" },
+    ]
+    expect((await applicable(answered)).map((c) => c.id)).not.toContain("call/fileContent")
+  })
+
+  test("[MUST-FAIL] a template that calls a shape nothing serves is not run; one calling served shapes is", async () => {
+    const sig = { in: ["world_changed"], out: ["answer"] }
+    const templates = [...pool,
+      { shape: "activity_template", id: "t-hop", seq: 7, sig, calls: [{ shape: "hop", pointer: {} }] },
+      { shape: "activity_template", id: "t-ok", seq: 8, sig, calls: [{ shape: "fileContent", pointer: { path: "a" } }, { shape: "answer", pointer: {} }] },
+    ]
+    const ids = (await applicable(templates)).map((c) => c.id)
+    expect(ids).toContain("run/t-ok")
+    expect(ids).not.toContain("run/t-hop")
+  })
+
   test("producers are asked of discovery as vesselCapability, by shape", () => {
     expect(asked.length).toBeGreaterThan(0)
     for (const p of asked) expect(p.type).toBe("vesselCapability")

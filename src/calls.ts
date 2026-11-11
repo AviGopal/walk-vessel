@@ -13,11 +13,13 @@ export type Cand = {
   pointer: Record<string, unknown>
   calls: Inner[]
   t: string
+  /** For a call: the request row it answers, recorded on the selection so a request is called until a call ends OK. */
+  from?: string
 }
 type Runner = (c: Cand, sel: Row) => Promise<void>
 
 const STARTED = "started"
-const ENDED = "ended"
+export const ENDED = "ended"
 
 type Answer = { ok: boolean; status: number; body: unknown; text: string }
 

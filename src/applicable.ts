@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import { type Cand, type Inner, type Row, exists } from "./calls"
+import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
-  ACTIVITY_TEMPLATE, CHANNEL, DUE, PRODUCE, CALL, REQUEST, RUN, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
+  ACTIVITY_TEMPLATE, CHANNEL, DUE, HOP, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -32,23 +32,32 @@ export const applicable = async (pool: Row[]): Promise<Cand[]> => {
     }))
   }))
 
+  // A request is answered once a call made for it ENDED (a hop the call's selection wrote): it is not offered again.
+  // A call that failed leaves it callable, and the call's cell learns from the failure.
+  const ended = new Set(pool.filter((r) => r.shape === HOP && r.phase === ENDED && r.kind === CALL).map((r) => String(r.selection_ref)))
+  const answered = new Set(pool.filter((r) => r.shape === SELECTION && r.from !== undefined && ended.has(r.id)).map((r) => String(r.from)))
   const latest = new Map<string, Row>()
   for (const r of pool.filter((x) => REQUESTS.has(x.shape))) {
     latest.set(String((r.pointer as { type: string }).type), r)
   }
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
     const served = await exists(type)
-    return [r].filter(() => served).map((): Cand => ({
+    return [r].filter(() => served && !answered.has(r.id)).map((): Cand => ({
       ...base,
       id: [CALL, type].join("/"),
       kind: CALL,
       pointer: r.pointer as Record<string, unknown>,
+      from: r.id,
     }))
   }))
 
-  const run = pool
-    .filter((r) => TEMPLATES.has(r.shape))
-    .filter((r) => (r.sig as { in: string[] }).in.every((x) => have.has(x)))
+  // A template is run only when every shape it calls is served, as a call is: one naming a shape nothing serves (a
+  // "hop", which is a record of a call, not a shape) would fail at its first step every time.
+  const templates = pool.filter((r) => TEMPLATES.has(r.shape)).filter((r) => (r.sig as { in: string[] }).in.every((x) => have.has(x)))
+  const runnable = await Promise.all(templates.map(async (r) =>
+    (await Promise.all([...new Set((r.calls as Inner[]).map((c) => c.shape))].map(exists))).every(Boolean)))
+  const run = templates
+    .filter((_, i) => runnable[i])
     .map((r): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[] }))
 
   const targets = [...new Set(schemas.map((s) => String(s.target)))]

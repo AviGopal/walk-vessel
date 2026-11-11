@@ -27,6 +27,7 @@ export const chain = async (): Promise<void> => {
       posts_seq: post.at_seq,
       seed,
       a: a.id,
+      ...(a.from ? { from: a.from } : {}),
       cell: cells[i],
       context,
       pool_refs: poolRefs,
