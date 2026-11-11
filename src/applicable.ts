@@ -100,6 +100,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .filter((sel): sel is Row => sel !== undefined && String(sel.a).startsWith(`${PRODUCE}/${target}/`))
     .map((sel) => key([sel.pool_refs].flat().map(String).filter((id) => sees(byId.get(id)))))
   const pending = (s: Row): boolean => {
+    // A judge that changed judges again: when a gate's judgment (a shape some owner requires row needs) has a schema row
+    // newer than the root's latest row of it, that judgment was made under the old words, so it is offered once more,
+    // whatever it saw. The row it makes is newer than the schema: once per change of the schema. Nothing a gate does not
+    // read is re-made this way: an answer is not sent twice, and a deadline is not moved.
+    const judged = reqs.some((q) => String(q.needs) === String(s.target))
+    const last = pool.filter((r) => r.shape === String(s.target)).sort((a, b) => a.seq - b.seq).at(-1)
+    if (judged && last !== undefined && s.role === OWNER && s.seq > last.seq) return false
     const sees = seen(s)
     const now = key(pool.filter(sees).map((r) => r.id))
     return pool

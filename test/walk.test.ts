@@ -388,6 +388,25 @@ describe("candidates", () => {
     expect(await calls([...pool, req, gap("ga", 8, "A", "open"), gap("gb", 9, "B", "closed"), gap("ga2", 10, "A", "closed")])).toEqual([])
   })
 
+  test("[MUST-FAIL] a gate's judge that changed judges again: a schema row newer than the root's last judgment offers it once more", async () => {
+    // the fake discovery serves answer; a requires row needing it makes it a gate's judgment here
+    const gate = { shape: "requires", id: "rq-j", seq: 2, role: "owner", for: "fileContent", needs: "answer", where: { ok: true } }
+    const schema = (seq: number) => ({ shape: "shape_schema", id: `s-a${seq}`, seq, role: "owner", target: "answer", inputs: ["world_changed"] })
+    const a = (id: string, seq: number) => ({ shape: "answer", id, seq, role: "described", input_refs: ["w1"] })
+    // the root's judgment was made before the owner rewrote the schema: offered again
+    expect(await ids([ask, ch, gate, schema(10), a("a-old", 5)])).toContain("produce/answer/ch1")
+    // once the root holds a judgment made after the schema, it is held back as before (once per schema change)
+    expect(await ids([ask, ch, gate, schema(10), a("a-old", 5), a("a-new", 12)])).not.toContain("produce/answer/ch1")
+    // with the judgment newer than the schema to begin with, nothing changes (a guard)
+    expect(await ids([ask, ch, gate, schema(3), a("a-old", 5)])).not.toContain("produce/answer/ch1")
+  })
+
+  test("a newer schema for a shape no gate reads offers nothing again: an answer is not sent twice, a deadline not moved (a guard)", async () => {
+    const schema = { shape: "shape_schema", id: "s-a10", seq: 10, role: "owner", target: "answer", inputs: ["world_changed"] }
+    const old = { shape: "answer", id: "a-old", seq: 5, role: "described", input_refs: ["w1"] }
+    expect(await ids([ask, ch, schema, old])).not.toContain("produce/answer/ch1")
+  })
+
   test("a precondition row not written by the owner binds nothing (a guard)", async () => {
     const forged = { shape: "requires", id: "rq9", seq: 7, role: "walk", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     expect((await applicable([...pool, forged] as any)).map((c) => c.id)).toContain("call/fileContent")
