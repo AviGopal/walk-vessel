@@ -114,8 +114,11 @@ const runRunner: Runner = async (c, sel) => {
 
 const waitUntilRunner: Runner = async (c, sel) => {
   const callId = crypto.randomUUID()
-  await writeRow({ shape: HOP, call_id: callId, phase: STARTED, kind: WAIT_UNTIL, selection_ref: sel.id, input_refs: [sel.id] })
-  await Bun.sleep(new Date(c.t))
+  // c.t is the deadline in epoch ms, written as text; new Date() of that text is an invalid date, which Bun.sleep took
+  // as no wait at all.
+  const until = Number(c.t)
+  await writeRow({ shape: HOP, call_id: callId, phase: STARTED, kind: WAIT_UNTIL, selection_ref: sel.id, until, input_refs: [sel.id] })
+  await Bun.sleep(Math.max(0, until - Date.now()))
   await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind: WAIT_UNTIL, selection_ref: sel.id, input_refs: [sel.id] })
 }
 

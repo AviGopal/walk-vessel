@@ -133,6 +133,19 @@ describe("candidates", () => {
     for (const c of idle) expect("until" in c.pointer).toBe(false)
   })
 
+  test("[MUST-FAIL] waiting until a deadline is offered for the earliest one still ahead, never one already passed", async () => {
+    const untils = async (rows: any[]) => (await applicable(rows)).filter((c) => c.kind === "wait-until") as any[]
+    const soon = Date.now() + 600_000
+    const passed = Date.now() - 60_000
+    expect(await untils([...pool, { shape: "due", id: "d0", seq: 7, at: passed }])).toEqual([])
+    const offered = await untils([...pool,
+      { shape: "due", id: "d1", seq: 8, at: soon + 600_000 },
+      { shape: "due", id: "d2", seq: 9, at: soon },
+      { shape: "due", id: "d0", seq: 10, at: passed },
+    ])
+    expect(offered.map((c) => Number(c.t))).toEqual([soon])
+  })
+
   // Rows for the duplicate rule: a request, a channel, the walk's own hop, and owner schemas.
   const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person" }
   const ch = { shape: "channel", id: "ch1", seq: 2, calls: [] }
@@ -327,6 +340,32 @@ describe("a wait-for's row", () => {
     written.length = 0
     await execute({ id: "wait-for", kind: "wait-for", pointer: { shapes: [] }, calls: [], t: "" }, sel)
     expect("until" in (written.find((r) => r.shape === "hop" && r.phase === "started") ?? {})).toBe(false)
+  })
+})
+
+describe("a wait-until's row", () => {
+  const realFetch = globalThis.fetch
+  afterAll(() => { globalThis.fetch = realFetch })
+
+  test("[MUST-FAIL] records the deadline it waits until, and waits for it", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    const written: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      if (pointer.type === "record_write") { written.push({ ...pointer.row, t: Date.now() }); return Response.json({ ...pointer.row, id: "r", seq: 1 }) }
+      return Response.json(null)
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-5", seq: 13, posts_seq: 3 } as any
+    const at = Date.now() + 300
+    await execute({ id: "wait-until", kind: "wait-until", pointer: {}, calls: [], t: String(at) }, sel)
+    const started = written.find((r) => r.shape === "hop" && r.phase === "started")
+    const ended = written.find((r) => r.shape === "hop" && r.phase === "ended")
+    expect(started?.until).toBe(at)
+    expect(ended?.t).toBeGreaterThanOrEqual(at)
   })
 })
 

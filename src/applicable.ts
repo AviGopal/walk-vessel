@@ -110,11 +110,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<
     }))
     : []
 
-  const due = new Map<string, Row>()
-  for (const r of pool.filter((x) => DUES.has(x.shape))) {
-    due.set(WAIT_UNTIL, r)
-  }
-  const waitUntil = [...due.values()].map((r): Cand => ({ ...base, id: WAIT_UNTIL, kind: WAIT_UNTIL, t: String(r.at) }))
+  // Waiting until a deadline is offered for the earliest one still ahead, by the same rule as a bounded wait-for: a
+  // deadline already passed is not waited through.
+  const waitUntil = ahead.length > 0 ? [{ ...base, id: WAIT_UNTIL, kind: WAIT_UNTIL, t: String(Math.min(...ahead)) } as Cand] : []
 
   return [...produce.flat(), ...call.flat(), ...run, ...waitFor, ...waitUntil]
 }
