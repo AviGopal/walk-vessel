@@ -61,9 +61,15 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
   })
   try {
     const r = await resolve(pointer)
-    if (!r.ok) {
+    // A 200 can carry a failure: an error at the top level, or under content, the envelope a forwarded call comes back
+    // in (a federation refusal arrives as {content: {error: "unauthorized", ...}, metadata}). That is a failure, not a
+    // call that ended, so the request stays callable and the row says why.
+    const body = (typeof r.body === "object" && r.body !== null ? r.body : {}) as { error?: unknown; content?: { error?: unknown } }
+    const said = r.ok && Boolean(body.error || (typeof body.content === "object" && body.content !== null && body.content.error))
+    if (!r.ok || said) {
       await writeRow({
-        shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status, body: r.text, input_refs: refs,
+        shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
+        body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
       })
       return { ok: false }
     }

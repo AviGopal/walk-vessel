@@ -268,4 +268,24 @@ describe("a learned template's calls", () => {
     expect(calls[0].call_id).not.toBe(calls[1].call_id)
   })
 
+  test("[MUST-FAIL] a 200 answer that carries an error, in a forward's envelope or at the top, is a failure row and stops the template", async () => {
+    sent.length = 0
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      sent.push(pointer)
+      if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
+      // The shape of the one error-bearing ENDED hop on a running node (2122): a forward's envelope, the error under content.
+      if (pointer.type === "answer") return Response.json({ content: { error: "unauthorized", shape: "answer" }, metadata: { forwarded: true } })
+      return Response.json(pointer.type === "outcome" ? { error: "provider refused" } : { ok: true })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    await execute({ id: "run/t2", kind: "run", pointer: {}, t: "", calls: [
+      { shape: "answer", pointer: { via_ref: "ch1" } },
+      { shape: "outcome", pointer: { via_ref: "ch1" } },
+    ] }, { shape: "selection", id: "sel-2", seq: 10, pool_refs: ["w1"] })
+    const rows = sent.filter((p) => p.type === "record_write").map((p) => p.row)
+    expect(rows.some((r) => r.shape === "failure" && String(r.body).includes("unauthorized"))).toBe(true)
+    expect(rows.some((r) => r.shape === "hop" && r.phase === "ended")).toBe(false)
+    expect(sent.some((p) => p.type === "outcome")).toBe(false)
+  })
 })
