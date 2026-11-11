@@ -38,11 +38,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<
     const shapes = new Set([s.inputs, s.context ?? []].flat().map(String))
     return (r: Row | undefined): boolean => r !== undefined && shapes.has(r.shape) && r.role !== WALK
   }
-  // A produce the producer refused as not fitting the schema (422: nothing was written) is pending the same way, for the
-  // same rows: asking again over the same inputs mostly buys the same refusal. A failure of any other status (a channel
-  // or read that was down) stays retryable.
+  // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
+  // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other
+  // failure (a channel or read that was down, a 422 passed through from a read or write) stays retryable.
   const refusedOver = (target: string, sees: (r: Row | undefined) => boolean): string[] => pool
-    .filter((r) => r.shape === FAILURE && Number(r.status) === 422)
+    .filter((r) => r.shape === FAILURE && r.refused === "schema")
     .map((f) => byId.get(String(f.selection_ref)))
     .filter((sel): sel is Row => sel !== undefined && String(sel.a).startsWith(`${PRODUCE}/${target}/`))
     .map((sel) => key([sel.pool_refs].flat().map(String).filter((id) => sees(byId.get(id)))))

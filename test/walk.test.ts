@@ -153,10 +153,12 @@ describe("candidates", () => {
   test("[MUST-FAIL] a produce refused as not fitting its schema is not asked again over the same rows", async () => {
     const s = sch("answer", [])
     const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] }
-    const refused = { shape: "failure", id: "f1", seq: 6, role: "walk", status: 422, selection_ref: "sel1" }
+    const refused = { shape: "failure", id: "f1", seq: 6, role: "walk", status: 422, refused: "schema", selection_ref: "sel1" }
     expect(await ids([ask, ch, s, sel, refused])).not.toContain("produce/answer/ch1")
     // a channel that was down is not a refusal: asked again
-    expect(await ids([ask, ch, s, sel, { ...refused, status: 502 }])).toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, sel, { ...refused, status: 502, refused: undefined }])).toContain("produce/answer/ch1")
+    // nor is a 422 passed through from a read or a write
+    expect(await ids([ask, ch, s, sel, { ...refused, refused: undefined }])).toContain("produce/answer/ch1")
     // a new row to answer from is asked for
     const ask2 = { ...ask, id: "w2", seq: 7 }
     expect(await ids([ask, ch, s, sel, refused, ask2])).toContain("produce/answer/ch1")
@@ -403,5 +405,24 @@ describe("a learned template's calls", () => {
     expect(rows.some((r) => r.shape === "failure" && String(r.body).includes("unauthorized"))).toBe(true)
     expect(rows.some((r) => r.shape === "hop" && r.phase === "ended")).toBe(false)
     expect(sent.some((p) => p.type === "outcome")).toBe(false)
+  })
+
+  test("[MUST-FAIL] a failure keeps the producer's word for what kind of refusal it was, and only that", async () => {
+    sent.length = 0
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      sent.push(pointer)
+      if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
+      if (pointer.type === "answer") return Response.json({ failure: { status: 422, body: "x", refused: "schema" } }, { status: 422 })
+      return Response.json({ failure: { status: 422, body: "read refused" } }, { status: 422 })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    for (const shape of ["answer", "outcome"]) {
+      await execute({ id: `run/${shape}`, kind: "run", pointer: {}, t: "", calls: [{ shape, pointer: { via_ref: "ch1" } }] },
+        { shape: "selection", id: `sel-${shape}`, seq: 11, pool_refs: ["w1"] })
+    }
+    const failures = sent.filter((p) => p.type === "record_write" && p.row.shape === "failure").map((p) => p.row)
+    expect(failures.find((r) => r.selection_ref === "sel-answer")?.refused).toBe("schema")
+    expect("refused" in (failures.find((r) => r.selection_ref === "sel-outcome") ?? {})).toBe(false)
   })
 })

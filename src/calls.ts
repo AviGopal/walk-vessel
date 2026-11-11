@@ -70,9 +70,13 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
     const body = (typeof r.body === "object" && r.body !== null ? r.body : {}) as { error?: unknown; content?: { error?: unknown } }
     const said = r.ok && Boolean(body.error || (typeof body.content === "object" && body.content !== null && body.content.error))
     if (!r.ok || said) {
+      // A producer may say what kind of refusal this was (described-shape marks one by the schema); kept as a field so a
+      // reader does not have to guess from the status.
+      const refused = ((): unknown => { try { return (JSON.parse(r.text) as { failure?: { refused?: unknown } }).failure?.refused } catch { return undefined } })()
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
         body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
+        ...(typeof refused === "string" ? { refused } : {}),
       })
       return { ok: false }
     }
