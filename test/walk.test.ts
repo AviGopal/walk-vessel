@@ -400,6 +400,7 @@ describe("cell context", () => {
   let discovery: Fake
   let vessel: ReturnType<typeof run>
   let cells: string[] = []
+  let selection: Record<string, any> | undefined
 
   beforeAll(async () => {
     const pool = [
@@ -419,8 +420,9 @@ describe("cell context", () => {
       if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
       if (p.type === "posterior") {
         if (cells.length === 0) cells = p.cells
-        return Response.json({ at_seq: 6, posts: p.cells.map(() => ({ alpha: 1, beta: 1 })) })
+        return Response.json({ at_seq: 6, posts: p.cells.map(() => ({ alpha: 1, beta: 1, from: "move" })) })
       }
+      if (p.type === "record_write" && p.row?.shape === "selection" && !selection) selection = p.row
       if (p.type === "record_write") return Response.json({ ...p.row, id: `r${Math.random()}`, seq: 7 })
       return new Promise<Response>(() => {})
     })
@@ -430,12 +432,17 @@ describe("cell context", () => {
       WALK_ENDPOINT: `http://127.0.0.1:${port}`, METABOB_API_KEY: NODE_KEY,
     })
     await healthy(port)
-    for (let i = 0; i < 200 && cells.length === 0; i++) await Bun.sleep(25)
+    for (let i = 0; i < 200 && (cells.length === 0 || !selection); i++) await Bun.sleep(25)
   })
 
   afterAll(() => {
     vessel?.kill()
     discovery?.stop()
+  })
+
+  test("[MUST-FAIL] the selection row keeps the level of evidence each posterior came from", () => {
+    expect(selection?.posts?.length ?? 0).toBeGreaterThan(0)
+    for (const p of selection!.posts) expect(p).toEqual({ alpha: 1, beta: 1, from: "move" })
   })
 
   test("a cell's context is the shapes of rows the walk did not write itself, then the root's asker and age", () => {

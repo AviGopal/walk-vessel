@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-export type Post = { alpha: number; beta: number }
+// from: which level of evidence records drew the posterior from (its cell, or a coarser one it backed off to).
+export type Post = { alpha: number; beta: number; from?: string }
 
 export const draw = (seed: number, posts: Post[]): number => {
   let s = seed | 0

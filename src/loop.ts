@@ -82,7 +82,9 @@ export const chain = async (): Promise<void> => {
       shape: SELECTION,
       arm,
       cands: options.map((o) => ({ id: o.cand.id, kind: o.cand.kind, root: o.root })),
-      posts: post.posts.map((p) => ({ alpha: p.alpha, beta: p.beta })),
+      // Each draw's posterior as records gave it, with the level of evidence it came from, so how a choice was made (its
+      // own cell's record, or a coarser one's) can be judged later from the row.
+      posts: post.posts.map((p) => ({ alpha: p.alpha, beta: p.beta, ...(typeof p.from === "string" ? { from: p.from } : {}) })),
       posts_seq: post.at_seq,
       seed,
       a: a.id,
