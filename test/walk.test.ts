@@ -66,8 +66,8 @@ describe("candidates", () => {
     expect(ids.some((id) => id.includes("unserved_shape"))).toBe(false)
   })
 
-  test("waits are always candidates, and candidates carry no address", async () => {
-    const cands = await applicable(pool)
+  test("an idle walk can always wait, and candidates carry no address", async () => {
+    const cands = await applicable([...pool, { shape: "arm", id: "arm1", seq: 7, arm: "treated" }])
     expect(cands.map((c) => c.id)).toContain("wait-for")
     expect(JSON.stringify(cands)).not.toContain("http")
   })
@@ -109,6 +109,25 @@ describe("candidates", () => {
     const ids = (await applicable(templates)).map((c) => c.id)
     expect(ids).toContain("run/t-ok")
     expect(ids).not.toContain("run/t-hop")
+  })
+
+  test("[MUST-FAIL] while a request is open, a wait ends by a deadline still ahead, and without one is not offered", async () => {
+    const waits = async (rows: any[]) => (await applicable(rows)).filter((c) => c.kind === "wait-for")
+    const soon = Date.now() + 600_000
+    const later = Date.now() + 1_200_000
+    const passed = Date.now() - 60_000
+    expect(await waits(pool)).toEqual([])
+    expect(await waits([...pool, { shape: "due", id: "d0", seq: 7, at: passed }])).toEqual([])
+    const bounded = await waits([...pool,
+      { shape: "due", id: "d0", seq: 7, at: passed },
+      { shape: "due", id: "d1", seq: 8, at: later },
+      { shape: "due", id: "d2", seq: 9, at: soon },
+    ])
+    expect(bounded.length).toBeGreaterThan(0)
+    for (const c of bounded) expect(c.pointer.until).toBe(soon)
+    const idle = await waits([...pool, { shape: "arm", id: "arm1", seq: 7, arm: "treated" }])
+    expect(idle.length).toBeGreaterThan(0)
+    for (const c of idle) expect("until" in c.pointer).toBe(false)
   })
 
   test("producers are asked of discovery as vesselCapability, by shape", () => {
@@ -248,4 +267,5 @@ describe("a learned template's calls", () => {
     }
     expect(calls[0].call_id).not.toBe(calls[1].call_id)
   })
+
 })

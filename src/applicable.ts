@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
-  ACTIVITY_TEMPLATE, CHANNEL, DUE, HOP, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, HOP, PRODUCE, CALL, REQUEST, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR, WAIT_UNTIL,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -60,13 +60,25 @@ export const applicable = async (pool: Row[]): Promise<Cand[]> => {
     .filter((_, i) => runnable[i])
     .map((r): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[] }))
 
+  // When to wait follows the request's own deadlines (law 5). The walk's arm row is in the pool only when the walk is
+  // idle (no open request): then it waits for the next row, unbounded, which is what idling is. While a request is open,
+  // a wait must end by one of its deadlines still ahead (records made each `at` from the due's own within_ms), and records
+  // answers "nothing yet" then. A deadline already passed is not waited through: grading the lapse is the move. With no
+  // deadline ahead there is nothing anyone will write to wait for, so waiting is not offered and the walk produces (a
+  // due, among others) instead.
+  const idle = pool.some((x) => x.shape === ARM)
+  const now = Date.now()
+  const ahead = pool.filter((x) => DUES.has(x.shape)).map((x) => Number(x.at)).filter((at) => Number.isFinite(at) && at > now)
+  const bound = ahead.length > 0 ? { until: Math.min(...ahead) } : {}
   const targets = [...new Set(schemas.map((s) => String(s.target)))]
-  const waitFor = [...targets.map((x) => [x]), []].map((shapes): Cand => ({
-    ...base,
-    id: [WAIT_FOR, ...shapes].join("/"),
-    kind: WAIT_FOR,
-    pointer: { shapes },
-  }))
+  const waitFor = idle || ahead.length > 0
+    ? [...targets.map((x) => [x]), []].map((shapes): Cand => ({
+      ...base,
+      id: [WAIT_FOR, ...shapes].join("/"),
+      kind: WAIT_FOR,
+      pointer: { shapes, ...(idle ? {} : bound) },
+    }))
+    : []
 
   const due = new Map<string, Row>()
   for (const r of pool.filter((x) => DUES.has(x.shape))) {
