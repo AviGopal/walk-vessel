@@ -225,6 +225,15 @@ describe("candidates", () => {
     expect(await ids([ask, ch, sch("due", []), d1])).not.toContain("produce/due/ch1")
   })
 
+  test("[MUST-FAIL] a request with no pointer declines: no call is offered for the root, and nothing throws", async () => {
+    const asked = { shape: "request", id: "q1", seq: 5, role: "described", pointer: { type: "fileContent", path: "a" } }
+    expect(await ids([...pool.filter((r) => r.shape !== "request"), asked])).toContain("call/fileContent")
+    const decline = { shape: "request", id: "q2", seq: 6, role: "described", none: "the ask is answered" }
+    expect((await ids([...pool.filter((r) => r.shape !== "request"), asked, decline])).filter((id) => id.startsWith("call/"))).toEqual([])
+    const again = { ...asked, id: "q3", seq: 7 }
+    expect(await ids([...pool.filter((r) => r.shape !== "request"), asked, decline, again])).toContain("call/fileContent")
+  })
+
   test("[MUST-FAIL] a template calling a produced shape with no channel is not run; one naming a channel is", async () => {
     const s = sch("answer", [])
     const tpl = (id: string, pointer: Record<string, unknown>) =>

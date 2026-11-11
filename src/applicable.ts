@@ -92,8 +92,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // call's cell (records fold.ts moveFailures), so selection learns; an outage leaves the cell as it was.
   const ended = new Set(pool.filter((r) => r.shape === HOP && r.phase === ENDED && r.kind === CALL).map((r) => String(r.selection_ref)))
   const answered = new Set(pool.filter((r) => r.shape === SELECTION && r.from !== undefined && ended.has(r.id)).map((r) => String(r.from)))
+  // A request row without a pointer to call is the producer saying no further call is needed (a decline). When the
+  // newest request of the root is one, no call is offered for it, older ones included; one written later asks again.
+  const requests = pool.filter((x) => REQUESTS.has(x.shape)).sort((a, b) => a.seq - b.seq)
+  const callable = (r: Row): boolean => typeof (r.pointer as { type?: unknown } | undefined)?.type === "string"
+  const declined = requests.length > 0 && !callable(requests[requests.length - 1])
   const latest = new Map<string, Row>()
-  for (const r of pool.filter((x) => REQUESTS.has(x.shape))) {
+  for (const r of declined ? [] : requests.filter(callable)) {
     latest.set(String((r.pointer as { type: string }).type), r)
   }
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
