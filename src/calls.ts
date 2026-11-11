@@ -172,12 +172,17 @@ const RUNNERS = new Map<string, Runner>([
 // in the episode (a row already naming it in the pool is enough), so the class is visible rather than a silent skip.
 // kind "skip" says no call was made: the row has no call_id and no status, which belong to calls discovery answered.
 // The selection only carries it, so it stays in the episode's pool; it is not what that selection chose.
+// Once per template and reason: a template skipped again for the reason its latest skip row gives writes nothing, but
+// one whose reason changed (it named a shape nothing served; now a call with no channel) writes the new reason, so the
+// latest skip row never says something no longer true.
+const why = (unserved: unknown): string => JSON.stringify([unserved].flat().map(String).sort())
 export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): Promise<void> => {
-  const seen = new Set(pool.filter((r) => r.shape === FAILURE).map((r) => String(r.template_ref)))
-  for (const t of skipped.filter((x) => !seen.has(x.id))) {
+  const latest = new Map<string, Row>()
+  for (const r of pool.filter((x) => x.shape === FAILURE && x.kind === "skip").sort((a, b) => a.seq - b.seq)) latest.set(String(r.template_ref), r)
+  for (const t of skipped.filter((x) => latest.get(x.id) === undefined || why(latest.get(x.id)?.unserved) !== why(x.unserved))) {
     await writeRow({
       shape: FAILURE, kind: "skip", selection_ref: sel.id, template_ref: t.id, unserved: t.unserved,
-      body: `template ${t.id} calls shapes nothing serves: ${t.unserved.join(", ")}`, input_refs: [sel.id, t.id],
+      body: `template ${t.id} cannot run: ${t.unserved.join(", ")}`, input_refs: [sel.id, t.id],
     })
   }
 }

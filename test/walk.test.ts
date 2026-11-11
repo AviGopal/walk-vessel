@@ -390,8 +390,28 @@ describe("a template the walk will not run", () => {
     expect(written[0]).toMatchObject({ shape: "failure", kind: "skip", template_ref: "t-hop", unserved: ["hop"], selection_ref: "sel-3" })
     expect("call_id" in written[0] || "status" in written[0]).toBe(false)
     expect(String(written[0].body)).toContain("hop")
-    await recordSkipped([{ shape: "failure", id: "f1", seq: 12, template_ref: "t-hop" } as any], [{ id: "t-hop", unserved: ["hop"] }], sel)
+    const earlier = { shape: "failure", id: "f1", seq: 12, kind: "skip", template_ref: "t-hop", unserved: ["hop"] } as any
+    await recordSkipped([earlier], [{ id: "t-hop", unserved: ["hop"] }], sel)
     expect(written).toHaveLength(1)
+  })
+
+  test("[MUST-FAIL] a template skipped for a new reason says so once; the reason its latest row gives writes nothing", async () => {
+    const written: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      if (pointer.type === "record_write") written.push(pointer.row)
+      return Response.json({ ...pointer.row, id: "r", seq: 1 })
+    }) as typeof fetch
+    const { recordSkipped } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-4", seq: 13 } as any
+    const old = { shape: "failure", id: "f2", seq: 10, kind: "skip", template_ref: "t1", unserved: ["outcome", "answer"] } as any
+    await recordSkipped([old], [{ id: "t1", unserved: ["answer (no channel)"] }], sel)
+    expect(written.map((r) => r.unserved)).toEqual([["answer (no channel)"]])
+    const now = { ...old, id: "f3", seq: 14, unserved: ["answer (no channel)"] }
+    await recordSkipped([old, now], [{ id: "t1", unserved: ["answer (no channel)"] }], sel)
+    expect(written).toHaveLength(1) // the same reason as the latest row: nothing
+    await recordSkipped([old, now], [{ id: "t1", unserved: ["answer", "outcome"] }], sel) // back to the old reason
+    expect(written).toHaveLength(2)
   })
 })
 
