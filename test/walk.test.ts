@@ -109,6 +109,9 @@ describe("candidates", () => {
     const ids = (await applicable(templates)).map((c) => c.id)
     expect(ids).toContain("run/t-ok")
     expect(ids).not.toContain("run/t-hop")
+    const skipped: Array<{ id: string; unserved: string[] }> = []
+    await (applicable as any)(templates, skipped)
+    expect(skipped).toEqual([{ id: "t-hop", unserved: ["hop"] }])
   })
 
   test("[MUST-FAIL] while a request is open, a wait ends by a deadline still ahead, and without one is not offered", async () => {
@@ -230,6 +233,32 @@ describe("cell context", () => {
   test("a cell's context is the shapes of rows the walk did not write itself", () => {
     expect(cells.length).toBeGreaterThan(0)
     for (const c of cells) expect(c.split("|")[1]).toBe("channel,shape_schema,world_changed")
+  })
+})
+
+describe("a template the walk will not run", () => {
+  const realFetch = globalThis.fetch
+  afterAll(() => { globalThis.fetch = realFetch })
+
+  test("[MUST-FAIL] leaves one failure row naming the unserved shapes, once per template in the episode", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    const written: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      if (pointer.type === "record_write") written.push(pointer.row)
+      return Response.json({ ...pointer.row, id: "r", seq: 1 })
+    }) as typeof fetch
+    const { recordSkipped } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-3", seq: 11 } as any
+    await recordSkipped([], [{ id: "t-hop", unserved: ["hop"] }], sel)
+    expect(written).toHaveLength(1)
+    expect(written[0]).toMatchObject({ shape: "failure", template_ref: "t-hop", unserved: ["hop"], selection_ref: "sel-3" })
+    expect(String(written[0].body)).toContain("hop")
+    await recordSkipped([{ shape: "failure", id: "f1", seq: 12, template_ref: "t-hop" } as any], [{ id: "t-hop", unserved: ["hop"] }], sel)
+    expect(written).toHaveLength(1)
   })
 })
 

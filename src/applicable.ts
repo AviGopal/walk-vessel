@@ -12,7 +12,10 @@ const DUES = new Set([DUE])
 
 const base = { pointer: {}, calls: [] as Inner[], t: "" }
 
-export const applicable = async (pool: Row[]): Promise<Cand[]> => {
+/** A template not run because it calls shapes nothing serves: the loop records it (calls.ts recordSkipped). */
+export type Skipped = { id: string; unserved: string[] }
+
+export const applicable = async (pool: Row[], skipped: Skipped[] = []): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
   // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a schema
   // written again offers its produce once, under the rules it has now.
@@ -54,10 +57,14 @@ export const applicable = async (pool: Row[]): Promise<Cand[]> => {
   // A template is run only when every shape it calls is served, as a call is: one naming a shape nothing serves (a
   // "hop", which is a record of a call, not a shape) would fail at its first step every time.
   const templates = pool.filter((r) => TEMPLATES.has(r.shape)).filter((r) => (r.sig as { in: string[] }).in.every((x) => have.has(x)))
-  const runnable = await Promise.all(templates.map(async (r) =>
-    (await Promise.all([...new Set((r.calls as Inner[]).map((c) => c.shape))].map(exists))).every(Boolean)))
+  const unserved = await Promise.all(templates.map(async (r) => {
+    const shapes = [...new Set((r.calls as Inner[]).map((c) => c.shape))]
+    const served = await Promise.all(shapes.map(exists))
+    return shapes.filter((_, i) => !served[i])
+  }))
+  templates.forEach((r, i) => { if (unserved[i].length > 0) skipped.push({ id: r.id, unserved: unserved[i] }) })
   const run = templates
-    .filter((_, i) => runnable[i])
+    .filter((_, i) => unserved[i].length === 0)
     .map((r): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[] }))
 
   // When to wait follows the request's own deadlines (law 5). The walk's arm row is in the pool only when the walk is

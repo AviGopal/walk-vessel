@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import type { Skipped } from "./applicable"
 import { DISCOVERY_URL, KEY, VESSEL_ID } from "./config"
 import { AUTH_SCHEME, RESOLVE } from "./routes"
 import {
@@ -123,6 +124,18 @@ const RUNNERS = new Map<string, Runner>([
   [RUN, runRunner],
   [WAIT_UNTIL, waitUntilRunner],
 ])
+
+// A template not run because a shape it calls is unserved leaves a failure row naming those shapes, once per template
+// in the episode (a row already naming it in the pool is enough), so the class is visible rather than a silent skip.
+export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): Promise<void> => {
+  const seen = new Set(pool.filter((r) => r.shape === FAILURE).map((r) => String(r.template_ref)))
+  for (const t of skipped.filter((x) => !seen.has(x.id))) {
+    await writeRow({
+      shape: FAILURE, call_id: crypto.randomUUID(), selection_ref: sel.id, status: 404, template_ref: t.id, unserved: t.unserved,
+      body: `template ${t.id} calls shapes nothing serves: ${t.unserved.join(", ")}`, input_refs: [sel.id, t.id],
+    })
+  }
+}
 
 export const execute = async (c: Cand, sel: Row): Promise<void> => {
   if (!RUNNERS.has(c.kind)) {

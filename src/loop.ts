@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import { applicable } from "./applicable"
-import { type Row, execute, loopCall, writeRow } from "./calls"
+import { type Skipped, applicable } from "./applicable"
+import { type Row, execute, loopCall, recordSkipped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw } from "./draw"
 import { ARM, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION } from "./shapes"
@@ -11,7 +11,8 @@ export const chain = async (): Promise<void> => {
   const asOf = Number(armRow.as_of_seq)
   while (true) {
     const pool = (await loopCall(RECORD_READ, { episode: VESSEL_ID })) as Row[]
-    const cands = await applicable(pool)
+    const skipped: Skipped[] = []
+    const cands = await applicable(pool, skipped)
     const context = [...new Set(pool.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))].sort()
     const cells = cands.map((c) => [c.id, context.join(",")].join("|"))
     const post = (await loopCall(POSTERIOR, { cells, as_of_seq: asOf })) as { at_seq: number; posts: Post[] }
@@ -33,6 +34,7 @@ export const chain = async (): Promise<void> => {
       pool_refs: poolRefs,
       input_refs: poolRefs,
     })
+    await recordSkipped(pool, skipped, sel)
     await execute(a, sel)
   }
 }
