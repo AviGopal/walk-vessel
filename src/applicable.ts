@@ -110,10 +110,17 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A template is run only when every shape it calls is served, as a call is: one naming a shape nothing serves (a
   // "hop", which is a record of a call, not a shape) would fail at its first step every time.
   const templates = pool.filter((r) => TEMPLATES.has(r.shape)).filter((r) => (r.sig as { in: string[] }).in.every((x) => have.has(x)))
+  // A call to a shape the owner's schemas produce (an answer, a due) goes through a channel: one that names none (a
+  // template that replayed a stored answer row as its pointer) is refused every time, so it is not run either, and is
+  // named the same way, as "<shape> (no channel)".
+  const produced = new Set(schemas.map((s) => String(s.target)))
   const unserved = await Promise.all(templates.map(async (r) => {
-    const shapes = [...new Set((r.calls as Inner[]).map((c) => c.shape))]
+    const calls = r.calls as Inner[]
+    const shapes = [...new Set(calls.map((c) => c.shape))]
     const served = await Promise.all(shapes.map(exists))
-    return shapes.filter((_, i) => !served[i])
+    const channelless = [...new Set(calls.filter((c) => produced.has(c.shape) && !(c.pointer as { via_ref?: unknown } | undefined)?.via_ref)
+      .map((c) => `${c.shape} (no channel)`))]
+    return [...shapes.filter((_, i) => !served[i]), ...channelless]
   }))
   templates.forEach((r, i) => { if (unserved[i].length > 0) skipped.push({ id: r.id, unserved: unserved[i] }) })
   const run = templates

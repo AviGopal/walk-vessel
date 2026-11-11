@@ -104,7 +104,7 @@ describe("candidates", () => {
     const sig = { in: ["world_changed"], out: ["answer"] }
     const templates = [...pool,
       { shape: "activity_template", id: "t-hop", seq: 7, sig, calls: [{ shape: "hop", pointer: {} }] },
-      { shape: "activity_template", id: "t-ok", seq: 8, sig, calls: [{ shape: "fileContent", pointer: { path: "a" } }, { shape: "answer", pointer: {} }] },
+      { shape: "activity_template", id: "t-ok", seq: 8, sig, calls: [{ shape: "fileContent", pointer: { path: "a" } }, { shape: "answer", pointer: { via_ref: "ch1" } }] },
     ]
     const ids = (await applicable(templates)).map((c) => c.id)
     expect(ids).toContain("run/t-ok")
@@ -223,6 +223,17 @@ describe("candidates", () => {
   test("[MUST-FAIL] a repeat answer or due for the same request waits for the first one's grade", async () => {
     expect(await ids([ask, ch, hop, sch("answer", ["hop"]), a1])).not.toContain("produce/answer/ch1")
     expect(await ids([ask, ch, sch("due", []), d1])).not.toContain("produce/due/ch1")
+  })
+
+  test("[MUST-FAIL] a template calling a produced shape with no channel is not run; one naming a channel is", async () => {
+    const s = sch("answer", [])
+    const tpl = (id: string, pointer: Record<string, unknown>) =>
+      ({ shape: "activity_template", id, seq: 8, role: "described", sig: { in: ["world_changed"], out: ["answer"] }, calls: [{ shape: "answer", pointer }] })
+    const skipped: any[] = []
+    const got = (await applicable([ask, ch, s, tpl("t-hollow", { id: "a9", text: "Hello" }), tpl("t-ok", { via_ref: "ch1" })], skipped)).map((c) => c.id)
+    expect(got).not.toContain("run/t-hollow")
+    expect(got).toContain("run/t-ok")
+    expect(skipped).toEqual([{ id: "t-hollow", unserved: ["answer (no channel)"] }])
   })
 
   test("[MUST-FAIL] an earlier outcome does not block grading a new answer", async () => {
