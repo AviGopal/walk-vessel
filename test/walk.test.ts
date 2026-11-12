@@ -368,6 +368,23 @@ describe("candidates", () => {
     expect(await calls([...pool, wants, gapOpen, gap("open")])).toEqual(["call/fileContent"])
   })
 
+  test("[MUST-FAIL] preconditions in different groups must each be met: a group is a gate, its rows its alternatives", async () => {
+    const wants = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    const gapOpen = { shape: "requires", id: "rq2", seq: 8, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" } }
+    const judged = { shape: "requires", id: "rq3", seq: 9, role: "owner", for: "fileContent", needs: "verdict", where: { r: 1 }, group: "judged" }
+    const gap = { shape: "gap", id: "g-open", seq: 10, role: "detector", status: "open" }
+    const verdict = (r: number) => ({ shape: "verdict", id: `v${r}`, seq: 11, role: "described", r })
+    const calls = async (rows: any[]) => (await applicable(rows)).map((c) => c.id).filter((id) => id === "call/fileContent")
+    expect(await calls([...pool, wants, gapOpen, judged, gap])).toEqual([]) // the ungrouped gate is met, the "judged" one is not
+    expect(await calls([...pool, wants, gapOpen, judged, gap, verdict(0)])).toEqual([])
+    expect(await calls([...pool, wants, gapOpen, judged, gap, verdict(1)])).toEqual(["call/fileContent"])
+    expect(await calls([...pool, wants, gapOpen, judged, verdict(1)])).toEqual([]) // and the ungrouped gate still counts
+    const skipped: Array<{ id: string; unserved: string[] }> = []
+    const t = { shape: "activity_template", id: "t-g", seq: 6, role: "described", sig: { in: ["world_changed"], out: ["fileContent"] }, calls: [{ shape: "fileContent", pointer: {} }] }
+    await applicable([...pool, t, wants, gapOpen, judged, gap] as any, skipped)
+    expect(skipped.find((x) => x.id === "t-g")?.unserved).toEqual(["fileContent (requires verdict)"])
+  })
+
   test("[MUST-FAIL] a template calling a preconditioned shape is not run until the root meets it, and the skip says why", async () => {
     const req = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     const t = { shape: "activity_template", id: "t-req", seq: 6, role: "described", sig: { in: ["world_changed"], out: ["fileContent"] }, calls: [{ shape: "fileContent", pointer: {} }] }

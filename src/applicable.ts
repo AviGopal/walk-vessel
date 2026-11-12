@@ -65,9 +65,14 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     return [...latest.values()].some((x) =>
       Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => JSON.stringify(x[k]) === JSON.stringify(v)))
   }
+  // Rows may name a group: rows of one group are alternatives (any one met meets the group), and every group must be met.
+  // A row naming none is in the one group every row was in before groups. The group is the owner's to name, as the
+  // shapes are: the walk knows none.
   const unmet = (shape: string): string[] => {
-    const rs = reqs.filter((q) => String(q.for) === shape)
-    return rs.length === 0 || rs.some(meets) ? [] : [`${shape} (requires ${[...new Set(rs.map((q) => String(q.needs)))].join(" or ")})`]
+    const groups = new Map<string, Row[]>()
+    for (const q of reqs.filter((q) => String(q.for) === shape)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
+    return [...groups.values()].filter((rs) => !rs.some(meets))
+      .map((rs) => `${shape} (requires ${[...new Set(rs.map((q) => String(q.needs)))].join(" or ")})`)
   }
   // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
   // came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that ended, it
