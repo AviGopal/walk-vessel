@@ -591,6 +591,23 @@ describe("walk vessel process", () => {
     expect(await r.json()).toEqual({ vessel: "walk-test" })
   })
 
+  test("[MUST-FAIL] the shape it registers is answered: walk_heartbeat says it is alive; any other shape is not served", async () => {
+    const ask = (body: unknown) => fetch(`http://127.0.0.1:${port}/v2/impulses/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    })
+    const hb = await ask({ impulse: { pointer: { type: "walk_heartbeat" } } })
+    expect(hb.status).toBe(200)
+    expect(await hb.json()).toEqual({ vessel: "walk-test", alive: true })
+    expect((await ask({ pointer: { type: "walk_heartbeat" } })).status).toBe(200)
+    const other = await ask({ impulse: { pointer: { type: "answer" } } })
+    expect(other.status).toBe(404)
+    expect(String(((await other.json()) as { error: string }).error)).toContain("not served")
+    // a path with no route answers a bare 404, which a caller can tell apart from the walk saying no
+    const none = await fetch(`http://127.0.0.1:${port}/no-such-route`, { method: "POST" })
+    expect(none.status).toBe(404)
+    expect(await none.text()).toBe("")
+  })
+
   test("registers under the node key, with no forward time limit", () => {
     const reg = discovery.seen.find((s) => s.path === "/register")
     expect(reg?.auth).toBe(`ApiKey ${NODE_KEY}`)
