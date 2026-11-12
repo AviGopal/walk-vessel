@@ -3,7 +3,7 @@ import type { Skipped } from "./applicable"
 import { DISCOVERY_URL, KEY, VESSEL_ID } from "./config"
 import { AUTH_SCHEME, RESOLVE } from "./routes"
 import {
-  CALL, FAILURE, HOP, PRODUCE, RECORD_WAIT, RECORD_WRITE, RUN, VESSEL_CAPABILITY, WAIT_FOR, WALK,
+  CALL, FAILURE, HOP, PRODUCE, RECORD_WAIT, RECORD_WRITE, RUN, SHAPE_DESCRIPTIONS, VESSEL_CAPABILITY, WAIT_FOR, WALK,
 } from "./shapes"
 
 export type Row = { shape: string; id: string; seq: number; [k: string]: unknown }
@@ -49,6 +49,20 @@ export const loopCall = async (shape: string, pointer: object): Promise<unknown>
 
 export const writeRow = async (row: object): Promise<Row> =>
   (await loopCall(RECORD_WRITE, { row, writer: VESSEL_ID, role: WALK })) as Row
+
+// What each call answers with, as the serving vessels declare it to discovery (shape_answers): read once per pass, so a
+// skip can name the call that makes a shape a step still needs. A discovery that does not answer, or declares none, is
+// no answers: the skip then says what it said before.
+export const shapeAnswers = async (): Promise<Record<string, string>> => {
+  try {
+    const r = (await loopCall(SHAPE_DESCRIPTIONS, {})) as { shape_answers?: unknown; content?: { shape_answers?: unknown } } | null
+    const a = r?.shape_answers ?? r?.content?.shape_answers
+    if (!a || typeof a !== "object" || Array.isArray(a)) return {}
+    return Object.fromEntries(Object.entries(a as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
 
 export const exists = async (shape: string): Promise<boolean> => {
   const cap = (await loopCall(VESSEL_CAPABILITY, { shape })) as { content: { vessels: unknown[] } }
@@ -206,8 +220,10 @@ export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): 
   }
   for (const t of skipped.filter((x) => latest.get(x.id) === undefined || why(latest.get(x.id)?.unserved) !== why(x.unserved))) {
     const which = t.of === "request"
-      ? { request_ref: t.id, body: `request ${t.id} cannot be called yet: ${t.unserved.join(", ")}` }
-      : { template_ref: t.id, body: `template ${t.id} cannot run: ${t.unserved.join(", ")}` }
+      // What is needed and how to make it come first: the walk keeps the start of a failure, so a long name or id never
+      // pushes the reason out of what the producer is shown.
+      ? { request_ref: t.id, body: `${t.unserved.join("; ")}: request ${t.id} cannot be called yet` }
+      : { template_ref: t.id, body: `${t.unserved.join("; ")}: template ${t.id} cannot run` }
     await writeRow({ shape: FAILURE, kind: "skip", selection_ref: sel.id, unserved: t.unserved, ...which, input_refs: [sel.id, t.id] })
   }
 }

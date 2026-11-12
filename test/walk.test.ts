@@ -425,6 +425,57 @@ describe("candidates", () => {
     expect(await calls([...pool, wants, gapOpen, gap("open")])).toEqual(["call/fileContent"])
   })
 
+  test("[MUST-FAIL] a landing's wait follows what it needs to the call that makes it, from the owner's schemas and the vessels' declared answers", async () => {
+    for (const x of ["request", "land_verdict", "git_land", "git_diff"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const rows: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "slg", target: "land_verdict", variant: "gap", inputs: ["gap", "gitDiff"] }, 5),
+      own({ shape: "requires", id: "q3", for: "git_land", needs: "land_verdict", where: { r: 1 }, latest_by: "tree" }, 8),
+    ]
+    const ask = { shape: "request", id: "a1", seq: 10, role: "described", pointer: { type: "git_land" }, input_refs: ["g1"] }
+    const answers = { git_diff: "gitDiff", git_commit: "gitCommitResult" }
+    const said = async (pool: any[], a: Record<string, string>) => {
+      const skipped: any[] = []
+      await (applicable as any)(pool, skipped, Date.now(), {}, a)
+      return skipped.map((x) => x.unserved).flat()
+    }
+    // no diff yet: the landing waits for a verdict, made from a diff, which a git_diff call makes
+    expect(await said([...rows, ask], answers)).toEqual([
+      "git_land (requires land_verdict; land_verdict is made from gitDiff, not yet here; gitDiff comes from a git_diff call)",
+    ])
+    // the diff is here: only the verdict is missing, and nothing about a diff is said
+    const diff = { shape: "gitDiff", id: "d1", seq: 11, role: "walk", tree: "t".repeat(40), input_refs: ["g1"] }
+    expect(await said([...rows, diff, ask], answers)).toEqual(["git_land (requires land_verdict)"])
+    // no declared answers: as before
+    expect(await said([...rows, ask], {})).toEqual(["git_land (requires land_verdict; land_verdict is made from gitDiff, not yet here)"])
+  })
+
+  test("[MUST-FAIL] the steps toward a need end, however the schemas and declared answers loop", async () => {
+    for (const x of ["request", "git_land"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const rows: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "shape_schema", id: "s1", target: "alpha", inputs: ["beta"] }, 2),
+      own({ shape: "shape_schema", id: "s2", target: "beta", inputs: ["alpha"] }, 3),
+      own({ shape: "requires", id: "q", for: "git_land", needs: "alpha" }, 4),
+    ]
+    const ask = { shape: "request", id: "a1", seq: 10, role: "described", pointer: { type: "git_land" }, input_refs: ["g1"] }
+    const skipped: any[] = []
+    await (applicable as any)([...rows, ask], skipped, Date.now(), {}, { make_alpha: "alpha", make_beta: "beta" })
+    expect(skipped[0].unserved).toEqual(["git_land (requires alpha; alpha is made from beta, not yet here; beta is made from alpha, not yet here)"])
+  })
+
+  test("the walk names no shape a vessel serves: what a call answers is the vessels' to declare (a guard)", async () => {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    for (const f of ["applicable.ts", "calls.ts", "loop.ts"]) {
+      const src = readFileSync(join(import.meta.dir, "..", "src", f), "utf8")
+      expect(src).not.toMatch(/["'`](git_diff|gitDiff|git_commit|land_verdict|git_land)["'`]/)
+    }
+  })
+
   test("[MUST-FAIL] on a gap, a landing waits for its verdict, and each wait names the next step: diff, then judge, then land", async () => {
     for (const x of ["request", "land_verdict", "git_land", "git_diff"]) served.add(x)
     const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
@@ -695,6 +746,7 @@ describe("cell context", () => {
         return Response.json({ shared: pool.slice(1, 3), roots: [{ root: pool[0], rows: [pool[0], ...pool.slice(3)] }] })
       }
       if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+      if (p.type === "shapeDescriptions") return Response.json({ shape_answers: {} })
       if (p.type === "posterior") {
         if (cells.length === 0) cells = p.cells
         return Response.json({ at_seq: 6, posts: p.cells.map(() => ({ alpha: 1, beta: 1, from: "move" })) })
@@ -742,6 +794,7 @@ describe("a stop mid-call", () => {
       if (p.type === "record_wait_exact") return Response.json({ shape: "arm", id: "arm1", seq: 1, arm: "treated", as_of_seq: 99 })
       if (p.type === "record_read" && p.roots === "all") return Response.json({ shared: pool.slice(1), roots: [{ root: pool[0], rows: [pool[0]] }] })
       if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+      if (p.type === "shapeDescriptions") return Response.json({ shape_answers: {} })
       if (p.type === "posterior") return Response.json({ at_seq: 6, posts: p.cells.map(() => ({ alpha: 1, beta: 1 })) })
       if (p.type === "record_write") {
         rows.push(p.row)

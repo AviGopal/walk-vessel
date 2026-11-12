@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { type Seen, type Skipped, applicable } from "./applicable"
-import { type Cand, type Row, execute, loopCall, recordSkipped, stopped, writeRow } from "./calls"
+import { type Cand, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
 import { ARM, DESCRIBED, DUE, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
@@ -22,7 +22,7 @@ const ageBucket = (root: Row, now: number): number => {
  * by the earliest deadline ahead across every root, and not offered once any root's deadline has passed, so one root's
  * wait never lets another's deadline pass unseen.
  */
-export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now()): Promise<Option[]> => {
+export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
   let overdue = false
@@ -31,7 +31,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const pool = [...shared.filter((r) => !ids.has(r.id)), ...rows].sort((x, y) => x.seq - y.seq)
     const skipped: Skipped[] = []
     const seen: Seen = { awaits }
-    const cands = await applicable(pool, skipped, now, seen)
+    const cands = await applicable(pool, skipped, now, seen, answers)
     overdue = overdue || seen.overdue === true
     const context = [
       ...[...new Set(pool.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))].sort(),
@@ -85,7 +85,7 @@ export const chain = async (): Promise<void> => {
   const asOf = Number(armRow.as_of_seq)
   while (!stopped()) {
     const { shared, roots } = asEpisodes(await loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all" }))
-    const options = await choices(shared, roots)
+    const options = await choices(shared, roots, Date.now(), await shapeAnswers())
     const cells = options.map((o) => o.cell)
     const post = (await loopCall(POSTERIOR, { cells, as_of_seq: asOf })) as { at_seq: number; posts: Post[] }
     const seed = Date.now() >>> 0

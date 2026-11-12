@@ -32,7 +32,7 @@ export type Skipped = { id: string; unserved: string[]; of?: "request" }
  * what records says of the root (awaits: false when no one awaits an answer on it), passed in. */
 export type Seen = { overdue?: boolean; awaits?: boolean }
 
-export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}): Promise<Cand[]> => {
+export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
   // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a schema
   // written again offers its produce once, under the rules it has now. A row may name a variant: another way the owner
@@ -79,14 +79,30 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // Rows may name a group: rows of one group are alternatives (any one met meets the group), and every group must be met.
   // A row naming none is in the one group every row was in before groups. The group is the owner's to name, as the
   // shapes are: the walk knows none.
-  // What is said of an unmet group names what it needs and, when the owner's schemas make that shape from inputs not yet
-  // in the root, those inputs (from the schema missing fewest): the next step toward meeting it, read from the owner's
-  // rows, so a request told its call must wait is told what to ask for instead.
+  // What is said of an unmet group names what it needs and the steps toward it, each shape not yet here once: one the
+  // owner's schemas make, from which inputs (the schema missing fewest), and one a call answers with, which call (as the
+  // serving vessels declare it: answers). Read from the owner's rows and the vessels' declarations, so a request told
+  // its call must wait is told what to ask for instead. Each shape is followed once, so the steps end.
+  const madeFrom = (shape: string): string[] | undefined => schemas.filter((s) => String(s.target) === shape)
+    .map((s) => [s.inputs as string[]].flat().map(shapeOf).filter((x) => !have.has(x)))
+    .sort((a, b) => a.length - b.length)[0]
   const toward = (need: string): string => {
-    const missing = schemas.filter((s) => String(s.target) === need)
-      .map((s) => [s.inputs as string[]].flat().map(shapeOf).filter((x) => !have.has(x)))
-      .sort((a, b) => a.length - b.length)[0]
-    return missing !== undefined && missing.length > 0 ? `${need}; ${need} is made from ${missing.join(", ")}, not yet here` : need
+    const steps: string[] = []
+    const followed = new Set<string>()
+    const follow = (shape: string): void => {
+      if (followed.has(shape)) return
+      followed.add(shape)
+      const missing = madeFrom(shape)
+      if (missing !== undefined && missing.length > 0) {
+        steps.push(`${shape} is made from ${missing.join(", ")}, not yet here`)
+        for (const m of missing) follow(m)
+        return
+      }
+      const callers = Object.keys(answers).filter((c) => answers[c] === shape).sort()
+      if (callers.length > 0 && !have.has(shape)) steps.push(`${shape} comes from a ${callers.join(" or ")} call`)
+    }
+    follow(need)
+    return [need, ...steps].join("; ")
   }
   const unmet = (shape: string, pointer?: Record<string, unknown>): string[] => {
     const groups = new Map<string, Row[]>()

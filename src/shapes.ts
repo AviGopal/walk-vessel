@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 export const VESSEL_CAPABILITY = "vesselCapability"
+// Discovery's read of what the serving vessels declare of their shapes (descriptions, inputs, and the shape each call
+// answers with).
+export const SHAPE_DESCRIPTIONS = "shapeDescriptions"
 export const SELECTION = "selection"
 export const HOP = "hop"
 export const FAILURE = "failure"
