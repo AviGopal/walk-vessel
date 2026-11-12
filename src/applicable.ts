@@ -206,15 +206,17 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }))
   templates.forEach((r, i) => { if (unserved[i].length > 0) skipped.push({ id: r.id, unserved: unserved[i] }) })
   // A template already run in this root, whose run did not fail, is not run again until a row of a shape it takes in
-  // (its sig.in) comes after that run: over the same inputs it would make the same thing again (a clone handed out
-  // again), and offering it beside a request the walk has just asked for lets it win the draw over calling that request,
-  // round after round. What the walk itself produced since (a request, a grade) is not what the template takes in.
+  // (its sig.in) comes after that run from someone other than the walk: over the same inputs it would make the same
+  // thing again (a clone handed out again), and offering it beside a request the walk has just asked for lets it win the
+  // draw over calling that request, round after round. The walk's own rows since (its next selection, a hop) are how it
+  // got here, not new input, even for a template that takes in selections; a template that takes in only those is run
+  // again in a root only when its run failed.
   const ran = (r: Row): boolean => {
     const last = pool.filter((x) => x.shape === SELECTION && x.a === [RUN, r.id].join("/")).sort((a, b) => a.seq - b.seq).at(-1)
     if (last === undefined) return false
     if (pool.some((x) => x.shape === FAILURE && x.role === WALK && String(x.selection_ref) === last.id && x.kind === undefined)) return false
     const takes = new Set((r.sig as { in: string[] }).in)
-    return !pool.some((x) => x.seq > last.seq && takes.has(x.shape))
+    return !pool.some((x) => x.seq > last.seq && takes.has(x.shape) && x.role !== WALK)
   }
   const run = templates
     .filter((_, i) => unserved[i].length === 0)

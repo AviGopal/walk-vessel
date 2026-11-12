@@ -419,6 +419,17 @@ describe("candidates", () => {
     const failed = { shape: "failure", id: "f1", seq: 4, role: "walk", selection_ref: "s1", status: 503 }
     expect(await ids([gap, t, sel, failed, ask])).toContain("run/t1")
     expect(await ids([gap, t, sel, ended, ask, { ...gap, id: "g2", seq: 6 }])).toContain("run/t1")
+    // the live shape: a template that takes in selections. The walk's own next selection (the produce that wrote the
+    // request) is not a new input, so the template is not run again and the request is called
+    const live = { ...t, id: "t2", sig: { in: ["selection"], out: ["outcome"] } }
+    const s1 = { shape: "selection", id: "s1b", seq: 3, role: "walk", a: "run/t2", root: "g1" }
+    const h1 = { ...ended, id: "h1b", selection_ref: "s1b" }
+    const s2 = { shape: "selection", id: "s2b", seq: 5, role: "walk", a: "produce/request/gap/ch1", root: "g1" }
+    const q1 = { ...ask, id: "q1b", seq: 6 }
+    expect(await ids([gap, live, s1])).not.toContain("run/t2") // its run's own selection is not new input
+    const loop = await ids([gap, live, s1, h1, s2, q1])
+    expect(loop).not.toContain("run/t2")
+    expect(loop).toContain("call/fs_edit")
   })
 
   test("[MUST-FAIL] preconditions in different groups must each be met: a group is a gate, its rows its alternatives", async () => {
