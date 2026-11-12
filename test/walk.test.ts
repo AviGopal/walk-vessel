@@ -326,7 +326,17 @@ describe("candidates", () => {
   })
 
   test("[MUST-FAIL] an earlier outcome does not block grading a due that has since appeared (a lapse)", async () => {
-    expect(await ids([ask, ch, sch("outcome", ["answer", "due"]), a1, o1, d1])).toContain("produce/outcome/ch1")
+    // the due comes after the outcome (seq 8 > 7), as the name says
+    expect(await ids([ask, ch, sch("outcome", ["answer", "due"]), a1, o1, { ...d1, seq: 8 }])).toContain("produce/outcome/ch1")
+  })
+
+  test("[MUST-FAIL] a deadline that passed after the last grade is new: the lapse is graded, with no new row", async () => {
+    const t0 = Date.parse("2026-01-01T12:00:00Z")
+    const due = { ...d1, within_ms: 60_000, at: t0 + 60_000 }
+    const graded = { ...o1, t: "2026-01-01T12:00:30Z" } // graded before the deadline
+    const at = async (now: number) => (await applicable([ask, ch, sch("outcome", ["answer", "due"]), a1, due, graded] as any, [], now)).map((c) => c.id)
+    expect(await at(t0 + 45_000)).not.toContain("produce/outcome/ch1") // deadline still ahead: nothing new
+    expect(await at(t0 + 120_000)).toContain("produce/outcome/ch1") // it passed since the grade
   })
 
   test("[MUST-FAIL] a grade is not offered before there is something to judge: an answer, or a deadline that passed", async () => {
@@ -377,6 +387,85 @@ describe("candidates", () => {
     const older = { shape: "shape_schema", id: "s-old", seq: 3, role: "owner", target: "answer", inputs: ["world_changed"] }
     const newer = { shape: "shape_schema", id: "s-new", seq: 4, role: "owner", target: "answer", inputs: ["world_changed", "nothing_here"] }
     expect(await ids([ask, ch, older, newer])).not.toContain("produce/answer/ch1")
+  })
+
+  test("[MUST-FAIL] freshness, not what was shown: an answer made after the newest input is not asked again, whichever rows it cited", async () => {
+    const base = [
+      { shape: "world_changed", id: "w1", seq: 1, role: "person" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["world_changed"], context: ["hop", "failure"] },
+      { shape: "selection", id: "sel-c", seq: 4, role: "walk", a: "call/x" },
+      { shape: "hop", id: "h1", seq: 5, role: "walk", phase: "ended", kind: "call", selection_ref: "sel-c" },
+      { shape: "hop", id: "h2", seq: 6, role: "walk", phase: "ended", kind: "call", selection_ref: "sel-c" },
+      // the producer was shown only what fitted its budget: the newest hop
+      { shape: "answer", id: "a1", seq: 7, role: "described", input_refs: ["w1", "h2"] },
+    ]
+    const offered = async (rows: unknown[]) => (await applicable(rows as any)).some((c) => c.id === "produce/answer/ch1")
+    expect(await offered(base)).toBe(false) // (i) nothing came since: not asked again, though it cited only part of what it took in
+    // (ii) a call's refusal of what was asked (the producer reads failures) came since: asked again
+    expect(await offered([...base, { shape: "failure", id: "f1", seq: 8, role: "walk", blames: "request", status: 200, selection_ref: "sel-c" }])).toBe(true)
+    // (iii) only the walk's own bookkeeping came since (a started hop): not asked again
+    expect(await offered([...base, { shape: "hop", id: "h3", seq: 8, role: "walk", phase: "started", kind: "call", selection_ref: "sel-c" }])).toBe(false)
+  })
+
+  test("[MUST-FAIL] a try is timed by the selection that made it: a row arriving while the producer worked is new", async () => {
+    const t0 = Date.parse("2026-01-01T12:00:00Z")
+    const at = (ms: number) => new Date(t0 + ms).toISOString()
+    const base = [
+      { shape: "world_changed", id: "w1", seq: 1, role: "person" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["world_changed"], context: ["due"] },
+      { shape: "selection", id: "sel-a", seq: 10, role: "walk", a: "produce/answer/ch1", t: at(0) },
+    ]
+    const answer = { shape: "answer", id: "a1", seq: 12, role: "described", selection_ref: "sel-a", input_refs: ["w1"], t: at(60_000) }
+    const offered = async (rows: unknown[], now = t0 + 120_000) => (await applicable(rows as any, [], now)).some((c) => c.id === "produce/answer/ch1")
+    expect(await offered([...base, answer])).toBe(false) // nothing came after the choice: not asked again
+    // an ask that arrived while the producer was answering (after its selection, before its answer row) was never seen
+    expect(await offered([...base, { shape: "world_changed", id: "w2", seq: 11, role: "person" }, answer])).toBe(true)
+  })
+
+  test("[MUST-FAIL] a row landing after the pool was read but before the selection row was written was never seen", async () => {
+    const rows = [
+      { shape: "world_changed", id: "w1", seq: 1, role: "person" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["world_changed"] },
+      // the pool the walk read: up to seq 9
+      { shape: "world_changed", id: "w-old", seq: 9, role: "person" },
+      // an ask from another writer, landing while the walk was choosing (after its read, before its selection row)
+      { shape: "world_changed", id: "w-new", seq: 10, role: "person" },
+      { shape: "selection", id: "sel-a", seq: 11, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s1", "w-old"] },
+      { shape: "answer", id: "a1", seq: 12, role: "described", selection_ref: "sel-a", input_refs: ["w1", "w-old"] },
+    ]
+    expect((await applicable(rows as any)).some((c) => c.id === "produce/answer/ch1")).toBe(true)
+    // with nothing past the pool it was chosen over, it is not asked again
+    expect((await applicable(rows.filter((r) => r.id !== "w-new") as any)).some((c) => c.id === "produce/answer/ch1")).toBe(false)
+  })
+
+  test("[MUST-FAIL] a deadline that passed while the producer was answering (after its selection) was never known to it", async () => {
+    const t0 = Date.parse("2026-01-01T12:00:00Z")
+    const at = (ms: number) => new Date(t0 + ms).toISOString()
+    const rows = [
+      { shape: "world_changed", id: "w1", seq: 1, role: "person" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["world_changed"], context: ["due"] },
+      { shape: "due", id: "d1", seq: 5, role: "described", within_ms: 30_000, at: t0 + 30_000, input_refs: ["w1"] },
+      { shape: "selection", id: "sel-a", seq: 10, role: "walk", a: "produce/answer/ch1", t: at(0) },
+      { shape: "answer", id: "a1", seq: 12, role: "described", selection_ref: "sel-a", input_refs: ["w1", "d1"], t: at(60_000) },
+    ]
+    expect((await applicable(rows as any, [], t0 + 120_000)).some((c) => c.id === "produce/answer/ch1")).toBe(true)
+  })
+
+  test("[MUST-FAIL] a produce refused as not fitting its schema is a try too: asked again only once something new comes", async () => {
+    const base = [
+      { shape: "world_changed", id: "w1", seq: 1, role: "person" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["world_changed"] },
+      { shape: "selection", id: "sel-p", seq: 4, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1"] },
+      { shape: "failure", id: "f-schema", seq: 5, role: "walk", refused: "schema", selection_ref: "sel-p", status: 422 },
+    ]
+    const offered = async (rows: unknown[]) => (await applicable(rows as any)).some((c) => c.id === "produce/answer/ch1")
+    expect(await offered(base)).toBe(false)
+    expect(await offered([...base, { shape: "world_changed", id: "w2", seq: 6, role: "person" }])).toBe(true)
   })
 
   test("[MUST-FAIL] a produce that saw the newest row of a latest_by input is not asked again while nothing newer comes", async () => {
