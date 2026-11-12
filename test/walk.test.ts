@@ -403,6 +403,24 @@ describe("candidates", () => {
     expect(await go([...rows, diff, verdict(1), ask("a3", 15, "git_land")])).toContain("call/git_land")
   })
 
+  test("[MUST-FAIL] a template run in this root is not run again over the same inputs: the request it led to is called instead", async () => {
+    for (const x of ["git_worktree", "fs_edit"]) served.add(x)
+    const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" }
+    const t = { shape: "activity_template", id: "t1", seq: 2, role: "described", sig: { in: ["gap"], out: ["gitWorktree"] }, calls: [{ shape: "git_worktree", pointer: { repo: "r" } }] }
+    const sel = { shape: "selection", id: "s1", seq: 3, role: "walk", a: "run/t1", root: "g1" }
+    const ended = { shape: "hop", id: "h1", seq: 4, role: "walk", phase: "ended", kind: "run", selection_ref: "s1", call_id: "c1" }
+    const ask = { shape: "request", id: "q1", seq: 5, role: "described", pointer: { type: "fs_edit", path: "a" }, input_refs: ["g1"] }
+    const ids = async (rows: any[]) => (await (applicable as any)(rows)).map((c: { id: string }) => c.id)
+    expect(await ids([gap, t])).toContain("run/t1") // never run here: offered
+    const after = await ids([gap, t, sel, ended, ask])
+    expect(after).not.toContain("run/t1") // run, and nothing it takes in came since: not again
+    expect(after).toContain("call/fs_edit") // so the request it led to is what is called
+    // a run that failed may run again; so may one when a row it takes in comes later
+    const failed = { shape: "failure", id: "f1", seq: 4, role: "walk", selection_ref: "s1", status: 503 }
+    expect(await ids([gap, t, sel, failed, ask])).toContain("run/t1")
+    expect(await ids([gap, t, sel, ended, ask, { ...gap, id: "g2", seq: 6 }])).toContain("run/t1")
+  })
+
   test("[MUST-FAIL] preconditions in different groups must each be met: a group is a gate, its rows its alternatives", async () => {
     const wants = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     const gapOpen = { shape: "requires", id: "rq2", seq: 8, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" } }
