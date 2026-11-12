@@ -192,9 +192,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // records answers "nothing yet" then. A deadline already passed is not waited through: grading the lapse is the move. With no
   // deadline ahead there is nothing anyone will write to wait for, so waiting is not offered and the walk produces (a
   // due, among others) instead.
-  // A root no one awaits an answer on (records says so: the walk's arm, a gap a detector opened) is worked like idling:
-  // the walk may wait for the next row, unbounded, rather than produce until something comes. A records that does not
-  // say is read as before: idle only on the walk's arm.
+  // A root no one awaits an answer on (records says so: the walk's arm) is worked like idling: the walk may wait for the
+  // next row, unbounded, rather than produce until something comes. A root someone awaits (a request, or a gap a
+  // detector opened, which awaits the change its check passes on) is waited on only by its deadline, since an unbounded
+  // wait there would hold every root until an unrelated row came. A records that does not say is read as before: idle
+  // only on the walk's arm.
   const idle = note.awaits === false || (note.awaits === undefined && pool.some((x) => x.shape === ARM))
   // The request's deadline is its FIRST deadline row, read as records reads it (lapsed()): written by the producer
   // (role described) with a within_ms records turned into at, citing the request. A later one does not move it, and a
