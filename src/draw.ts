@@ -2,6 +2,14 @@
 // from: which level of evidence records drew the posterior from (its cell, or a coarser one it backed off to).
 export type Post = { alpha: number; beta: number; from?: string }
 
+// Which of n to take, uniformly, from a seed: the same seed always takes the same one. A different stream from draw()'s
+// own, so taking a root and then drawing a move within it are not tied to each other.
+export const pick = (seed: number, n: number): number => {
+  let t = Math.imul((seed ^ 0x9e3779b9) | 0, 0x85ebca6b)
+  t = Math.imul(t ^ (t >>> 13), 0xc2b2ae35)
+  return Math.floor((((t ^ (t >>> 16)) >>> 0) / 4294967296) * n)
+}
+
 export const draw = (seed: number, posts: Post[]): number => {
   let s = seed | 0
   const u = (): number => {

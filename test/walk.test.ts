@@ -17,6 +17,36 @@ describe("Thompson draw", () => {
   })
 })
 
+describe("choosing among roots", () => {
+  beforeAll(() => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+  })
+
+  test("[MUST-FAIL] a root with one weak move is drawn about as often as one with many strong moves", async () => {
+    const { choose } = await import("../src/loop")
+    // A: eight moves that have done well; B: a gap root's one move that has not yet been credited
+    const options = [...Array.from({ length: 8 }, () => ({ root: "A" })), { root: "B" }]
+    const posts = [...Array.from({ length: 8 }, () => ({ alpha: 20, beta: 5 })), { alpha: 1, beta: 30 }]
+    let b = 0
+    for (let seed = 1; seed <= 400; seed++) if (options[choose(seed, options, posts)].root === "B") b++
+    expect(b).toBeGreaterThan(140)
+    expect(b).toBeLessThan(260)
+  })
+
+  test("within a root the posterior still decides, and the same seed gives the same choice (a guard)", async () => {
+    const { choose } = await import("../src/loop")
+    const options = [{ root: "A" }, { root: "A" }]
+    const posts = [{ alpha: 1, beta: 50 }, { alpha: 50, beta: 1 }]
+    for (let seed = 1; seed < 50; seed++) {
+      expect(choose(seed, options, posts)).toBe(1)
+      expect(choose(seed, options, posts)).toBe(choose(seed, options, posts))
+    }
+  })
+})
+
 describe("candidates", () => {
   const served = new Set(["answer", "fileContent", "outcome", "due"])
   const asked: Array<Record<string, unknown>> = []
@@ -974,11 +1004,9 @@ describe("choosing among open requests", () => {
     expect(of("w117", "produce/answer/ch1")).toHaveLength(0)
     expect(of("w2308", "produce/answer/ch1")[0].context).toContain("asker:person")
     expect(of("w2308", "produce/answer/ch1")[0].context).toContain("age:0")
-    expect(got.find((o) => o.root === "w117")?.context).toContain("age:6")
-    // one wait per kind, bounded by the earliest deadline ahead across both requests
-    const waits = got.filter((o) => o.cand.kind === "wait-for")
-    expect(new Set(waits.map((o) => o.cand.id)).size).toBe(waits.length)
-    for (const w of waits) expect(w.cand.pointer.until).toBe(now + 60_000)
+    expect(got.filter((o) => o.root === "w117")).toHaveLength(0) // its one move, a wait, is not offered beside another's move
+    // a root has a move, so no wait is offered: a wait would hold both roots
+    expect(got.filter((o) => o.cand.kind === "wait-for")).toHaveLength(0)
   })
 
   test("[MUST-FAIL] a call that ended for one request offers nothing again for another", async () => {
@@ -1000,6 +1028,28 @@ describe("choosing among open requests", () => {
     const produce = (root: string) => got.filter((o) => o.root === root && o.cand.id === "produce/answer/ch1")
     expect(produce("wa")).toHaveLength(0)
     expect(produce("wb")).toHaveLength(1)
+  })
+
+  test("[MUST-FAIL] one root's long first deadline does not park the walk while another root has a move", async () => {
+    globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+    const { choices } = await import("../src/loop")
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    const shared = [
+      { shape: "channel", id: "ch1", seq: 1, role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 2, role: "owner", target: "request", inputs: ["gap"] },
+    ]
+    // X: a person's request answered, its first deadline hours ahead (legal): its only move is to wait
+    const x = { shape: "world_changed", id: "wx", seq: 3, role: "person", t: "2026-01-01T11:00:00Z" }
+    const xDue = { shape: "due", id: "dx", seq: 4, role: "described", within_ms: 4 * 3_600_000, at: now + 3 * 3_600_000, input_refs: ["wx"] }
+    // Y: a gap a detector opened, whose move is to ask for the next call toward closing it
+    const y = { shape: "gap", id: "gy", seq: 5, role: "detector", gap_id: "y", status: "open", t: "2026-01-01T11:30:00Z" }
+    const roots = [{ root: x as any, rows: [x, xDue] as any }, { root: y as any, rows: [y] as any }]
+    const got = await choices(shared as any, roots, now)
+    expect(got.filter((o) => o.cand.kind === "wait-for")).toHaveLength(0)
+    expect(got.some((o) => o.root === "gy" && o.cand.id.startsWith("produce/request"))).toBe(true)
+    // with nothing to do on Y, the walk waits again, bounded by X's first deadline
+    const idle = await choices(shared as any, [roots[0]], now)
+    expect(idle.map((o) => [o.cand.kind, o.cand.pointer.until])).toEqual([["wait-for", now + 3 * 3_600_000]])
   })
 
   test("[MUST-FAIL] once any request's first deadline has passed, no wait is offered: not even another root's unbounded one", async () => {

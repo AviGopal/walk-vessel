@@ -2,7 +2,7 @@
 import { type Seen, type Skipped, applicable } from "./applicable"
 import { type Cand, type Row, execute, loopCall, recordSkipped, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
-import { type Post, draw } from "./draw"
+import { type Post, draw, pick } from "./draw"
 import { ARM, DESCRIBED, DUE, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
@@ -45,10 +45,12 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
       if (!seen || until(cand) < until(seen.cand)) waits.set(cand.id, o)
     }
   }
+  // The walk makes one move at a time, so a wait holds every root until it ends: it is offered only when no root has
+  // anything else to do. One request's long deadline must not park the walk while another root has a move.
   // A root whose first deadline has passed offers no wait of its own: grading the lapse is its move. Nor may another
   // root's wait be taken then, or a wait with no bound (an idle or gap root's) would keep that lapse ungraded until a row
   // happened to come.
-  const offered = [...out, ...(overdue ? [] : waits.values())]
+  const offered = out.length > 0 ? out : overdue ? [] : [...waits.values()]
   if (offered.length > 0 || roots.length === 0) return offered
   // Nothing to do on any root (every produce pending, nothing to call, no wait offered): the walk waits for the next row
   // rather than having no move. A deadline still ahead bounds it, since one passing makes a lapse gradable.
@@ -59,6 +61,18 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
   const cand: Cand = { pointer: { shapes: [], ...(ahead.length > 0 ? { until: Math.min(...ahead) } : {}) }, calls: [], t: "", id: WAIT_FOR, kind: WAIT_FOR }
   const context = [`asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
   return [{ cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped: [], root: root.id }]
+}
+
+/**
+ * Which option to take: a root first, uniformly among the roots with a move, then a move within it by its posterior. A
+ * root whose many cells score well cannot take every draw from one with a single move, and every root is drawn. Both
+ * from the seed the selection records, so the choice can be replayed.
+ */
+export const choose = (seed: number, options: Array<{ root: string }>, posts: Post[]): number => {
+  const roots = [...new Set(options.map((o) => o.root))]
+  const root = roots[pick(seed, roots.length)]
+  const its = options.flatMap((o, j) => (o.root === root ? [j] : []))
+  return its[draw(seed, its.map((j) => posts[j]))]
 }
 
 // A records that does not know roots answers its single episode as a list: worked as one root, its first row.
@@ -75,7 +89,7 @@ export const chain = async (): Promise<void> => {
     const cells = options.map((o) => o.cell)
     const post = (await loopCall(POSTERIOR, { cells, as_of_seq: asOf })) as { at_seq: number; posts: Post[] }
     const seed = Date.now() >>> 0
-    const i = draw(seed, post.posts)
+    const i = choose(seed, options, post.posts)
     const { cand: a, pool, context, skipped, root } = options[i]
     const poolRefs = pool.map((r) => r.id)
     const sel = await writeRow({
