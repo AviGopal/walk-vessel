@@ -780,6 +780,24 @@ describe("cell context", () => {
   })
 })
 
+describe("the declared answers read", () => {
+  test("[MUST-FAIL] a discovery that refuses the shapeDescriptions read leaves the walk going, with no answers", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response("unavailable", { status: 500 })) as typeof fetch
+    const exit = process.exit
+    let exited = false
+    process.exit = ((() => { exited = true }) as unknown) as typeof process.exit
+    try {
+      const { shapeAnswers } = await import("../src/calls")
+      expect(await shapeAnswers()).toEqual({})
+      expect(exited).toBe(false)
+    } finally {
+      globalThis.fetch = realFetch
+      process.exit = exit
+    }
+  })
+})
+
 describe("a stop mid-call", () => {
   test("[MUST-FAIL] a SIGTERM ends the call in flight as a failure the callee is blamed for, then exits 0", async () => {
     const rows: Array<Record<string, any>> = []

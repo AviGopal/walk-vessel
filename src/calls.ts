@@ -51,11 +51,14 @@ export const writeRow = async (row: object): Promise<Row> =>
   (await loopCall(RECORD_WRITE, { row, writer: VESSEL_ID, role: WALK })) as Row
 
 // What each call answers with, as the serving vessels declare it to discovery (shape_answers): read once per pass, so a
-// skip can name the call that makes a shape a step still needs. A discovery that does not answer, or declares none, is
-// no answers: the skip then says what it said before.
+// skip can name the call that makes a shape a step still needs. It only adds to what a skip says, so it never stops the
+// walk: read with resolve (loopCall exits on a refusal, as it must for what the walk cannot go on without), and a
+// discovery that refuses, throws or declares none is no answers: the skip then says what it said before.
 export const shapeAnswers = async (): Promise<Record<string, string>> => {
   try {
-    const r = (await loopCall(SHAPE_DESCRIPTIONS, {})) as { shape_answers?: unknown; content?: { shape_answers?: unknown } } | null
+    const res = await resolve({ type: SHAPE_DESCRIPTIONS })
+    if (!res.ok) return {}
+    const r = res.body as { shape_answers?: unknown; content?: { shape_answers?: unknown } } | null
     const a = r?.shape_answers ?? r?.content?.shape_answers
     if (!a || typeof a !== "object" || Array.isArray(a)) return {}
     return Object.fromEntries(Object.entries(a as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
