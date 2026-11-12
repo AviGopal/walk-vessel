@@ -59,12 +59,22 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // rows of that shape each speak for something different (one gap or another), the requires row names the field that
   // tells them apart (latest_by), and the latest row of each counts: any one meeting where meets it. The field is the
   // owner's to name; the walk knows none.
-  const meets = (q: Row): boolean => {
+  // A where value may be bound to the call being asked for: {"x-pointer": "<field>"} is that call's pointer's field, so
+  // one row can say "a row about the same thing this call is about" (the same path, say). A call whose pointer has no
+  // such field does not meet it. The field is the owner's to name; the walk knows none.
+  const ofCall = (v: unknown, pointer: Record<string, unknown> | undefined): unknown => {
+    const field = typeof v === "object" && v !== null ? (v as { "x-pointer"?: unknown })["x-pointer"] : undefined
+    return typeof field === "string" ? pointer?.[field] : v
+  }
+  const meets = (q: Row, pointer?: Record<string, unknown>): boolean => {
     const by = typeof q.latest_by === "string" ? q.latest_by : undefined
     const latest = new Map<string, Row>()
     for (const x of pool.filter((r) => r.shape === String(q.needs)).sort((a, b) => a.seq - b.seq)) latest.set(by ? JSON.stringify(x[by]) : "", x)
     return [...latest.values()].some((x) =>
-      Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => JSON.stringify(x[k]) === JSON.stringify(v)))
+      Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => {
+        const want = ofCall(v, pointer)
+        return want !== undefined && JSON.stringify(x[k]) === JSON.stringify(want)
+      }))
   }
   // Rows may name a group: rows of one group are alternatives (any one met meets the group), and every group must be met.
   // A row naming none is in the one group every row was in before groups. The group is the owner's to name, as the
@@ -78,10 +88,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       .sort((a, b) => a.length - b.length)[0]
     return missing !== undefined && missing.length > 0 ? `${need}; ${need} is made from ${missing.join(", ")}, not yet here` : need
   }
-  const unmet = (shape: string): string[] => {
+  const unmet = (shape: string, pointer?: Record<string, unknown>): string[] => {
     const groups = new Map<string, Row[]>()
     for (const q of reqs.filter((q) => String(q.for) === shape)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
-    return [...groups.values()].filter((rs) => !rs.some(meets))
+    return [...groups.values()].filter((rs) => !rs.some((q) => meets(q, pointer)))
       .map((rs) => `${shape} (requires ${[...new Set(rs.map((q) => toward(String(q.needs))))].join(" or ")})`)
   }
   // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
@@ -178,7 +188,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
     const served = await exists(type)
-    const gate = unmet(type)
+    const gate = unmet(type, r.pointer as Record<string, unknown> | undefined)
     if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request" })
     return [r].filter(() => served && !answered.has(r.id) && gate.length === 0).map((): Cand => ({
       ...base,
@@ -202,7 +212,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const served = await Promise.all(shapes.map(exists))
     const channelless = [...new Set(calls.filter((c) => produced.has(c.shape) && !(c.pointer as { via_ref?: unknown } | undefined)?.via_ref)
       .map((c) => `${c.shape} (no channel)`))]
-    return [...shapes.filter((_, i) => !served[i]), ...channelless, ...shapes.flatMap(unmet)]
+    // each call of the template is held to its own pointer
+    return [...shapes.filter((_, i) => !served[i]), ...channelless, ...new Set(calls.flatMap((c) => unmet(c.shape, c.pointer)))]
   }))
   templates.forEach((r, i) => { if (unserved[i].length > 0) skipped.push({ id: r.id, unserved: unserved[i] }) })
   // A template already run in this root, whose run did not fail, is not run again until a row of a shape it takes in

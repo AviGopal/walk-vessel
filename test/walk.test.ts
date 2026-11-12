@@ -432,6 +432,30 @@ describe("candidates", () => {
     expect(loop).toContain("call/fs_edit")
   })
 
+  test("[MUST-FAIL] a precondition bound to the call's pointer is met only by a row about the same thing", async () => {
+    served.add("fs_edit")
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" }
+    const read = own({ shape: "requires", id: "qr", for: "fs_edit", needs: "fileContent", where: { path: { "x-pointer": "path" } }, latest_by: "path", group: "read" }, 2)
+    const edit = (path?: string) => ({ shape: "request", id: "e1", seq: 5, role: "described", pointer: { type: "fs_edit", ...(path ? { path } : {}), old_string: "a", new_string: "b" }, input_refs: ["g1"] })
+    const content = (path: string, seq: number) => ({ shape: "fileContent", id: `fc-${seq}`, seq, role: "walk", path, content: "a" })
+    const calls = async (rows: any[], skipped: any[] = []) => (await (applicable as any)(rows, skipped)).map((c: { id: string }) => c.id).filter((id: string) => id === "call/fs_edit")
+    // not read at all, or read at another path (an older clone's): the edit waits, and says for what
+    // the live shape (root 14282): the old clone's read does not open an edit in the new clone
+    const oldClone = "/workspace/git/walk-trees/local-tools-vessel-mwd3wldh-acdfc6bd/src/index.ts"
+    const newClone = "/workspace/git/walk-trees/local-tools-vessel-mwd8l8ul-5e1f0a2b/src/index.ts"
+    const s1: any[] = []
+    expect(await calls([gap, read, edit(newClone)], s1)).toEqual([])
+    expect(s1[0].unserved[0]).toContain("fs_edit (requires fileContent")
+    const s2: any[] = []
+    expect(await calls([gap, read, content(oldClone, 3), edit(newClone)], s2)).toEqual([])
+    expect(s2[0].unserved[0]).toContain("fs_edit (requires fileContent")
+    // read at the very path the edit names: offered
+    expect(await calls([gap, read, content(newClone, 3), edit(newClone)])).toEqual(["call/fs_edit"])
+    // an edit naming no path cannot meet a row bound to its path
+    expect(await calls([gap, read, content(newClone, 3), edit()])).toEqual([])
+  })
+
   test("[MUST-FAIL] preconditions in different groups must each be met: a group is a gate, its rows its alternatives", async () => {
     const wants = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     const gapOpen = { shape: "requires", id: "rq2", seq: 8, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" } }
