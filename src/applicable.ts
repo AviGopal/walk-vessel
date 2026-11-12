@@ -44,13 +44,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const channels = pool.filter((r) => CHANNELS.has(r.shape))
   const ready = schemas.filter((s) => [s.inputs].flat().every((x) => have.has(shapeOf(x))))
 
-  // A produce of T is not offered while its last try is fresher than everything the schema takes in (freshness, not
-  // presence): an ungraded T row, or a refusal of that produce as not fitting the schema, made after the newest row of
-  // the schema's input and context shapes. Asked again with nothing new, it can only say the same. What the producer was
-  // shown of those rows (which it kept, left out or cut) is the producer's to say, in its own row; the walk asks only
-  // whether something came since. "Takes in" leaves out the walk's own bookkeeping (its hops, failures and selections:
-  // how the walk got here, not what the producer answers) and rows of T itself (answers, not inputs). A root is one ask,
-  // so any T row in it is a try at it, whichever schema variant made it.
+  // A produce of T is not offered while the pool holds a T row that saw exactly what this produce would see and that no
+  // outcome has graded yet: an ungraded duplicate cannot be useful, because the first one's grade has not come. "What it
+  // sees" is every pool row of the schema's inputs and context shapes except the walk's own bookkeeping (its hops,
+  // failures and selections), since those are how the walk got here, not what the producer answers.
   // So a new answer or due re-offers an outcome, while a repeat answer or due for the same request waits for a grade.
   // Whether to produce T again once it is graded is left to selection, not decided here.
   const byId = new Map(pool.map((r) => [r.id, r]))
@@ -122,11 +119,36 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const graded = new Set(pool.filter((r) => r.shape === OUTCOME)
     .flatMap((o) => [...refs(o, "input_refs"), ...refs(o, "evidence_refs")].filter((id) => counts(o, id))))
+  const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
   const seen = (s: Row) => {
-    const shapes = new Set([s.inputs, s.context ?? []].flat().map(shapeOf))
-    return (r: Row | undefined): boolean => r !== undefined && shapes.has(r.shape) && r.shape !== String(s.target) &&
-      !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r) && !held(r))
+    const entries = [s.inputs, s.context ?? []].flat()
+    const shapes = new Set(entries.map(shapeOf))
+    // An entry with latest_by shows the producer only the newest row per value of that field (described-shape reads it
+    // so), so an older row of it is not something the producer saw: counted here, a produce that cited only the newest
+    // would never read as having seen what it would see now, and would be asked again forever.
+    const older = new Set<string>()
+    for (const e of entries) {
+      const by = typeof e === "object" && e !== null ? (e as { latest_by?: unknown }).latest_by : undefined
+      if (typeof by !== "string") continue
+      const newest = new Map<string, Row>()
+      for (const r of pool.filter((x) => x.shape === shapeOf(e)).sort((a, b) => a.seq - b.seq)) {
+        const k = JSON.stringify(r[by])
+        const was = newest.get(k)
+        if (was !== undefined) older.add(was.id)
+        newest.set(k, r)
+      }
+    }
+    return (r: Row | undefined): boolean =>
+      r !== undefined && shapes.has(r.shape) && !older.has(r.id) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r) && !held(r))
   }
+  // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
+  // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other
+  // failure (a channel or read that was down, a 422 passed through from a read or write) stays retryable.
+  const refusedOver = (target: string, sees: (r: Row | undefined) => boolean): string[] => pool
+    .filter((r) => r.shape === FAILURE && r.refused === "schema")
+    .map((f) => byId.get(String(f.selection_ref)))
+    .filter((sel): sel is Row => sel !== undefined && String(sel.a).startsWith(`${PRODUCE}/${target}/`))
+    .map((sel) => key([sel.pool_refs].flat().map(String).filter((id) => sees(byId.get(id)))))
   const pending = (s: Row): boolean => {
     // A judge that changed judges again: when a gate's judgment (a shape some owner requires row needs) has a schema row
     // newer than the root's latest row of it, that judgment was made under the old words, so it is offered once more,
@@ -136,30 +158,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const last = pool.filter((r) => r.shape === String(s.target)).sort((a, b) => a.seq - b.seq).at(-1)
     if (judged && last !== undefined && s.role === OWNER && s.seq > last.seq) return false
     const sees = seen(s)
-    const taken = pool.filter(sees)
-    const fresh = Math.max(-1, ...taken.map((r) => r.seq))
-    // A deadline passing is information arriving too, with no new row: a seen row's `at`, now past, that fell after a try
-    // was made makes that try stale (grading the lapse is the move then).
-    const lapsedSince = (t: unknown): boolean => taken.some((r) => typeof r.at === "number" && r.at <= now && r.at > Date.parse(String(t)))
-    // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
-    // a try too: asking again over nothing new mostly buys the same refusal. Any other failure stays retryable.
-    // A try's clock is what the producer could have been shown: the newest row of the pool its selection was chosen over
-    // (pool_refs, read before the selection row was written; a row landing in between is not in it). An answer comes
-    // later still, so a row arriving after that pool was read was never seen. Without pool_refs the selection itself
-    // times it; a target row whose selection is not in the pool (a person's, or one made elsewhere) is timed by itself.
-    // A deadline is measured from the selection's t: the pool read carries no time of its own, so a deadline passing in
-    // the moment between the read and the selection row is taken as known, which delays its lapse grade by one move.
-    const clock = (sel: Row | undefined, row: Row): { seq: number; t: unknown } => {
-      if (sel === undefined) return { seq: row.seq, t: row.t }
-      const shown = [sel.pool_refs].flat().map((id) => byId.get(String(id))?.seq).filter((n): n is number => typeof n === "number")
-      return { seq: shown.length > 0 ? Math.max(...shown) : sel.seq, t: sel.t }
-    }
-    const tries = [
-      ...pool.filter((r) => r.shape === String(s.target) && !graded.has(r.id)).map((r) => clock(byId.get(String(r.selection_ref)), r)),
-      ...pool.filter((r) => r.shape === FAILURE && r.refused === "schema").map((f) => byId.get(String(f.selection_ref)))
-        .filter((sel): sel is Row => sel !== undefined && String(sel.a).startsWith(`${PRODUCE}/${String(s.target)}/`)).map((sel) => clock(sel, sel)),
-    ]
-    return tries.some((t) => t.seq >= fresh && !lapsedSince(t.t))
+    const now = key(pool.filter(sees).map((r) => r.id))
+    return pool
+      .filter((r) => r.shape === String(s.target))
+      .filter((r) => !graded.has(r.id))
+      .some((r) => key([r.input_refs].flat().map(String).filter((id) => sees(byId.get(id)))) === now) ||
+      refusedOver(String(s.target), sees).includes(now)
   }
 
   // A grade judges something: an answer (a described row of a shape the grade reads as context, other than a grade or a
