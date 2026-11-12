@@ -379,6 +379,17 @@ describe("candidates", () => {
     expect(await ids([ask, ch, older, newer])).not.toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] an input named as {shape, …} is met by a row of its shape: the produce is offered", async () => {
+    const pool = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "x", status: "open" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["gap", { shape: "gitDiff", latest_by: "shape" }] },
+    ]
+    expect((await applicable(pool)).some((c) => c.id === "produce/answer/ch1")).toBe(false) // no gitDiff yet
+    const withDiff = [...pool, { shape: "gitDiff", id: "d1", seq: 4, role: "walk", tree: "t1" }]
+    expect((await applicable(withDiff)).some((c) => c.id === "produce/answer/ch1")).toBe(true)
+  })
+
   test("[MUST-FAIL] a call the owner preconditions is offered only once the root holds what it requires", async () => {
     const req = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     const cw = (wanted: boolean) => ({ shape: "change_wanted", id: `cw-${wanted}`, seq: 8, role: "described", wanted, input_refs: ["w1"] })

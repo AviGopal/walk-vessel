@@ -42,7 +42,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const newest = new Map(pool.filter((r) => SCHEMAS.has(r.shape)).sort((a, b) => a.seq - b.seq).map((r) => [`${String(r.target)}|${variant(r)}`, r]))
   const schemas = [...newest.values()]
   const channels = pool.filter((r) => CHANNELS.has(r.shape))
-  const ready = schemas.filter((s) => (s.inputs as string[]).every((x) => have.has(x)))
+  const ready = schemas.filter((s) => [s.inputs].flat().every((x) => have.has(shapeOf(x))))
 
   // A produce of T is not offered while the pool holds a T row that saw exactly what this produce would see and that no
   // outcome has graded yet: an ungraded duplicate cannot be useful, because the first one's grade has not come. "What it
