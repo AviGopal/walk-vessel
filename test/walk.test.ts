@@ -368,6 +368,41 @@ describe("candidates", () => {
     expect(await calls([...pool, wants, gapOpen, gap("open")])).toEqual(["call/fileContent"])
   })
 
+  test("[MUST-FAIL] on a gap, a landing waits for its verdict, and each wait names the next step: diff, then judge, then land", async () => {
+    for (const x of ["request", "land_verdict", "git_land", "git_diff"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const rows: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure"] }, 3),
+      own({ shape: "shape_schema", id: "sl", target: "land_verdict", inputs: ["world_changed", "gitDiff"] }, 4),
+      own({ shape: "shape_schema", id: "slg", target: "land_verdict", variant: "gap", inputs: ["gap", "gitDiff"] }, 5),
+      own({ shape: "requires", id: "q1", for: "git_land", needs: "change_wanted", where: { wanted: true } }, 6),
+      own({ shape: "requires", id: "q2", for: "git_land", needs: "gap", where: { status: "open" }, latest_by: "gap_id" }, 7),
+      own({ shape: "requires", id: "q3", for: "git_land", needs: "land_verdict", where: { r: 1 }, latest_by: "tree", group: "verdict" }, 8),
+    ]
+    const ask = (id: string, seq: number, type: string, refs: string[] = ["g1"]) =>
+      ({ shape: "request", id, seq, role: "described", pointer: { type }, input_refs: refs })
+    const go = async (pool: any[], skipped: any[] = []) => (await (applicable as any)(pool, skipped)).map((c: { id: string }) => c.id)
+    // asked to land with no verdict: not called, and told what the landing waits for and what that is made from
+    const s1: any[] = []
+    const c1 = await go([...rows, ask("a1", 10, "git_land")], s1)
+    expect(c1).not.toContain("call/git_land")
+    expect(c1).not.toContain("produce/request/gap/ch1") // nothing new yet: the same request would be asked again
+    expect(s1).toEqual([{ id: "a1", unserved: ["git_land (requires land_verdict; land_verdict is made from gitDiff, not yet here)"], of: "request" }])
+    // the walk's row saying so is new information: the request is produced again, with the reason in view
+    const skip = { shape: "failure", id: "f1", seq: 11, role: "walk", kind: "skip", request_ref: "a1", unserved: s1[0].unserved, selection_ref: "x", input_refs: ["x", "a1"] }
+    expect(await go([...rows, ask("a1", 10, "git_land"), skip])).toContain("produce/request/gap/ch1")
+    // asked for the diff: called; the diff in the root: the verdict is produced
+    expect(await go([...rows, skip, ask("a2", 12, "git_diff", ["g1", "f1"])])).toContain("call/git_diff")
+    const diff = { shape: "gitDiff", id: "d1", seq: 13, role: "walk", tree: "t".repeat(40), input_refs: ["g1"] }
+    expect(await go([...rows, diff])).toContain("produce/land_verdict/gap/ch1")
+    // a verdict at r 0 still holds the landing; at r 1 it is called
+    const verdict = (r: number) => ({ shape: "land_verdict", id: `v${r}`, seq: 14, role: "described", tree: diff.tree, r, input_refs: ["g1", "d1"] })
+    expect(await go([...rows, diff, verdict(0), ask("a3", 15, "git_land")])).not.toContain("call/git_land")
+    expect(await go([...rows, diff, verdict(1), ask("a3", 15, "git_land")])).toContain("call/git_land")
+  })
+
   test("[MUST-FAIL] preconditions in different groups must each be met: a group is a gate, its rows its alternatives", async () => {
     const wants = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     const gapOpen = { shape: "requires", id: "rq2", seq: 8, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" } }
@@ -636,6 +671,28 @@ describe("a template the walk will not run", () => {
     const earlier = { shape: "failure", id: "f1", seq: 12, kind: "skip", template_ref: "t-hop", unserved: ["hop"] } as any
     await recordSkipped([earlier], [{ id: "t-hop", unserved: ["hop"] }], sel)
     expect(written).toHaveLength(1)
+  })
+
+  test("[MUST-FAIL] a request its call must wait for is said once per reason, naming the request", async () => {
+    const written: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      if (pointer.type === "record_write") written.push(pointer.row)
+      return Response.json({ ...pointer.row, id: "r", seq: 1 })
+    }) as typeof fetch
+    const { recordSkipped } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-5", seq: 20 } as any
+    const why = ["git_land (requires land_verdict)"]
+    await recordSkipped([], [{ id: "a1", unserved: why, of: "request" }], sel)
+    expect(written).toHaveLength(1)
+    expect(written[0]).toMatchObject({ shape: "failure", kind: "skip", request_ref: "a1", unserved: why, selection_ref: "sel-5", input_refs: ["sel-5", "a1"] })
+    expect("template_ref" in written[0]).toBe(false)
+    expect(String(written[0].body)).toContain("request a1 cannot be called yet")
+    const told = { shape: "failure", id: "f9", seq: 21, kind: "skip", request_ref: "a1", unserved: why } as any
+    await recordSkipped([told], [{ id: "a1", unserved: why, of: "request" }], sel)
+    expect(written).toHaveLength(1) // the same reason: nothing
+    await recordSkipped([told], [{ id: "a1", unserved: ["git_land (requires gap)"], of: "request" }], sel)
+    expect(written).toHaveLength(2) // a new reason: said
   })
 
   test("[MUST-FAIL] a template skipped for a new reason says so once; the reason its latest row gives writes nothing", async () => {

@@ -12,7 +12,9 @@ export const WRITTEN: Record<string, string> = {
     "its cell and context, arm (treated or control, which decides whether a grade credits it), and pool_refs, the rows " +
     "it saw.",
   [FAILURE]: "A call that did not end well, with the status and body the producer answered; or, with kind skip, a " +
-    "template the walk did not run because a shape it calls (unserved) is served by nothing (template_ref); or, with kind " +
+    "template the walk did not run because a shape it calls (unserved) is served by nothing or not yet allowed " +
+    "(template_ref), or a request whose call the owner's preconditions do not yet allow (request_ref, unserved naming " +
+    "what it requires); or, with kind " +
     "too_big, an answer not kept as a row of its shape (unrecorded) because it was bytes long; or, with kind " +
     "unrunnable, a move of a kind the walk cannot run; or, with status 0 and body saying so, a call the walk was " +
     "stopped in the middle of.",

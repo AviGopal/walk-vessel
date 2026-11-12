@@ -24,8 +24,9 @@ const informs = (r: Row): boolean => r.shape === HOP && r.phase === ENDED && (r.
 
 const base = { pointer: {}, calls: [] as Inner[], t: "" }
 
-/** A template not run because it calls shapes nothing serves: the loop records it (calls.ts recordSkipped). */
-export type Skipped = { id: string; unserved: string[] }
+/** A template not run because it calls shapes nothing serves or not yet allowed, or a request whose call is not yet
+ * allowed (of: "request"): the loop records it (calls.ts recordSkipped). */
+export type Skipped = { id: string; unserved: string[]; of?: "request" }
 
 /** What a root's moves leave out that choices() must know across roots: a first deadline that has already passed. And
  * what records says of the root (awaits: false when no one awaits an answer on it), passed in. */
@@ -68,17 +69,32 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // Rows may name a group: rows of one group are alternatives (any one met meets the group), and every group must be met.
   // A row naming none is in the one group every row was in before groups. The group is the owner's to name, as the
   // shapes are: the walk knows none.
+  // What is said of an unmet group names what it needs and, when the owner's schemas make that shape from inputs not yet
+  // in the root, those inputs (from the schema missing fewest): the next step toward meeting it, read from the owner's
+  // rows, so a request told its call must wait is told what to ask for instead.
+  const toward = (need: string): string => {
+    const missing = schemas.filter((s) => String(s.target) === need)
+      .map((s) => [s.inputs as string[]].flat().map(shapeOf).filter((x) => !have.has(x)))
+      .sort((a, b) => a.length - b.length)[0]
+    return missing !== undefined && missing.length > 0 ? `${need}; ${need} is made from ${missing.join(", ")}, not yet here` : need
+  }
   const unmet = (shape: string): string[] => {
     const groups = new Map<string, Row[]>()
     for (const q of reqs.filter((q) => String(q.for) === shape)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
     return [...groups.values()].filter((rs) => !rs.some(meets))
-      .map((rs) => `${shape} (requires ${[...new Set(rs.map((q) => String(q.needs)))].join(" or ")})`)
+      .map((rs) => `${shape} (requires ${[...new Set(rs.map((q) => toward(String(q.needs))))].join(" or ")})`)
   }
   // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
   // came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that ended, it
   // is new information for a schema that reads failures, and it settles the request that made the call: the same pointer
   // would get the same answer. Whom a failure blames is records' to say (one rule, which its fold debits by too); any
   // other failure leaves the request callable.
+  // A request whose call the owner's preconditions do not yet allow is not called, and the walk says so: a failure row
+  // naming the request and what its call requires (recordSkipped). That is new information for a schema that reads
+  // failures, as a refusal is, so the request is produced again with the reason in view; otherwise nothing new would
+  // come, and the walk, with no move, would wait for a row no one writes. The request itself stays callable: once the
+  // precondition is met, its call is offered.
+  const held = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.request_ref !== undefined
   const spoke = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.blames === "request" &&
     [CALL, RUN].some((k) => String(byId.get(String(r.selection_ref))?.a ?? "").startsWith(`${k}/`))
   // A row counts as graded when an outcome judged it with something the row itself did not carry: a person's verdict, a
@@ -97,7 +113,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const seen = (s: Row) => {
     const shapes = new Set([s.inputs, s.context ?? []].flat().map(shapeOf))
     return (r: Row | undefined): boolean =>
-      r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r))
+      r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r) && !held(r))
   }
   // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
   // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other
@@ -162,7 +178,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
     const served = await exists(type)
-    return [r].filter(() => served && !answered.has(r.id) && unmet(type).length === 0).map((): Cand => ({
+    const gate = unmet(type)
+    if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request" })
+    return [r].filter(() => served && !answered.has(r.id) && gate.length === 0).map((): Cand => ({
       ...base,
       id: [CALL, type].join("/"),
       kind: CALL,

@@ -201,12 +201,14 @@ const RUNNERS = new Map<string, Runner>([
 const why = (unserved: unknown): string => JSON.stringify([unserved].flat().map(String).sort())
 export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): Promise<void> => {
   const latest = new Map<string, Row>()
-  for (const r of pool.filter((x) => x.shape === FAILURE && x.kind === "skip").sort((a, b) => a.seq - b.seq)) latest.set(String(r.template_ref), r)
+  for (const r of pool.filter((x) => x.shape === FAILURE && x.kind === "skip").sort((a, b) => a.seq - b.seq)) {
+    latest.set(String(r.template_ref ?? r.request_ref), r)
+  }
   for (const t of skipped.filter((x) => latest.get(x.id) === undefined || why(latest.get(x.id)?.unserved) !== why(x.unserved))) {
-    await writeRow({
-      shape: FAILURE, kind: "skip", selection_ref: sel.id, template_ref: t.id, unserved: t.unserved,
-      body: `template ${t.id} cannot run: ${t.unserved.join(", ")}`, input_refs: [sel.id, t.id],
-    })
+    const which = t.of === "request"
+      ? { request_ref: t.id, body: `request ${t.id} cannot be called yet: ${t.unserved.join(", ")}` }
+      : { template_ref: t.id, body: `template ${t.id} cannot run: ${t.unserved.join(", ")}` }
+    await writeRow({ shape: FAILURE, kind: "skip", selection_ref: sel.id, unserved: t.unserved, ...which, input_refs: [sel.id, t.id] })
   }
 }
 
