@@ -121,9 +121,25 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .flatMap((o) => [...refs(o, "input_refs"), ...refs(o, "evidence_refs")].filter((id) => counts(o, id))))
   const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
   const seen = (s: Row) => {
-    const shapes = new Set([s.inputs, s.context ?? []].flat().map(shapeOf))
+    const entries = [s.inputs, s.context ?? []].flat()
+    const shapes = new Set(entries.map(shapeOf))
+    // An entry with latest_by shows the producer only the newest row per value of that field (described-shape reads it
+    // so), so an older row of it is not something the producer saw: counted here, a produce that cited only the newest
+    // would never read as having seen what it would see now, and would be asked again forever.
+    const older = new Set<string>()
+    for (const e of entries) {
+      const by = typeof e === "object" && e !== null ? (e as { latest_by?: unknown }).latest_by : undefined
+      if (typeof by !== "string") continue
+      const newest = new Map<string, Row>()
+      for (const r of pool.filter((x) => x.shape === shapeOf(e)).sort((a, b) => a.seq - b.seq)) {
+        const k = JSON.stringify(r[by])
+        const was = newest.get(k)
+        if (was !== undefined) older.add(was.id)
+        newest.set(k, r)
+      }
+    }
     return (r: Row | undefined): boolean =>
-      r !== undefined && shapes.has(r.shape) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r) && !held(r))
+      r !== undefined && shapes.has(r.shape) && !older.has(r.id) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r) && !held(r))
   }
   // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
   // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other

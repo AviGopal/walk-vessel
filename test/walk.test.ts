@@ -379,6 +379,22 @@ describe("candidates", () => {
     expect(await ids([ask, ch, older, newer])).not.toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a produce that saw the newest row of a latest_by input is not asked again while nothing newer comes", async () => {
+    const schema = { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["gap", { shape: "gitDiff", latest_by: "shape" }] }
+    const pool = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "x", status: "open" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      schema,
+      { shape: "gitDiff", id: "d-old", seq: 4, role: "walk", tree: "t1" },
+      { shape: "gitDiff", id: "d-new", seq: 5, role: "walk", tree: "t2" },
+      // the verdict described-shape wrote: shown the gap and the newest diff only, so it cites those
+      { shape: "answer", id: "v1", seq: 6, role: "described", r: 0, input_refs: ["g1", "d-new"] },
+    ]
+    expect((await applicable(pool)).some((c) => c.id === "produce/answer/ch1")).toBe(false) // it saw what it would see now
+    const newer = [...pool, { shape: "gitDiff", id: "d-3", seq: 7, role: "walk", tree: "t3" }]
+    expect((await applicable(newer)).some((c) => c.id === "produce/answer/ch1")).toBe(true) // a newer diff: asked again
+  })
+
   test("[MUST-FAIL] an input named as {shape, …} is met by a row of its shape: the produce is offered", async () => {
     const pool = [
       { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "x", status: "open" },
