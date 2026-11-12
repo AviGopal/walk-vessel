@@ -99,6 +99,24 @@ const bounded = (value: unknown, max: number): unknown => {
   return whole.length <= max ? value : { cut: true, bytes: whole.length, start: whole.slice(0, max) }
 }
 
+// The calls started and not yet ended, by call_id, with the selection each was made for: what a stop ends (stop below).
+const inFlight = new Map<string, Row>()
+let stopping = false
+export const stopped = (): boolean => stopping
+
+// A unit stopped mid-call (a restart of the walk, or of a unit it is part of) leaves a started hop that nothing ends,
+// and a call nothing says the outcome of. So a stop writes each call still in flight a failure row, waits included: status
+// 0 and no kind, which records blames on the callee, so the cell is neither credited nor debited and the request stays
+// callable. Once stopping, a call that comes back writes nothing, so no call is ended twice.
+const STOPPED = "the walk was stopped before the call ended"
+export const stop = async (): Promise<void> => {
+  stopping = true
+  const open = [...inFlight]
+  inFlight.clear()
+  await Promise.allSettled(open.map(([callId, sel]) =>
+    writeRow({ shape: FAILURE, call_id: callId, selection_ref: sel.id, status: 0, body: STOPPED, input_refs: [sel.id] })))
+}
+
 const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, callId: string): Promise<{ ok: boolean; row?: Row }> => {
   const refs = [sel.id]
   await writeRow({
@@ -106,8 +124,10 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
     // A wait's bound, when it has one, so how long the walk agreed to wait is in the row, not only in the request.
     ...(pointer.until !== undefined ? { until: pointer.until } : {}),
   })
+  inFlight.set(callId, sel)
   try {
-    const r = await resolve(pointer)
+    const r = await resolve(pointer).finally(() => inFlight.delete(callId))
+    if (stopping) return { ok: false }
     // A 200 can carry a failure: an error at the top level, or under content, the envelope a forwarded call comes back
     // in (a federation refusal arrives as {content: {error: "unauthorized", ...}, metadata}). That is a failure, not a
     // call that ended, so the request stays callable and the row says why.
@@ -128,6 +148,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
     if (kind === CALL || kind === RUN) await recordAnswer(sel, String(pointer.type), body as Record<string, unknown>, callId)
     return { ok: true }
   } catch (e) {
+    if (stopping) return { ok: false }
     return {
       ok: false,
       row: await writeRow({ shape: FAILURE, call_id: callId, selection_ref: sel.id, status: 0, body: String(e), input_refs: refs }),

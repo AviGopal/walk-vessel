@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { draw } from "../src/draw"
-import { type Fake, exitsNaming, fake, freePort, healthy, run } from "./harness"
+import { type Fake, exitsNaming, fake, freePort, healthy, run, until } from "./harness"
 
 const NODE_KEY = "node-key-for-test"
 
@@ -546,6 +546,51 @@ describe("cell context", () => {
   test("a cell's context is the shapes of rows the walk did not write itself, then the root's asker and age", () => {
     expect(cells.length).toBeGreaterThan(0)
     for (const c of cells) expect(c.split("|")[1]).toBe("channel,shape_schema,world_changed,asker:person,age:0")
+  })
+})
+
+describe("a stop mid-call", () => {
+  test("[MUST-FAIL] a SIGTERM ends the call in flight as a failure the callee is blamed for, then exits 0", async () => {
+    const rows: Array<Record<string, any>> = []
+    const pool = [
+      { shape: "world_changed", id: "w1", seq: 2, writer: "kid-person", role: "person", what: "x", t: new Date().toISOString() },
+      { shape: "channel", id: "ch1", seq: 3, writer: "owner", role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 4, writer: "owner", role: "owner", target: "answer", inputs: ["world_changed"] },
+    ]
+    const discovery = fake((path, body) => {
+      if (path !== "/resolve") return Response.json(path === "/heartbeat" ? { nextHeartbeatMs: 600000 } : { ok: true })
+      const p = body.pointer
+      if (p.type === "record_wait_exact") return Response.json({ shape: "arm", id: "arm1", seq: 1, arm: "treated", as_of_seq: 99 })
+      if (p.type === "record_read" && p.roots === "all") return Response.json({ shared: pool.slice(1), roots: [{ root: pool[0], rows: [pool[0]] }] })
+      if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+      if (p.type === "posterior") return Response.json({ at_seq: 6, posts: p.cells.map(() => ({ alpha: 1, beta: 1 })) })
+      if (p.type === "record_write") {
+        rows.push(p.row)
+        return Response.json({ ...p.row, id: `r${rows.length}`, seq: 10 + rows.length })
+      }
+      return new Promise<Response>(() => {}) // the produce never comes back: it is in flight when the stop comes
+    })
+    const port = freePort()
+    const vessel = run("src/index.ts", {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: String(port), DISCOVERY_URL: discovery.url,
+      WALK_ENDPOINT: `http://127.0.0.1:${port}`, METABOB_API_KEY: NODE_KEY,
+    })
+    try {
+      await healthy(port)
+      await until(() => rows.some((r) => r.shape === "hop" && r.phase === "started"), "a started hop")
+      const started = rows.find((r) => r.shape === "hop" && r.phase === "started")!
+      vessel.kill("SIGTERM")
+      expect(await vessel.exited).toBe(0)
+      const ends = rows.filter((r) => r.call_id === started.call_id && r !== started)
+      expect(ends).toHaveLength(1)
+      expect(ends[0]).toMatchObject({ shape: "failure", status: 0, selection_ref: started.selection_ref })
+      expect("kind" in ends[0]).toBe(false)
+      // nothing new is chosen once stopping
+      expect(rows.filter((r) => r.shape === "selection")).toHaveLength(1)
+    } finally {
+      vessel.kill()
+      discovery.stop()
+    }
   })
 })
 

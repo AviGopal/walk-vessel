@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { type Seen, type Skipped, applicable } from "./applicable"
-import { type Cand, type Row, execute, loopCall, recordSkipped, writeRow } from "./calls"
+import { type Cand, type Row, execute, loopCall, recordSkipped, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw } from "./draw"
 import { ARM, DESCRIBED, DUE, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
@@ -69,7 +69,7 @@ export const chain = async (): Promise<void> => {
   const armRow = (await loopCall(RECORD_WAIT_EXACT, { shapes: [ARM], after_seq: 0, where: { vessel_id: VESSEL_ID } })) as Row
   const arm = String(armRow.arm)
   const asOf = Number(armRow.as_of_seq)
-  while (true) {
+  while (!stopped()) {
     const { shared, roots } = asEpisodes(await loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all" }))
     const options = await choices(shared, roots)
     const cells = options.map((o) => o.cell)
