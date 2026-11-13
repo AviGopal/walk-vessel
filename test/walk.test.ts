@@ -698,6 +698,25 @@ describe("candidates", () => {
     expect(await ids([ask, ch, schema, old])).not.toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] what a tick cost is only in timing: two selections that differ in it alone are the same choice", async () => {
+    const { selectionRow } = await import("../src/loop")
+    const option = { cand: { id: "call/fileContent", kind: "call", pointer: {}, calls: [], t: "" }, pool: [...pool], context: ["world_changed", "asker:person", "age:0"], cell: "call/fileContent|world_changed,asker:person,age:0", skipped: [], root: "w1" }
+    const post = { at_seq: 9, posts: [{ cell: option.cell, alpha: 1, beta: 1 }] }
+    const fast = { episodes_ms: 1, episodes_reads: 1, choices_ms: 2, posterior_ms: 3, posterior_reads: 1, draw_ms: 0, cands: 1, cells: 1 }
+    const slow = { episodes_ms: 9000, episodes_reads: 4, choices_ms: 800, posterior_ms: 7000, posterior_reads: 2, draw_ms: 5, cands: 1, cells: 1 }
+    const a = selectionRow("treated", [option as any], post, 7, 0, fast)
+    const b = selectionRow("treated", [option as any], post, 7, 0, slow)
+    const { timing: ta, ...restA } = a as Record<string, unknown>
+    const { timing: tb, ...restB } = b as Record<string, unknown>
+    expect(ta).toEqual(fast)
+    expect(tb).toEqual(slow)
+    expect(restA).toEqual(restB) // the cell, its context, pool_refs, input_refs, a, from and root are untouched by timing
+    // and the walk offers the same moves whether the pool holds the fast or the slow selection
+    const sel = (t: object, id: string) => ({ ...(selectionRow("treated", [option as any], post, 7, 0, t as any)), id, seq: 20, role: "walk", writer: "walk" })
+    const ids = async (s: object) => (await applicable([...pool, s] as any)).map((c) => c.id).sort()
+    expect(await ids(sel(fast, "s1"))).toEqual(await ids(sel(slow, "s1")))
+  })
+
   test("a precondition row not written by the owner binds nothing (a guard)", async () => {
     const forged = { shape: "requires", id: "rq9", seq: 7, role: "walk", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     expect((await applicable([...pool, forged] as any)).map((c) => c.id)).toContain("call/fileContent")
@@ -997,6 +1016,16 @@ describe("cell context", () => {
     expect(cells.length).toBeGreaterThan(0)
     for (const c of cells) expect(c.split("|")[1]).toBe("world_changed,asker:person,age:0")
     expect(selection?.cell_scheme).toBe("reads")
+  })
+
+  test("[MUST-FAIL] the selection row carries what the tick cost: each part's ms and each read's tries", () => {
+    const t = selection?.timing
+    expect(t).toBeDefined()
+    for (const k of ["episodes_ms", "choices_ms", "posterior_ms", "draw_ms"]) expect(t[k]).toBeGreaterThanOrEqual(0)
+    expect(t.episodes_reads).toBeGreaterThanOrEqual(1)
+    expect(t.posterior_reads).toBeGreaterThanOrEqual(1)
+    expect(t.cands).toBeGreaterThanOrEqual(1)
+    expect(t.cells).toBeGreaterThanOrEqual(1)
   })
 })
 

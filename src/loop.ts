@@ -124,43 +124,71 @@ export const readUntil = async (read: () => Promise<unknown>, ok: (a: unknown) =
   }
 }
 
+/** How long each part of one tick took (ms) and how many reads each read needed, for the selection row. */
+export type Timing = { episodes_ms: number; episodes_reads: number; choices_ms: number; posterior_ms: number; posterior_reads: number; draw_ms: number; cands: number; cells: number }
+
+/**
+ * The selection row for the option the draw chose. What the tick cost is kept apart, in timing: no key the walk or
+ * records compares reads it (the cell and its context, pool_refs, input_refs, a, from, root), so two ticks that differ
+ * only in how long they took make the same choice look the same.
+ */
+export const selectionRow = (arm: string, options: Option[], post: { at_seq: number; posts: Post[] }, seed: number, i: number, timing: Timing): Record<string, unknown> => {
+  const { cand: a, pool, context, root } = options[i]
+  const poolRefs = pool.map((r) => r.id)
+  return {
+    shape: SELECTION,
+    arm,
+    cands: options.map((o) => ({ id: o.cand.id, kind: o.cand.kind, root: o.root })),
+    // Each draw's posterior as records gave it, with the level of evidence it came from, so how a choice was made (its
+    // own cell's record, or a coarser one's) can be judged later from the row.
+    posts: post.posts.map((p) => ({ alpha: p.alpha, beta: p.beta, ...(typeof p.from === "string" ? { from: p.from } : {}) })),
+    posts_seq: post.at_seq,
+    seed,
+    a: a.id,
+    ...(a.from ? { from: a.from } : {}),
+    cell: options[i].cell,
+    context,
+    // Which way the cell was keyed: "reads" (the move's own inputs). Before it, every shape in the root's pool.
+    cell_scheme: "reads",
+    root,
+    pool_refs: poolRefs,
+    input_refs: poolRefs,
+    timing,
+  }
+}
+
 export const chain = async (): Promise<void> => {
   const armRow = (await readUntil(() => loopCall(RECORD_WAIT_EXACT, { shapes: [ARM], after_seq: 0, where: { vessel_id: VESSEL_ID } }), isArm, "arm row")) as Row | undefined
   if (armRow === undefined) return
   const arm = String(armRow.arm)
   const asOf = Number(armRow.as_of_seq)
   while (!stopped()) {
-    const read = await readUntil(() => loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all" }), isEpisodes, "episodes")
+    // Each part of the tick is timed and each read's tries counted, so where a tick's time goes is on its row.
+    const ms = (t0: number) => Math.round(performance.now() - t0)
+    let episodesReads = 0
+    let posteriorReads = 0
+    const t0 = performance.now()
+    const read = await readUntil(() => { episodesReads++; return loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all" }) }, isEpisodes, "episodes")
     if (read === undefined) return
+    const episodesMs = ms(t0)
     const { shared, roots } = asEpisodes(read)
+    const t1 = performance.now()
     const options = await choices(shared, roots, Date.now(), await shapeAnswers())
+    const choicesMs = ms(t1)
     const cells = options.map((o) => o.cell)
-    const post = (await readUntil(() => loopCall(POSTERIOR, { cells, as_of_seq: asOf }), isPosterior(cells.length), "posterior")) as
+    const t2 = performance.now()
+    const post = (await readUntil(() => { posteriorReads++; return loopCall(POSTERIOR, { cells, as_of_seq: asOf }) }, isPosterior(cells.length), "posterior")) as
       { at_seq: number; posts: Post[] } | undefined
     if (post === undefined) return
+    const posteriorMs = ms(t2)
+    const t3 = performance.now()
     const seed = Date.now() >>> 0
     const i = choose(seed, options, post.posts)
-    const { cand: a, pool, context, skipped, root } = options[i]
-    const poolRefs = pool.map((r) => r.id)
-    const sel = await writeRow({
-      shape: SELECTION,
-      arm,
-      cands: options.map((o) => ({ id: o.cand.id, kind: o.cand.kind, root: o.root })),
-      // Each draw's posterior as records gave it, with the level of evidence it came from, so how a choice was made (its
-      // own cell's record, or a coarser one's) can be judged later from the row.
-      posts: post.posts.map((p) => ({ alpha: p.alpha, beta: p.beta, ...(typeof p.from === "string" ? { from: p.from } : {}) })),
-      posts_seq: post.at_seq,
-      seed,
-      a: a.id,
-      ...(a.from ? { from: a.from } : {}),
-      cell: cells[i],
-      context,
-      // Which way the cell was keyed: "reads" (the move's own inputs). Before it, every shape in the root's pool.
-      cell_scheme: "reads",
-      root,
-      pool_refs: poolRefs,
-      input_refs: poolRefs,
-    })
+    const { cand: a, pool, skipped } = options[i]
+    const sel = await writeRow(selectionRow(arm, options, post, seed, i, {
+      episodes_ms: episodesMs, episodes_reads: episodesReads, choices_ms: choicesMs, posterior_ms: posteriorMs,
+      posterior_reads: posteriorReads, draw_ms: ms(t3), cands: options.length, cells: new Set(cells).size,
+    }))
     await recordSkipped(pool, skipped, sel)
     await execute(a, sel)
   }
