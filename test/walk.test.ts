@@ -725,6 +725,13 @@ describe("walk vessel process", () => {
 })
 
 describe("what records answers is used only when it is the shape asked for", () => {
+  beforeAll(() => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+  })
+
   test("[MUST-FAIL] an arm row needs a named arm and a finite as_of_seq; an episodes answer needs roots and shared; a posterior one post per cell", async () => {
     const { isArm, isEpisodes, isPosterior } = await import("../src/loop")
     for (const bad of [null, undefined, {}, { ok: true }, { arm: "treated" }, { arm: "treated", as_of_seq: "99" }, { arm: "", as_of_seq: 1 }, { arm: "treated", as_of_seq: Number.NaN }, [{ arm: "treated", as_of_seq: 1 }]]) {
@@ -738,7 +745,7 @@ describe("what records answers is used only when it is the shape asked for", () 
     for (const bad of [{ at_seq: 3, posts: [{}] }, { at_seq: Number.NaN, posts: [{}, {}] }, { posts: [{}, {}] }, null, { ok: true }]) expect([bad, isPosterior(2)(bad)]).toEqual([bad, false])
   })
 
-  test("[MUST-FAIL] readUntil reads again after a pause until the answer is the shape asked for, and says so once", async () => {
+  test("[MUST-FAIL] readUntil reads again after a pause until the answer is the shape asked for, and says so once a minute", async () => {
     const { readUntil, isArm } = await import("../src/loop")
     const answers: unknown[] = [{ ok: true }, null, { shape: "arm", arm: "treated", as_of_seq: 7 }]
     const pauses: number[] = []
@@ -746,11 +753,35 @@ describe("what records answers is used only when it is the shape asked for", () 
     const log = console.log
     console.log = (...a: unknown[]) => { logged.push(a.join(" ")) }
     try {
-      const got = await readUntil(async () => answers.shift(), isArm, "arm row", async (ms) => { pauses.push(ms) })
+      const got = await readUntil(async () => answers.shift(), isArm, "arm row", async (ms) => { pauses.push(ms) }, () => 0, () => { throw new Error("gave up") })
       expect(got).toEqual({ shape: "arm", arm: "treated", as_of_seq: 7 })
     } finally { console.log = log }
     expect(pauses).toEqual([2000, 2000])
-    expect(logged.filter((l) => l === "[walk] records answered no arm row; reading again")).toHaveLength(1)
+    expect(logged).toEqual(["[walk] records answered no arm row; reading again (0 s)"])
+  })
+
+  test("[MUST-FAIL] a wait that never gets the right shape is said every 20 s and ends after READ_WAIT_MS with a stop the unit restarts", async () => {
+    const { readUntil, isArm, READ_WAIT_MS } = await import("../src/loop")
+    let t = 0
+    let gaveUp = 0
+    const logged: string[] = []
+    const errors: string[] = []
+    const [log, err] = [console.log, console.error]
+    console.log = (...a: unknown[]) => { logged.push(a.join(" ")) }
+    console.error = (...a: unknown[]) => { errors.push(a.join(" ")) }
+    try {
+      // The stand-in refuses past 200 reads: with no bound, the loop would spin on the fake clock and fill memory.
+      let reads = 0
+      const read = async () => { if (++reads > 200) throw new Error("read again past any bound: the wait has no end"); return { ok: true, why: "x" } }
+      const got = await readUntil(read, isArm, "arm row", async (ms) => { t += ms }, () => t, () => { gaveUp++ })
+      expect(got).toBeUndefined()
+    } finally { [console.log, console.error] = [log, err] }
+    expect(READ_WAIT_MS).toBe(60_000)
+    expect(gaveUp).toBe(1)
+    expect(logged).toEqual(["0 s", "20 s", "40 s"].map((n) => `[walk] records answered no arm row; reading again (${n})`))
+    expect(errors).toEqual(["[walk] records answered no arm row for 60 s (last: an object with keys [ok,why]); stopping so the unit restarts"])
+    const { shapeOf } = await import("../src/loop")
+    expect([shapeOf(null), shapeOf([1, 2]), shapeOf("s"), shapeOf({ secret: "v" })]).toEqual(["null", "a list of 2", "string", "an object with keys [secret]"])
   })
 })
 
@@ -806,6 +837,40 @@ describe("a records that answers a non-row while it restarts", () => {
     for (const p of selection?.posts ?? [undefined]) expect(p).toEqual({ alpha: 2, beta: 1, from: "move" })
     expect(vessel.exitCode).toBeNull()
     for (const what of ["arm row", "episodes", "posterior"]) expect(printed).toContain(`[walk] records answered no ${what}; reading again`)
+  })
+})
+
+describe("a records that never answers the shape asked for", () => {
+  let discovery: Fake
+  let vessel: ReturnType<typeof run>
+  let printed = ""
+  let code: number | null = null
+
+  beforeAll(async () => {
+    discovery = fake((path, body) => {
+      if (path !== "/resolve") return Response.json(path === "/heartbeat" ? { nextHeartbeatMs: 600000 } : { ok: true })
+      if (body.pointer.type === "record_wait_exact") return Response.json({ ok: true })
+      return new Promise<Response>(() => {})
+    })
+    const port = freePort()
+    vessel = run("src/index.ts", {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: String(port), DISCOVERY_URL: discovery.url,
+      WALK_ENDPOINT: `http://127.0.0.1:${port}`, METABOB_API_KEY: NODE_KEY,
+    })
+    void (async () => { const d = new TextDecoder(); for await (const c of vessel.stderr as any) printed += d.decode(c, { stream: true }) })()
+    code = await Promise.race([vessel.exited, Bun.sleep(80_000).then(() => null)])
+  }, 90_000)
+
+  afterAll(() => {
+    vessel?.kill()
+    discovery?.stop()
+  })
+
+  test("[MUST-FAIL] the walk exits non-zero within the bound, naming what it got, so its unit restarts it", () => {
+    expect(code).not.toBeNull()
+    expect(code).not.toBe(0)
+    expect(printed).toContain("[walk] records answered no arm row for 6")
+    expect(printed).toContain("(last: an object with keys [ok]); stopping so the unit restarts")
   })
 })
 

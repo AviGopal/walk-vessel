@@ -82,7 +82,11 @@ export const asEpisodes = (read: unknown): Episodes =>
 // What records answers is data only when it is the shape the walk asked for. While records restarts, discovery can answer
 // a read with a 200 that is no row at all (records re-registers within seconds). Taken as data, the walk's arm was
 // "undefined" and its as_of_seq NaN, so no fold filter matched and every draw was made from no evidence; an answer that
-// was no episode stopped the loop. Anything else is said once and read again after a pause, never used.
+// was no episode stopped the loop. Anything else is read again after a pause, never used, and said every 20 s with how
+// long it has lasted. A wait has an end, well past a re-register gap (seconds): after READ_WAIT_MS of wrong answers the
+// walk stops with a line naming what it got (its keys, never its values) and a non-zero exit, so its unit restarts it
+// and the restart counter shows the fault, rather than the loop parking silently on a records that keeps answering
+// something else.
 const isObject = (a: unknown): a is Record<string, unknown> => !!a && typeof a === "object" && !Array.isArray(a)
 export const isArm = (a: unknown): a is Row =>
   isObject(a) && typeof a.arm === "string" && a.arm !== "" && typeof a.as_of_seq === "number" && Number.isFinite(a.as_of_seq)
@@ -91,14 +95,27 @@ export const isEpisodes = (a: unknown): boolean =>
 export const isPosterior = (cells: number) => (a: unknown): boolean =>
   isObject(a) && typeof a.at_seq === "number" && Number.isFinite(a.at_seq) && Array.isArray(a.posts) && a.posts.length === cells
 const READ_AGAIN_MS = 2_000
+const SAY_EVERY_MS = 20_000
+export const READ_WAIT_MS = 60_000
+// What an answer was, without its values: a list and its length, an object's keys, or its type.
+export const shapeOf = (a: unknown): string =>
+  Array.isArray(a) ? `a list of ${a.length}` : isObject(a) ? `an object with keys [${Object.keys(a).slice(0, 12).join(",")}]` : String(a === null ? "null" : typeof a)
 export const readUntil = async (read: () => Promise<unknown>, ok: (a: unknown) => boolean, what: string,
-  pause: (ms: number) => Promise<unknown> = (ms) => Bun.sleep(ms)): Promise<unknown | undefined> => {
-  for (let said = false; ; ) {
+  pause: (ms: number) => Promise<unknown> = (ms) => Bun.sleep(ms), now: () => number = Date.now,
+  giveUp: () => void = () => process.exit(1)): Promise<unknown | undefined> => {
+  const start = now()
+  for (let said = -Infinity; ; ) {
     const a = await read()
     if (ok(a)) return a
-    if (!said) {
-      console.log(`[walk] records answered no ${what}; reading again`)
-      said = true
+    const waited = now() - start
+    if (waited >= READ_WAIT_MS) {
+      console.error(`[walk] records answered no ${what} for ${Math.round(waited / 1000)} s (last: ${shapeOf(a)}); stopping so the unit restarts`)
+      giveUp()
+      return undefined
+    }
+    if (waited - said >= SAY_EVERY_MS) {
+      console.log(`[walk] records answered no ${what}; reading again (${Math.round(waited / 1000)} s)`)
+      said = waited
     }
     if (stopped()) return undefined
     await pause(READ_AGAIN_MS)
