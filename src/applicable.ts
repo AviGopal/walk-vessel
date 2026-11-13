@@ -126,7 +126,18 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // failures, as a refusal is, so the request is produced again with the reason in view; otherwise nothing new would
   // come, and the walk, with no move, would wait for a row no one writes. The request itself stays callable: once the
   // precondition is met, its call is offered.
-  const held = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.request_ref !== undefined
+  // Only a reason the root has not just been told is new: a held row giving the same reason as the held row before it
+  // (another request, still waiting on the same thing) says nothing new, so the request is not produced again over it.
+  // Otherwise each request produced over the reason is held for it again, its row is new, and the root produces
+  // requests without end while the precondition stays unmet.
+  const heldNew = new Set<string>()
+  let told: string | undefined
+  for (const r of pool.filter((x) => x.shape === FAILURE && x.role === WALK && x.request_ref !== undefined).sort((a, b) => a.seq - b.seq)) {
+    const reason = JSON.stringify([r.unserved].flat().map(String).sort())
+    if (reason !== told) heldNew.add(r.id)
+    told = reason
+  }
+  const held = (r: Row): boolean => heldNew.has(r.id)
   const spoke = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.blames === "request" &&
     [CALL, RUN].some((k) => String(byId.get(String(r.selection_ref))?.a ?? "").startsWith(`${k}/`))
   // A row counts as graded when an outcome judged it with something the row itself did not carry: a person's verdict, a

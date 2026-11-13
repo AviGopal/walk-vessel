@@ -576,6 +576,30 @@ describe("candidates", () => {
     expect(await go([...rows, diff, verdict(1), ask("a3", 15, "git_land")])).toContain("call/git_land")
   })
 
+  test("[MUST-FAIL] a request held again for the same reason is not produced again: N held rows, one new request, not N", async () => {
+    for (const x of ["request", "git_worktree"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const rows: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure"] }, 3),
+      own({ shape: "requires", id: "q1", for: "git_worktree", needs: "change_wanted", where: { wanted: true } }, 4),
+    ]
+    const reason = ["git_worktree (requires change_wanted)"]
+    const ask = (id: string, seq: number, refs: string[]) => ({ shape: "request", id, seq, role: "described", pointer: { type: "git_worktree" }, input_refs: refs })
+    const skip = (id: string, seq: number, of: string, unserved = reason) =>
+      ({ shape: "failure", id, seq, role: "walk", kind: "skip", request_ref: of, unserved, selection_ref: `s-${id}`, input_refs: [`s-${id}`, of] })
+    const go = async (pool: any[]) => (await (applicable as any)(pool, [])).map((c: { id: string }) => c.id)
+    // the first held row is the reason in view: the request is produced again over it, once
+    expect(await go([...rows, ask("a1", 10, ["g1"]), skip("f1", 11, "a1")])).toContain("produce/request/gap/ch1")
+    // that request is held again for the same reason: nothing new, so no third request
+    const again = [...rows, ask("a1", 10, ["g1"]), skip("f1", 11, "a1"), ask("a2", 12, ["g1", "f1"]), skip("f2", 13, "a2")]
+    expect(await go(again)).not.toContain("produce/request/gap/ch1")
+    expect(await go([...again, ask("a3", 14, ["g1", "f1"]), skip("f3", 15, "a3")])).not.toContain("produce/request/gap/ch1")
+    // a changed reason is new: the request is produced over it
+    expect(await go([...again, skip("f4", 14, "a2", ["git_worktree (requires gap)"])])).toContain("produce/request/gap/ch1")
+  })
+
   test("[MUST-FAIL] a template run in this root is not run again over the same inputs: the request it led to is called instead", async () => {
     for (const x of ["git_worktree", "fs_edit"]) served.add(x)
     const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" }
