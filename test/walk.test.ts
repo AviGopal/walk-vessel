@@ -965,6 +965,37 @@ describe("a learned template's calls", () => {
     expect(call?.repo).toBe("super")
   })
 
+  test("[MUST-FAIL] a forwarded call carries no declared writer or role: the walk cannot write as the owner, a detector or a grader", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    const seen: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      seen.push(pointer)
+      return Response.json(pointer.type === "record_write" ? { ...pointer.row, id: "r", seq: 1 } : { ok: true })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-9", seq: 9, pool_refs: ["w1"] }
+    const verdict = { shape: "land_verdict", r: 1, tree: "t1", repo: "demo" }
+    await execute({ id: "call/record_write", kind: "call", pointer: { type: "record_write", row: verdict, writer: "described-x", role: "described" }, t: "", calls: [] }, sel)
+    await execute({ id: "run/t", kind: "run", pointer: {}, t: "", calls: [
+      { shape: "record_write", pointer: { row: { shape: "shape_schema", target: "x" }, writer: "owner", role: "owner" } },
+      { shape: "record_write", pointer: { row: { shape: "gap", gap_id: "g", status: "closed" }, writer: "pull-sync", role: "detector" } },
+    ] }, sel)
+    const forwarded = seen.filter((p) => p.type === "record_write" && p.row?.shape !== "hop" && p.row?.shape !== "failure")
+    expect(forwarded.map((p) => p.row.shape)).toEqual(["land_verdict", "shape_schema", "gap"])
+    for (const p of forwarded) {
+      expect("writer" in p).toBe(false)
+      expect("role" in p).toBe(false)
+    }
+    // control: the walk's own rows (hops) are still written as the walk
+    const own = seen.filter((p) => p.type === "record_write" && p.row?.shape === "hop")
+    expect(own.length).toBeGreaterThan(0)
+    for (const p of own) expect([p.writer, p.role]).toEqual(["walk-test", "walk"])
+  })
+
   test("carry the selection, its pool and their own call id, as a produce does", async () => {
     Object.assign(process.env, {
       WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",

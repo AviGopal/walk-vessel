@@ -143,7 +143,12 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
   })
   inFlight.set(callId, sel)
   try {
-    const r = await resolve(pointer).finally(() => inFlight.delete(callId))
+    // The walk forwards a call as itself. Who wrote a row is records' stamp from the caller's key, so a forwarded pointer
+    // carries no declared writer or role: under the node key, a request naming them could otherwise write as the owner,
+    // a detector or a grader (agf_g65ujxjbt2l5). A record_write forwarded this way is refused by records, which takes a
+    // node-key write only with both stated; the walk's own rows go through writeRow.
+    const { writer: _writer, role: _role, ...forwarded } = pointer
+    const r = await resolve(forwarded).finally(() => inFlight.delete(callId))
     if (stopping) return { ok: false }
     // A 200 can carry a failure: an error at the top level, or under content, the envelope a forwarded call comes back
     // in (a federation refusal arrives as {content: {error: "unauthorized", ...}, metadata}). That is a failure, not a
