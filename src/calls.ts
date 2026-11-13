@@ -22,8 +22,11 @@ export type Cand = {
    * owner kind, an unrelated grade) never changes what it has learned.
    */
   reads?: string[]
+  /** For a produce: the key of the rows it sees, kept on its selection so a refusal over the same rows is known again. */
+  seen_key?: string
 }
-type Runner = (c: Cand, sel: Row) => Promise<void>
+/** pool: the ids of every row the move had, handed to the call that needs them (a produce, a run) and never stored. */
+type Runner = (c: Cand, sel: Row, pool: string[]) => Promise<void>
 
 const STARTED = "started"
 export const ENDED = "ended"
@@ -190,9 +193,9 @@ const callRunner: Runner = async (c, sel) => {
   await once(sel, CALL, { ...c.pointer, selection_ref: sel.id }, crypto.randomUUID())
 }
 
-const produceRunner: Runner = async (c, sel) => {
+const produceRunner: Runner = async (c, sel, pool) => {
   const callId = crypto.randomUUID()
-  const pointer = { ...c.pointer, input_refs: sel.pool_refs, selection_ref: sel.id, call_id: callId }
+  const pointer = { ...c.pointer, input_refs: pool, selection_ref: sel.id, call_id: callId }
   await once(sel, PRODUCE, pointer, callId)
 }
 
@@ -201,10 +204,10 @@ const waitForRunner: Runner = async (c, sel) => {
   await once(sel, WAIT_FOR, pointer, crypto.randomUUID())
 }
 
-const runRunner: Runner = async (c, sel) => {
+const runRunner: Runner = async (c, sel, pool) => {
   for (const inner of c.calls) {
     const callId = crypto.randomUUID()
-    const pointer = { ...inner.pointer, type: inner.shape, input_refs: sel.pool_refs, selection_ref: sel.id, call_id: callId }
+    const pointer = { ...inner.pointer, type: inner.shape, input_refs: pool, selection_ref: sel.id, call_id: callId }
     const res = await once(sel, RUN, pointer, callId)
     if (!res.ok) {
       return
@@ -242,7 +245,7 @@ export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): 
   }
 }
 
-export const execute = async (c: Cand, sel: Row): Promise<void> => {
+export const execute = async (c: Cand, sel: Row, pool: string[] = []): Promise<void> => {
   // A candidate of a kind the walk has no runner for never reaches another vessel, so its failure is the walk's own,
   // marked as such (kind unrunnable), not a callee's answer.
   if (!RUNNERS.has(c.kind)) {
@@ -252,5 +255,5 @@ export const execute = async (c: Cand, sel: Row): Promise<void> => {
     return
   }
   const runner = RUNNERS.get(c.kind) as Runner
-  await runner(c, sel)
+  await runner(c, sel, pool)
 }

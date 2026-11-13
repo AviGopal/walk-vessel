@@ -133,8 +133,7 @@ export type Timing = { episodes_ms: number; episodes_reads: number; choices_ms: 
  * only in how long they took make the same choice look the same.
  */
 export const selectionRow = (arm: string, options: Option[], post: { at_seq: number; posts: Post[] }, seed: number, i: number, timing: Timing): Record<string, unknown> => {
-  const { cand: a, pool, context, root } = options[i]
-  const poolRefs = pool.map((r) => r.id)
+  const { cand: a, context, root } = options[i]
   return {
     shape: SELECTION,
     arm,
@@ -151,8 +150,11 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
     // Which way the cell was keyed: "reads" (the move's own inputs). Before it, every shape in the root's pool.
     cell_scheme: "reads",
     root,
-    pool_refs: poolRefs,
-    input_refs: poolRefs,
+    // What the selection is about: its root. The rows the move had are handed to its call (a produce, a run) and not
+    // kept here: kept, each selection carried every id of its root's episode, so rows grew with the episode and each
+    // read with the rows. What a produce saw is kept as its key (seen_key), which is what a refusal is compared by.
+    pool_refs: [root],
+    ...(typeof a.seen_key === "string" ? { seen_key: a.seen_key } : {}),
     timing,
   }
 }
@@ -190,6 +192,6 @@ export const chain = async (): Promise<void> => {
       posterior_reads: posteriorReads, draw_ms: ms(t3), cands: options.length, cells: new Set(cells).size,
     }))
     await recordSkipped(pool, skipped, sel)
-    await execute(a, sel)
+    await execute(a, sel, pool.map((r) => r.id))
   }
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { createHash } from "node:crypto"
 import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
@@ -140,7 +141,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const graded = new Set(pool.filter((r) => r.shape === OUTCOME)
     .flatMap((o) => [...refs(o, "input_refs"), ...refs(o, "evidence_refs")].filter((id) => counts(o, id))))
-  const key = (ids: string[]): string => [...new Set(ids)].sort().join(",")
+  // What a set of rows is, as one short value: two sets are the same exactly when their keys are. Hashed, so a key can be
+  // kept on a row (a selection's seen_key) without the row carrying every id it names.
+  const key = (ids: string[]): string => createHash("sha256").update([...new Set(ids)].sort().join(",")).digest("hex")
   const seen = (s: Row) => {
     const entries = [s.inputs, s.context ?? []].flat()
     const shapes = new Set(entries.map(shapeOf))
@@ -169,7 +172,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .filter((r) => r.shape === FAILURE && r.refused === "schema")
     .map((f) => byId.get(String(f.selection_ref)))
     .filter((sel): sel is Row => sel !== undefined && String(sel.a).startsWith(`${PRODUCE}/${target}/`))
-    .map((sel) => key([sel.pool_refs].flat().map(String).filter((id) => sees(byId.get(id)))))
+    // A selection keeps the key of what its produce saw (seen_key). One written before it did keeps its whole pool in
+    // pool_refs instead, and its key is the same function over those.
+    .map((sel) => typeof sel.seen_key === "string" ? sel.seen_key : key([sel.pool_refs].flat().map(String).filter((id) => sees(byId.get(id)))))
   const pending = (s: Row): boolean => {
     // A judge that changed judges again: when a gate's judgment (a shape some owner requires row needs) has a schema row
     // newer than the root's latest row of it, that judgment was made under the old words, so it is offered once more,
@@ -205,6 +210,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       kind: PRODUCE,
       pointer: { type: target, shape: target, via_ref: ch.id, ...(v ? { variant: v } : {}) },
       reads: [s.inputs, s.context ?? []].flat().map(shapeOf),
+      seen_key: key(pool.filter(seen(s)).map((r) => r.id)),
     }))
   }))
 

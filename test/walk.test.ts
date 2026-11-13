@@ -327,6 +327,37 @@ describe("candidates", () => {
     expect(await ids([ask, ch, s, sel, refused, ask2])).toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a selection that keeps only its root and the key of what it saw is refused over the same rows as one that kept its pool", async () => {
+    // the produce sees more than its root: an ended call hop is context, so its key is not the key of the root alone
+    const s = { ...sch("answer", []), context: ["hop"] }
+    const he = { shape: "hop", id: "he1", seq: 4, role: "walk", phase: "ended", kind: "call", call_id: "he1", output: {} }
+    const cand = (await applicable([ask, ch, s, he] as any)).find((c: any) => c.id === "produce/answer/ch1") as any
+    expect(typeof cand?.seen_key).toBe("string")
+    const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1"], seen_key: cand.seen_key }
+    const refused = { shape: "failure", id: "f1", seq: 6, role: "walk", status: 422, refused: "schema", selection_ref: "sel1" }
+    expect(await ids([ask, ch, s, he, sel, refused])).not.toContain("produce/answer/ch1") // the same refusal holds
+    const ask2 = { ...ask, id: "w2", seq: 7 }
+    expect(await ids([ask, ch, s, he, sel, refused, ask2])).toContain("produce/answer/ch1") // and new rows are asked for
+    // the stored key is short whatever the pool: what a row carries does not grow with the episode
+    expect(cand.seen_key.length).toBe(64)
+  })
+
+  test("[MUST-FAIL] a selection row holds its root, not the move's pool: its pool_refs and its size are the same for 10 rows or 1000", async () => {
+    const { selectionRow } = await import("../src/loop")
+    const rowFor = (n: number) => {
+      const pool = Array.from({ length: n }, (_, k) => ({ shape: "hop", id: `h${k}`, seq: k + 1, role: "walk" }))
+      const option = { cand: { id: "call/fs_read", kind: "call", pointer: {}, calls: [], t: "" }, pool: [ask, ...pool], context: ["asker:person"], cell: "call/fs_read|asker:person", skipped: [], root: "w1" }
+      return selectionRow("treated", [option as any], { at_seq: 1, posts: [{ cell: option.cell, alpha: 1, beta: 1 }] }, 7, 0,
+        { episodes_ms: 0, episodes_reads: 1, choices_ms: 0, posterior_ms: 0, posterior_reads: 1, draw_ms: 0, cands: 1, cells: 1 })
+    }
+    const small = rowFor(10)
+    const large = rowFor(1000)
+    expect(small.pool_refs).toEqual(["w1"])
+    expect(large.pool_refs).toEqual(["w1"])
+    expect(large.input_refs).toBeUndefined()
+    expect(JSON.stringify(large).length).toBe(JSON.stringify(small).length)
+  })
+
   test("[MUST-FAIL] a repeat answer or due for the same request waits for the first one's grade", async () => {
     expect(await ids([ask, ch, hop, sch("answer", ["hop"]), a1])).not.toContain("produce/answer/ch1")
     expect(await ids([ask, ch, sch("due", []), d1])).not.toContain("produce/due/ch1")
@@ -1245,7 +1276,26 @@ describe("a learned template's calls", () => {
     for (const p of own) expect([p.writer, p.role]).toEqual(["walk-test", "walk"])
   })
 
-  test("carry the selection, its pool and their own call id, as a produce does", async () => {
+  test("[MUST-FAIL] a produce is asked with the move's whole pool, though its selection row keeps only the root", async () => {
+    Object.assign(process.env, {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
+      WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
+    })
+    const got: Array<Record<string, any>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      got.push(pointer)
+      return Response.json(pointer.type === "record_write" ? { ...pointer.row, id: "r", seq: 1 } : { shape: "answer", id: "a1" })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-p", seq: 9, pool_refs: ["w1"] }
+    await execute({ id: "produce/answer/ch1", kind: "produce", pointer: { type: "answer", shape: "answer", via_ref: "ch1" }, t: "", calls: [] }, sel, ["w1", "ch1", "he1"])
+    const p = got.find((x) => x.type === "answer")
+    expect(p?.input_refs).toEqual(["w1", "ch1", "he1"])
+    expect(p?.selection_ref).toBe("sel-p")
+  })
+
+  test("[MUST-FAIL] carry the selection, the move's pool (handed to them, not read from the selection row) and their own call id, as a produce does", async () => {
     Object.assign(process.env, {
       WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
       WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: NODE_KEY,
@@ -1256,11 +1306,11 @@ describe("a learned template's calls", () => {
       return Response.json(pointer.type === "record_write" ? { ...pointer.row, id: "r", seq: 1 } : { ok: true })
     }) as typeof fetch
     const { execute } = await import("../src/calls")
-    const sel = { shape: "selection", id: "sel-1", seq: 9, pool_refs: ["w1", "ch1"] }
+    const sel = { shape: "selection", id: "sel-1", seq: 9, pool_refs: ["w1"] } // the row keeps its root only
     await execute({ id: "run/t1", kind: "run", pointer: {}, t: "", calls: [
       { shape: "answer", pointer: { via_ref: "ch1" } },
       { shape: "outcome", pointer: { via_ref: "ch1" } },
-    ] }, sel)
+    ] }, sel, ["w1", "ch1"])
     const calls = sent.filter((p) => p.type === "answer" || p.type === "outcome")
     expect(calls.map((p) => p.type)).toEqual(["answer", "outcome"])
     for (const p of calls) {
