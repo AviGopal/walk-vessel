@@ -634,6 +634,41 @@ describe("candidates", () => {
     expect(await calls([...pool, req, cw("cw1", 8, false), cw("cw2", 9, true)])).toEqual(["call/fileContent"])
   })
 
+  test("[MUST-FAIL] a newer owner precondition for the same call and shape replaces the older: the looser row it tightened no longer opens the call", async () => {
+    const loose = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    const tight = { shape: "requires", id: "rq1b", seq: 8, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true, repo: "r1" } }
+    const cw = (repo?: string) => ({ shape: "change_wanted", id: "cw1", seq: 9, role: "described", wanted: true, ...(repo ? { repo } : {}) })
+    const calls = async (rows: any[]) => (await applicable(rows)).map((c) => c.id).filter((id) => id === "call/fileContent")
+    expect(await calls([...pool, loose, cw()])).toEqual(["call/fileContent"]) // the loose row alone: met, as before
+    expect(await calls([...pool, loose, tight, cw()])).toEqual([]) // replaced: the loose row no longer meets it
+    expect(await calls([...pool, loose, tight, cw("r1")])).toEqual(["call/fileContent"])
+    const skipped: Array<{ id: string; unserved: string[] }> = []
+    const t = { shape: "activity_template", id: "t-q", seq: 6, role: "described", sig: { in: ["world_changed"], out: ["fileContent"] }, calls: [{ shape: "fileContent", pointer: {} }] }
+    await applicable([...pool, t, loose, tight, cw()] as any, skipped)
+    expect(skipped.find((x) => x.id === "t-q")?.unserved).toEqual(["fileContent (requires change_wanted)"])
+  })
+
+  test("[MUST-FAIL] a precondition the owner retires counts no more, and does not bring back the row it replaced", async () => {
+    const wants = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    const gone = { shape: "requires", id: "rq1r", seq: 8, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true }, retired: true }
+    const gapOpen = { shape: "requires", id: "rq2", seq: 9, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" } }
+    const cw = { shape: "change_wanted", id: "cw1", seq: 10, role: "described", wanted: true }
+    const calls = async (rows: any[]) => (await applicable(rows)).map((c) => c.id).filter((id) => id === "call/fileContent")
+    expect(await calls([...pool, wants, gapOpen, cw])).toEqual(["call/fileContent"]) // before retiring: the ask opens it
+    expect(await calls([...pool, wants, gone, gapOpen, cw])).toEqual([]) // retired: only an open gap does
+    expect(await calls([...pool, wants, gapOpen, cw, { ...gone, seq: 11 }])).toEqual([]) // by seq, not by order in the pool
+    expect(await calls([...pool, wants, gone, gapOpen, { shape: "gap", id: "g1", seq: 12, role: "detector", status: "open" }])).toEqual(["call/fileContent"])
+  })
+
+  test("[MUST-FAIL] a retired gate no longer makes its judge judge again", async () => {
+    const gate = { shape: "requires", id: "rq-j", seq: 2, role: "owner", for: "fileContent", needs: "answer", where: { ok: true } }
+    const gone = { ...gate, id: "rq-jr", seq: 3, retired: true }
+    const schema = { shape: "shape_schema", id: "s-a10", seq: 10, role: "owner", target: "answer", inputs: ["world_changed"] }
+    const old = { shape: "answer", id: "a-old", seq: 5, role: "described", input_refs: ["w1"] }
+    expect(await ids([ask, ch, gate, schema, old])).toContain("produce/answer/ch1") // a live gate: judged again, as before
+    expect(await ids([ask, ch, gate, gone, schema, old])).not.toContain("produce/answer/ch1")
+  })
+
   test("[MUST-FAIL] rows that speak for different things are judged each by its own latest: another gap's newer row does not hide this one", async () => {
     const req = { shape: "requires", id: "rq2", seq: 7, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" }, latest_by: "gap_id" }
     const gap = (id: string, seq: number, gapId: string, status: string) => ({ shape: "gap", id, seq, role: "detector", gap_id: gapId, status })

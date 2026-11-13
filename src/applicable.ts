@@ -54,7 +54,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // The owner's preconditions on calls: a shape some requires row names is called (on its own or in a template) only when
   // the root's latest row of the shape one of those rows needs has every field its where names equal. Several rows for
   // one shape are alternatives. Which shapes, and what they need, are the owner's rows: the walk names none.
-  const reqs = pool.filter((r) => r.shape === REQUIRES && r.role === OWNER)
+  // A requires row says what one call needs of one shape (for, needs), and a newer owner row for the same two replaces it:
+  // only the latest counts, so a precondition the owner tightens is not still met by the looser row it replaced, and one
+  // the owner marks retired counts no more. Every reader below reads this one list.
+  const reqs = [...pool.filter((r) => r.shape === REQUIRES && r.role === OWNER).sort((a, b) => a.seq - b.seq)
+    .reduce((m, r) => m.set(JSON.stringify([String(r.for), String(r.needs)]), r), new Map<string, Row>()).values()]
+    .filter((r) => r.retired !== true)
   // A requirement is met by the root's LATEST row of the shape it needs, so a later judgment revokes an earlier one. When
   // rows of that shape each speak for something different (one gap or another), the requires row names the field that
   // tells them apart (latest_by), and the latest row of each counts: any one meeting where meets it. The field is the
