@@ -724,6 +724,91 @@ describe("walk vessel process", () => {
   })
 })
 
+describe("what records answers is used only when it is the shape asked for", () => {
+  test("[MUST-FAIL] an arm row needs a named arm and a finite as_of_seq; an episodes answer needs roots and shared; a posterior one post per cell", async () => {
+    const { isArm, isEpisodes, isPosterior } = await import("../src/loop")
+    for (const bad of [null, undefined, {}, { ok: true }, { arm: "treated" }, { arm: "treated", as_of_seq: "99" }, { arm: "", as_of_seq: 1 }, { arm: "treated", as_of_seq: Number.NaN }, [{ arm: "treated", as_of_seq: 1 }]]) {
+      expect([bad, isArm(bad)]).toEqual([bad, false])
+    }
+    expect(isArm({ shape: "arm", arm: "treated", as_of_seq: 99 })).toBe(true)
+    for (const bad of [null, {}, { ok: true }, { roots: [] }, { shared: [] }, "x"]) expect([bad, isEpisodes(bad)]).toEqual([bad, false])
+    expect(isEpisodes([])).toBe(true)
+    expect(isEpisodes({ shared: [], roots: [] })).toBe(true)
+    expect(isPosterior(2)({ at_seq: 3, posts: [{}, {}] })).toBe(true)
+    for (const bad of [{ at_seq: 3, posts: [{}] }, { at_seq: Number.NaN, posts: [{}, {}] }, { posts: [{}, {}] }, null, { ok: true }]) expect([bad, isPosterior(2)(bad)]).toEqual([bad, false])
+  })
+
+  test("[MUST-FAIL] readUntil reads again after a pause until the answer is the shape asked for, and says so once", async () => {
+    const { readUntil, isArm } = await import("../src/loop")
+    const answers: unknown[] = [{ ok: true }, null, { shape: "arm", arm: "treated", as_of_seq: 7 }]
+    const pauses: number[] = []
+    const logged: string[] = []
+    const log = console.log
+    console.log = (...a: unknown[]) => { logged.push(a.join(" ")) }
+    try {
+      const got = await readUntil(async () => answers.shift(), isArm, "arm row", async (ms) => { pauses.push(ms) })
+      expect(got).toEqual({ shape: "arm", arm: "treated", as_of_seq: 7 })
+    } finally { console.log = log }
+    expect(pauses).toEqual([2000, 2000])
+    expect(logged.filter((l) => l === "[walk] records answered no arm row; reading again")).toHaveLength(1)
+  })
+})
+
+describe("a records that answers a non-row while it restarts", () => {
+  let discovery: Fake
+  let vessel: ReturnType<typeof run>
+  let selection: Record<string, any> | undefined
+  let printed = ""
+  const asked: Record<string, number> = {}
+
+  beforeAll(async () => {
+    const pool = [
+      { shape: "world_changed", id: "w1", seq: 2, writer: "kid-person", role: "person", what: "x", t: new Date().toISOString() },
+      { shape: "channel", id: "ch1", seq: 3, writer: "owner", role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 4, writer: "owner", role: "owner", target: "answer", inputs: ["world_changed"] },
+    ]
+    // The first answer to each read is what discovery gave while records re-registered: a 200 that is no row.
+    const first = (k: string) => { asked[k] = (asked[k] ?? 0) + 1; return asked[k] === 1 }
+    discovery = fake((path, body) => {
+      if (path !== "/resolve") return Response.json(path === "/heartbeat" ? { nextHeartbeatMs: 600000 } : { ok: true })
+      const p = body.pointer
+      if (p.type === "record_wait_exact") return Response.json(first("arm") ? { ok: true } : { shape: "arm", id: "arm1", seq: 1, arm: "treated", as_of_seq: 99 })
+      if (p.type === "record_read" && p.roots === "all") {
+        return Response.json(first("episodes") ? { ok: true } : { shared: pool.slice(1, 3), roots: [{ root: pool[0], rows: [pool[0]] }] })
+      }
+      if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+      if (p.type === "shapeDescriptions") return Response.json({ shape_answers: {} })
+      if (p.type === "posterior") return Response.json(first("posterior") ? {} : { at_seq: 6, posts: p.cells.map(() => ({ alpha: 2, beta: 1, from: "move" })) })
+      if (p.type === "record_write" && p.row?.shape === "selection" && !selection) selection = p.row
+      if (p.type === "record_write") return Response.json({ ...p.row, id: `r${Math.random()}`, seq: 7 })
+      return new Promise<Response>(() => {})
+    })
+    const port = freePort()
+    vessel = run("src/index.ts", {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: String(port), DISCOVERY_URL: discovery.url,
+      WALK_ENDPOINT: `http://127.0.0.1:${port}`, METABOB_API_KEY: NODE_KEY,
+    })
+    void (async () => { const d = new TextDecoder(); for await (const c of vessel.stdout as any) printed += d.decode(c, { stream: true }) })()
+    await healthy(port)
+    for (let i = 0; i < 600 && !selection; i++) await Bun.sleep(25)
+  }, 30_000)
+
+  afterAll(() => {
+    vessel?.kill()
+    discovery?.stop()
+  })
+
+  test("[MUST-FAIL] the walk waits out the non-rows and draws with its real arm and the evidence records gave, without stopping", () => {
+    expect(asked.arm ?? 0).toBeGreaterThanOrEqual(2)
+    expect(asked.episodes ?? 0).toBeGreaterThanOrEqual(2)
+    expect(selection?.arm).toBe("treated")
+    expect(selection?.posts_seq).toBe(6)
+    for (const p of selection?.posts ?? [undefined]) expect(p).toEqual({ alpha: 2, beta: 1, from: "move" })
+    expect(vessel.exitCode).toBeNull()
+    for (const what of ["arm row", "episodes", "posterior"]) expect(printed).toContain(`[walk] records answered no ${what}; reading again`)
+  })
+})
+
 describe("cell context", () => {
   let discovery: Fake
   let vessel: ReturnType<typeof run>

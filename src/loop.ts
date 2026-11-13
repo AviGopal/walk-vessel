@@ -79,15 +79,46 @@ export const choose = (seed: number, options: Array<{ root: string }>, posts: Po
 export const asEpisodes = (read: unknown): Episodes =>
   Array.isArray(read) ? { shared: [], roots: read.length > 0 ? [{ root: read[0] as Row, rows: read as Row[] }] : [] } : (read as Episodes)
 
+// What records answers is data only when it is the shape the walk asked for. While records restarts, discovery can answer
+// a read with a 200 that is no row at all (records re-registers within seconds). Taken as data, the walk's arm was
+// "undefined" and its as_of_seq NaN, so no fold filter matched and every draw was made from no evidence; an answer that
+// was no episode stopped the loop. Anything else is said once and read again after a pause, never used.
+const isObject = (a: unknown): a is Record<string, unknown> => !!a && typeof a === "object" && !Array.isArray(a)
+export const isArm = (a: unknown): a is Row =>
+  isObject(a) && typeof a.arm === "string" && a.arm !== "" && typeof a.as_of_seq === "number" && Number.isFinite(a.as_of_seq)
+export const isEpisodes = (a: unknown): boolean =>
+  Array.isArray(a) || (isObject(a) && Array.isArray(a.roots) && Array.isArray(a.shared))
+export const isPosterior = (cells: number) => (a: unknown): boolean =>
+  isObject(a) && typeof a.at_seq === "number" && Number.isFinite(a.at_seq) && Array.isArray(a.posts) && a.posts.length === cells
+const READ_AGAIN_MS = 2_000
+export const readUntil = async (read: () => Promise<unknown>, ok: (a: unknown) => boolean, what: string,
+  pause: (ms: number) => Promise<unknown> = (ms) => Bun.sleep(ms)): Promise<unknown | undefined> => {
+  for (let said = false; ; ) {
+    const a = await read()
+    if (ok(a)) return a
+    if (!said) {
+      console.log(`[walk] records answered no ${what}; reading again`)
+      said = true
+    }
+    if (stopped()) return undefined
+    await pause(READ_AGAIN_MS)
+  }
+}
+
 export const chain = async (): Promise<void> => {
-  const armRow = (await loopCall(RECORD_WAIT_EXACT, { shapes: [ARM], after_seq: 0, where: { vessel_id: VESSEL_ID } })) as Row
+  const armRow = (await readUntil(() => loopCall(RECORD_WAIT_EXACT, { shapes: [ARM], after_seq: 0, where: { vessel_id: VESSEL_ID } }), isArm, "arm row")) as Row | undefined
+  if (armRow === undefined) return
   const arm = String(armRow.arm)
   const asOf = Number(armRow.as_of_seq)
   while (!stopped()) {
-    const { shared, roots } = asEpisodes(await loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all" }))
+    const read = await readUntil(() => loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all" }), isEpisodes, "episodes")
+    if (read === undefined) return
+    const { shared, roots } = asEpisodes(read)
     const options = await choices(shared, roots, Date.now(), await shapeAnswers())
     const cells = options.map((o) => o.cell)
-    const post = (await loopCall(POSTERIOR, { cells, as_of_seq: asOf })) as { at_seq: number; posts: Post[] }
+    const post = (await readUntil(() => loopCall(POSTERIOR, { cells, as_of_seq: asOf }), isPosterior(cells.length), "posterior")) as
+      { at_seq: number; posts: Post[] } | undefined
+    if (post === undefined) return
     const seed = Date.now() >>> 0
     const i = choose(seed, options, post.posts)
     const { cand: a, pool, context, skipped, root } = options[i]
