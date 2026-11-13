@@ -656,7 +656,7 @@ describe("candidates", () => {
     const calls = async (rows: any[]) => (await applicable(rows)).map((c) => c.id).filter((id) => id === "call/fileContent")
     expect(await calls([...pool, wants, gapOpen, cw])).toEqual(["call/fileContent"]) // before retiring: the ask opens it
     expect(await calls([...pool, wants, gone, gapOpen, cw])).toEqual([]) // retired: only an open gap does
-    expect(await calls([...pool, wants, gapOpen, cw, { ...gone, seq: 11 }])).toEqual([]) // by seq, not by order in the pool
+    expect(await calls([gone, ...pool, gapOpen, cw, wants])).toEqual([]) // by seq, not by order in the pool: the retired row comes first
     expect(await calls([...pool, wants, gone, gapOpen, { shape: "gap", id: "g1", seq: 12, role: "detector", status: "open" }])).toEqual(["call/fileContent"])
   })
 
