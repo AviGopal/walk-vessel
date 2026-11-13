@@ -33,11 +33,13 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const seen: Seen = { awaits }
     const cands = await applicable(pool, skipped, now, seen, answers)
     overdue = overdue || seen.overdue === true
-    const context = [
-      ...[...new Set(pool.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))].sort(),
-      `asker:${String(root.role)}`, `age:${ageBucket(root, now)}`,
-    ]
+    // A move's cell is the move in what it reads: the shapes of rows the walk did not write itself that the move consumes
+    // (cand.reads), then the root's asker and age. Keyed on every shape in the pool, as it was, any new shape anywhere (an
+    // owner's new row kind, a grade nothing here reads) made every cell of every root new and its learning start over.
+    const present = new Set(pool.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))
+    const tail = [`asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
     for (const cand of cands) {
+      const context = [...[...new Set(cand.reads ?? [])].filter((s) => present.has(s)).sort(), ...tail]
       const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id }
       if (cand.kind !== WAIT_FOR) { out.push(o); continue }
       const seen = waits.get(cand.id)
@@ -153,6 +155,8 @@ export const chain = async (): Promise<void> => {
       ...(a.from ? { from: a.from } : {}),
       cell: cells[i],
       context,
+      // Which way the cell was keyed: "reads" (the move's own inputs). Before it, every shape in the root's pool.
+      cell_scheme: "reads",
       root,
       pool_refs: poolRefs,
       input_refs: poolRefs,

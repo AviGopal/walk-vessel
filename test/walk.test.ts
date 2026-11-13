@@ -80,6 +80,40 @@ describe("candidates", () => {
     { shape: "request", id: "q2", seq: 6, pointer: { type: "unserved_shape" } },
   ]
 
+  describe("a move's cell is the move in what it reads", () => {
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person", writer: "kid-p", t: "2026-01-01T11:59:30Z" }
+    const sch = { shape: "shape_schema", id: "s1", seq: 2, role: "owner", writer: "owner", target: "answer", inputs: ["world_changed"], context: ["fileContent"] }
+    const ch = { shape: "channel", id: "ch1", seq: 3, role: "owner", writer: "owner", calls: [] }
+    const req = { shape: "request", id: "q1", seq: 4, role: "described", writer: "described-x", pointer: { type: "fileContent", path: "README.md" } }
+    const cellsOf = async (rows: any[]) => {
+      const { choices } = await import("../src/loop")
+      return Object.fromEntries((await choices([], [{ root: ask as any, rows }], now)).map((o) => [o.cand.id, o.cell]))
+    }
+    test("[MUST-FAIL] a shape the move does not read (an owner's new row kind, a requires row) never changes its cell", async () => {
+      const before = await cellsOf([ask, sch, ch, req])
+      const repo = { shape: "repository", id: "rp1", seq: 5, role: "owner", writer: "owner", repo: "x", units: [], roles: [], retired: false }
+      const needs = { shape: "requires", id: "rq1", seq: 6, role: "owner", writer: "owner", for: "fileContent", needs: "world_changed" }
+      const after = await cellsOf([ask, sch, ch, req, repo, needs])
+      expect(before["produce/answer/ch1"]).toBe("produce/answer/ch1|world_changed,asker:person,age:0")
+      expect(before["call/fileContent"]).toBe("call/fileContent|request,asker:person,age:0")
+      expect(after["produce/answer/ch1"]).toBe(before["produce/answer/ch1"])
+      expect(after["call/fileContent"]).toBe(before["call/fileContent"])
+    })
+    test("[MUST-FAIL] the first row of a shape the move reads is a new situation: its cell changes", async () => {
+      const read = { shape: "fileContent", id: "f1", seq: 5, role: "walk", writer: "local-tools-x", path: "README.md", content: "x" }
+      const after = await cellsOf([ask, sch, ch, req, read])
+      expect(after["produce/answer/ch1"]).toBe("produce/answer/ch1|fileContent,world_changed,asker:person,age:0")
+    })
+    test("[MUST-FAIL] a wait reads nothing: its cell is the asker and the age only", async () => {
+      const arm = { shape: "arm", id: "arm1", seq: 7, role: "owner", writer: "owner", arm: "treated" }
+      const repo = { shape: "repository", id: "rp1", seq: 8, role: "owner", writer: "owner", repo: "x" }
+      // Nothing else to do on the root (no schema, no request), so the wait is the move offered.
+      const cells = await cellsOf([ask, arm, repo])
+      expect(cells["wait-for"]).toBe("wait-for|asker:person,age:0")
+    })
+  })
+
   test("ids name the choice by shape and channel, never by a vessel or an address", async () => {
     const ids = (await applicable(pool)).map((c) => c.id)
     expect(ids).toContain("produce/answer/ch1")
@@ -924,9 +958,10 @@ describe("cell context", () => {
     for (const p of selection!.posts) expect(p).toEqual({ alpha: 1, beta: 1, from: "move" })
   })
 
-  test("a cell's context is the shapes of rows the walk did not write itself, then the root's asker and age", () => {
+  test("[MUST-FAIL] a cell's context is the shapes the move reads among rows the walk did not write, then the root's asker and age", () => {
     expect(cells.length).toBeGreaterThan(0)
-    for (const c of cells) expect(c.split("|")[1]).toBe("channel,shape_schema,world_changed,asker:person,age:0")
+    for (const c of cells) expect(c.split("|")[1]).toBe("world_changed,asker:person,age:0")
+    expect(selection?.cell_scheme).toBe("reads")
   })
 })
 

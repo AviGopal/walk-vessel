@@ -16,6 +16,12 @@ export type Cand = {
   t: string
   /** For a call: the request row it answers, recorded on the selection so a request is called until a call ends OK. */
   from?: string
+  /**
+   * The shapes this move consumes: a produce its schema's inputs and context, a call its request's shape, a run its
+   * template's inputs, a wait none. Its cell context is the pool's shapes among these, so a shape it does not read (a new
+   * owner kind, an unrelated grade) never changes what it has learned.
+   */
+  reads?: string[]
 }
 type Runner = (c: Cand, sel: Row) => Promise<void>
 

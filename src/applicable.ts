@@ -199,6 +199,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       id: [PRODUCE, target, ...(v ? [v] : []), ch.id].join("/"),
       kind: PRODUCE,
       pointer: { type: target, shape: target, via_ref: ch.id, ...(v ? { variant: v } : {}) },
+      reads: [s.inputs, s.context ?? []].flat().map(shapeOf),
     }))
   }))
 
@@ -228,6 +229,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       kind: CALL,
       pointer: r.pointer as Record<string, unknown>,
       from: r.id,
+      // The request it answers decides it; the owner's requires rows only gate whether it exists, so they are not read.
+      reads: [r.shape],
     }))
   }))
 
@@ -264,7 +267,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const run = templates
     .filter((_, i) => unserved[i].length === 0)
     .filter((r) => !ran(r))
-    .map((r): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[] }))
+    .map((r): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in] }))
 
   // When to wait follows the request's own deadlines (law 5). The walk's arm row is in the pool only when the walk is
   // idle (no open request): then it waits for the next row, unbounded, which is what idling is. While a request is open,
@@ -302,6 +305,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       id: [WAIT_FOR, ...shapes].join("/"),
       kind: WAIT_FOR,
       pointer: { shapes, ...(idle ? {} : bound) },
+      reads: [],
     }))
     : []
 
