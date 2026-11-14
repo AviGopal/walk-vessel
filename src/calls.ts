@@ -28,7 +28,7 @@ export type Cand = {
 /** pool: the ids of every row the move had, handed to the call that needs them (a produce, a run) and never stored. */
 type Runner = (c: Cand, sel: Row, pool: string[]) => Promise<void>
 
-const STARTED = "started"
+export const STARTED = "started"
 export const ENDED = "ended"
 
 type Answer = { ok: boolean; status: number; body: unknown; text: string }

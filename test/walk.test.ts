@@ -306,7 +306,7 @@ describe("candidates", () => {
 
   test("[MUST-FAIL] a context entry {shape, where} is read by its shape: a new ended call hop is new information, a produce hop is not", async () => {
     const s = { ...sch("answer", []), context: [{ shape: "hop", where: { phase: "ended", kind: ["call", "run"] } }] }
-    const ended = (id: string, seq: number, kind: string) => ({ shape: "hop", id, seq, role: "walk", phase: "ended", kind, call_id: id, output: {} })
+    const ended = (id: string, seq: number, kind: string) => ({ shape: "hop", id, seq, role: "walk", phase: "ended", kind, call_id: id, output: { text: id } })
     const r1 = { shape: "answer", id: "r1", seq: 6, role: "described", input_refs: ["w1", "he1"] }
     expect(await ids([ask, ch, s, ended("he1", 5, "call"), r1])).not.toContain("produce/answer/ch1")
     expect(await ids([ask, ch, s, ended("he1", 5, "call"), r1, ended("he2", 7, "call")])).toContain("produce/answer/ch1")
@@ -598,6 +598,36 @@ describe("candidates", () => {
     expect(await go([...again, ask("a3", 14, ["g1", "f1"]), skip("f3", 15, "a3")])).not.toContain("produce/request/gap/ch1")
     // a changed reason is new: the request is produced over it
     expect(await go([...again, skip("f4", 14, "a2", ["git_worktree (requires gap)"])])).toContain("produce/request/gap/ch1")
+  })
+
+  test("[MUST-FAIL] a call that brings back what it brought last time is no news: a held reason stays told, and a produce over it is not asked again", async () => {
+    for (const x of ["request", "git_worktree", "git_diff"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const rows: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure", { shape: "gitDiff", latest_by: "shape" }] }, 3),
+    ]
+    const X = ["git_worktree (requires change_wanted)"]
+    const ask = (id: string, seq: number, refs: string[]) => ({ shape: "request", id, seq, role: "described", pointer: { type: "git_worktree" }, input_refs: ["g1", ...refs] })
+    const skip = (id: string, seq: number, of: string) =>
+      ({ shape: "failure", id, seq, role: "walk", kind: "skip", request_ref: of, unserved: X, selection_ref: `s-${id}`, input_refs: [`s-${id}`, of] })
+    // a git_diff call: its started hop names the type; the ended hop and the gitDiff row carry what came back
+    const diff = (n: number, seq: number, patch: string) => [
+      { shape: "hop", id: `hs${n}`, seq, role: "walk", phase: "started", kind: "call", call_id: `c${n}`, pointer_type: "git_diff", selection_ref: `sd${n}` },
+      { shape: "hop", id: `he${n}`, seq: seq + 1, role: "walk", phase: "ended", kind: "call", call_id: `c${n}`, selection_ref: `sd${n}`, output: { patch } },
+      { shape: "gitDiff", id: `gd${n}`, seq: seq + 2, role: "walk", tree: "t1", patch, input_refs: [`sd${n}`] },
+    ]
+    const go = async (pool: any[]) => (await (applicable as any)(pool, [])).map((c: { id: string }) => c.id).includes("produce/request/gap/ch1")
+    // held for X; a diff (news, so X is told again once); the request produced over all of it, held for X again
+    const first = [ask("a1", 10, []), skip("f1", 11, "a1"), ...diff(1, 12, "p"), ask("a2", 15, ["f1", "he1", "gd1"]), skip("f2", 16, "a2"),
+      ask("a3", 17, ["f1", "he1", "gd1", "f2"])]
+    expect(await go([...rows, ...first])).toBe(false)
+    // the same diff again: the same patch on the same tree tells nothing, so neither it nor X held again asks anything
+    expect(await go([...rows, ...first, ...diff(2, 18, "p")])).toBe(false)
+    expect(await go([...rows, ...first, ...diff(2, 18, "p"), skip("f3", 21, "a3")])).toBe(false)
+    // a changed diff is news: asked again over it
+    expect(await go([...rows, ...first, ...diff(2, 18, "q")])).toBe(true)
   })
 
   test("[MUST-FAIL] two reasons taking turns are each told once: X, Y, X, Y offers the request twice, not four times; something learned tells X again", async () => {

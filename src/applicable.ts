@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto"
-import { type Cand, ENDED, type Inner, type Row, exists } from "./calls"
+import { type Cand, ENDED, STARTED, type Inner, type Row, exists } from "./calls"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
@@ -134,10 +134,29 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // is new, and the root produces requests without end while the precondition stays unmet. What the root learns from
   // outside the walk's own work (a row someone else wrote, a call or run that ended, a refusal that spoke) starts the
   // telling again: the walk's own produces and bookkeeping do not.
+  // What a call brought back is new only when it differs from what the last call of the same kind brought back on this
+  // root: an ended hop whose output repeats the previous ended hop of its pointer type, or a tool's answer row (a
+  // gitDiff, a fileContent) repeating the previous row of its shape, tells the root nothing. Otherwise a call that
+  // keeps answering the same thing (a diff of an unchanged tree) makes every produce over it new, and the root loops at
+  // that call's rate. By content alone: ids, seqs, times and the refs that tie a row to its call are left out.
+  const repeats = new Set<string>()
+  {
+    const typeOf = new Map(pool.filter((r) => r.shape === HOP && r.phase === STARTED).map((r) => [String(r.call_id), String(r.pointer_type)]))
+    const last = new Map<string, string>()
+    const LEFT_OUT = new Set(["id", "seq", "t", "call_id", "selection_ref", "input_refs", "writer"])
+    for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
+      if (r.role !== WALK || (BOOKKEEPING.has(r.shape) && !informs(r))) continue
+      const kind = r.shape === HOP ? `hop:${typeOf.get(String(r.call_id)) ?? ""}` : r.shape
+      const content = JSON.stringify(Object.keys(r).filter((k) => !LEFT_OUT.has(k)).sort().map((k) => [k, r[k]]))
+      if (last.get(kind) === content) repeats.add(r.id)
+      last.set(kind, content)
+    }
+  }
+  const brought = (r: Row): boolean => informs(r) && !repeats.has(r.id)
   const heldNew = new Set<string>()
   const told = new Set<string>()
   const isHeld = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.request_ref !== undefined
-  const learned = (r: Row): boolean => (r.role !== WALK && r.role !== DESCRIBED) || informs(r) || spoke(r)
+  const learned = (r: Row): boolean => (r.role !== WALK && r.role !== DESCRIBED) || brought(r) || spoke(r)
   for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
     if (isHeld(r)) {
       const reason = JSON.stringify([r.unserved].flat().map(String).sort())
@@ -180,7 +199,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       }
     }
     return (r: Row | undefined): boolean =>
-      r !== undefined && shapes.has(r.shape) && !older.has(r.id) && !(r.role === WALK && BOOKKEEPING.has(r.shape) && !informs(r) && !spoke(r) && !held(r))
+      r !== undefined && shapes.has(r.shape) && !older.has(r.id) && !repeats.has(r.id) &&
+      !(r.role === WALK && BOOKKEEPING.has(r.shape) && !brought(r) && !spoke(r) && !held(r))
   }
   // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
   // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other
