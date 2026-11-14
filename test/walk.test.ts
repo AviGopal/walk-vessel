@@ -628,6 +628,51 @@ describe("candidates", () => {
     expect(await go([...rows, ...first, ...diff(2, 18, "p"), skip("f3", 21, "a3")])).toBe(false)
     // a changed diff is news: asked again over it
     expect(await go([...rows, ...first, ...diff(2, 18, "q")])).toBe(true)
+    // two results taking turns are each news once: p, q (news), then p, q again tell nothing
+    const turns = [...first, ...diff(2, 18, "q"), ask("a4", 21, ["f1", "he1", "gd1", "f2", "he2", "gd2"])]
+    expect(await go([...rows, ...turns])).toBe(false)
+    expect(await go([...rows, ...turns, ...diff(3, 22, "p")])).toBe(false)
+    expect(await go([...rows, ...turns, ...diff(3, 22, "p"), ...diff(4, 25, "q")])).toBe(false)
+  })
+
+  test("[MUST-FAIL] held reasons and call results each count once on a root: news re-offers, repeats never, and only an outside row tells a reason again", async () => {
+    for (const x of ["request", "git_worktree", "git_diff"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const base: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure", { shape: "gitDiff", latest_by: "shape" }] }, 3),
+    ]
+    const READ = new Set(["hop", "failure", "gitDiff"])
+    const ask = (id: string, seq: number, pool: any[]) =>
+      ({ shape: "request", id, seq, role: "described", pointer: { type: "git_worktree" }, input_refs: ["g1", ...pool.filter((r) => READ.has(r.shape)).map((r) => r.id)] })
+    const diff = (seq: number, patch: string) => [
+      { shape: "hop", id: `hs${seq}`, seq, role: "walk", phase: "started", kind: "call", call_id: `c${seq}`, pointer_type: "git_diff", selection_ref: `sd${seq}` },
+      { shape: "hop", id: `he${seq}`, seq: seq + 1, role: "walk", phase: "ended", kind: "call", call_id: `c${seq}`, selection_ref: `sd${seq}`, output: { patch } },
+      { shape: "gitDiff", id: `gd${seq}`, seq: seq + 2, role: "walk", tree: "t1", patch, input_refs: [`sd${seq}`] },
+    ]
+    const X = ["git_worktree (requires change_wanted)"]
+    const go = async (pool: any[]) => (await (applicable as any)(pool, [])).map((c: { id: string }) => c.id).includes("produce/request/gap/ch1")
+    // A walk over the events: after each, the request is produced whenever it is offered, citing what it was shown;
+    // returns how many times it was produced. a and b were brought back before the run began.
+    const offers = async (events: string[]): Promise<number> => {
+      const pool: any[] = [...base, ...diff(10, "a"), ...diff(20, "b")]
+      pool.push(ask("a0", 30, pool))
+      let seq = 40
+      let n = 0
+      for (const e of events) {
+        const last = [...pool].reverse().find((r) => r.shape === "request")!
+        if (e === "X") pool.push({ shape: "failure", id: `f${seq}`, seq, role: "walk", kind: "skip", request_ref: last.id, unserved: X, selection_ref: `s${seq}`, input_refs: [`s${seq}`, last.id] })
+        else if (e === "P") pool.push({ shape: "note", id: `p${seq}`, seq, role: "person", text: "a reply the request does not read" })
+        else pool.push(...diff(seq, e.toLowerCase()))
+        seq += 5
+        if (await go(pool)) { n++; pool.push(ask(`a${seq}`, seq, pool)); seq += 5 }
+      }
+      return n
+    }
+    expect(await offers(["X", "A", "B", "A", "B", "X"])).toBe(1) // X told once; a and b were brought before: no news
+    expect(await offers(["X", "A", "C", "X"])).toBe(2) // c is news once; X held again is still told
+    expect(await offers(["X", "A", "P", "A", "X"])).toBe(2) // the person's row tells X again; a stays a repeat
   })
 
   test("[MUST-FAIL] two reasons taking turns are each told once: X, Y, X, Y offers the request twice, not four times; something learned tells X again", async () => {

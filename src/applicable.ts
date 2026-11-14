@@ -131,32 +131,35 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // Only a reason the root has not been told since it last learned something is new: a held row giving a reason already
   // given (another request, still waiting on the same thing, however other holds interleave) says nothing new, so the
   // request is not produced again over it. Otherwise each request produced over a reason is held for it again, its row
-  // is new, and the root produces requests without end while the precondition stays unmet. What the root learns from
-  // outside the walk's own work (a row someone else wrote, a call or run that ended, a refusal that spoke) starts the
-  // telling again: the walk's own produces and bookkeeping do not.
-  // What a call brought back is new only when it differs from what the last call of the same kind brought back on this
-  // root: an ended hop whose output repeats the previous ended hop of its pointer type, or a tool's answer row (a
-  // gitDiff, a fileContent) repeating the previous row of its shape, tells the root nothing. Otherwise a call that
+  // is new, and the root produces requests without end while the precondition stays unmet. A row from outside the walk
+  // (a person's, the owner's, a detector's) starts the telling again: the walk's own produces, bookkeeping and call
+  // results do not (a result that is news re-offers the request by itself, through what the producer is shown).
+  // What a call brought back is new only when no call of the same kind brought it back on this root before: an ended hop
+  // whose output an earlier ended hop of its pointer type had, or a tool's answer row (a gitDiff, a fileContent) whose
+  // content an earlier row of its shape had, tells the root nothing, whatever came between (two files read in turn are
+  // each news once). Otherwise a call that
   // keeps answering the same thing (a diff of an unchanged tree) makes every produce over it new, and the root loops at
   // that call's rate. By content alone: ids, seqs, times and the refs that tie a row to its call are left out.
   const repeats = new Set<string>()
   {
     const typeOf = new Map(pool.filter((r) => r.shape === HOP && r.phase === STARTED).map((r) => [String(r.call_id), String(r.pointer_type)]))
-    const last = new Map<string, string>()
+    const had = new Map<string, Set<string>>()
     const LEFT_OUT = new Set(["id", "seq", "t", "call_id", "selection_ref", "input_refs", "writer"])
     for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
       if (r.role !== WALK || (BOOKKEEPING.has(r.shape) && !informs(r))) continue
       const kind = r.shape === HOP ? `hop:${typeOf.get(String(r.call_id)) ?? ""}` : r.shape
       const content = JSON.stringify(Object.keys(r).filter((k) => !LEFT_OUT.has(k)).sort().map((k) => [k, r[k]]))
-      if (last.get(kind) === content) repeats.add(r.id)
-      last.set(kind, content)
+      const seen = had.get(kind) ?? new Set<string>()
+      if (seen.has(content)) repeats.add(r.id)
+      seen.add(content)
+      had.set(kind, seen)
     }
   }
   const brought = (r: Row): boolean => informs(r) && !repeats.has(r.id)
   const heldNew = new Set<string>()
   const told = new Set<string>()
   const isHeld = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.request_ref !== undefined
-  const learned = (r: Row): boolean => (r.role !== WALK && r.role !== DESCRIBED) || brought(r) || spoke(r)
+  const learned = (r: Row): boolean => r.role !== WALK && r.role !== DESCRIBED
   for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
     if (isHeld(r)) {
       const reason = JSON.stringify([r.unserved].flat().map(String).sort())
