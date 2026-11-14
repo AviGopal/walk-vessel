@@ -225,10 +225,19 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     if (judged && last !== undefined && s.role === OWNER && s.seq > last.seq) return false
     const sees = seen(s)
     const now = key(pool.filter(sees).map((r) => r.id))
+    // What a row was made over is what the walk handed its producer: the key its selection kept (seen_key). Not what
+    // the producer cites: a producer shows its context newest first within a budget and cites only what it showed, so
+    // on a root whose context outgrew the budget its citations are always a part of what the walk handed it, never the
+    // same set, and the produce would be offered again on every tick. A row made before selections kept the key is
+    // compared by what it cites, as before.
+    const madeOver = (r: Row): string => {
+      const by = byId.get(String(r.selection_ref))
+      return typeof by?.seen_key === "string" ? by.seen_key : key([r.input_refs].flat().map(String).filter((id) => sees(byId.get(id))))
+    }
     return pool
       .filter((r) => r.shape === String(s.target))
       .filter((r) => !graded.has(r.id))
-      .some((r) => key([r.input_refs].flat().map(String).filter((id) => sees(byId.get(id)))) === now) ||
+      .some((r) => madeOver(r) === now) ||
       refusedOver(String(s.target), sees).includes(now)
   }
 

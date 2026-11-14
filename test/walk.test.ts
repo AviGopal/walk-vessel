@@ -675,6 +675,36 @@ describe("candidates", () => {
     expect(await offers(["X", "A", "P", "A", "X"])).toBe(2) // the person's row tells X again; a stays a repeat
   })
 
+  test("[MUST-FAIL] a produce whose producer showed only part of a long context is not asked again over the same pool: it was made over what the walk handed it", async () => {
+    for (const x of ["request", "git_diff"]) served.add(x)
+    const { createHash } = await import("node:crypto")
+    const keyOf = (ids: string[]) => createHash("sha256").update([...new Set(ids)].sort().join(",")).digest("hex")
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const rows: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure"] }, 3),
+    ]
+    // twenty calls that ended, each with its own result: a context too long for the producer's budget
+    const calls = Array.from({ length: 20 }, (_, i) => [
+      { shape: "hop", id: `hs${i}`, seq: 10 + 2 * i, role: "walk", phase: "started", kind: "call", call_id: `c${i}`, pointer_type: "git_diff", selection_ref: `sd${i}` },
+      { shape: "hop", id: `he${i}`, seq: 11 + 2 * i, role: "walk", phase: "ended", kind: "call", call_id: `c${i}`, selection_ref: `sd${i}`, output: { patch: `p${i}` } },
+    ]).flat()
+    const handed = ["g1", ...calls.filter((h) => h.phase === "ended").map((h) => h.id)]
+    // the walk handed the producer all of it; the producer showed and cited the newest five
+    const sel = { shape: "selection", id: "sel-p", seq: 60, role: "walk", a: "produce/request/gap/ch1", root: "g1", pool_refs: ["g1"], seen_key: keyOf(handed) }
+    const req = { shape: "request", id: "q1", seq: 61, role: "described", selection_ref: "sel-p", pointer: { type: "git_diff" }, input_refs: ["g1", ...handed.slice(-5)] }
+    const go = async (pool: any[]) => (await (applicable as any)(pool, [])).map((c: { id: string }) => c.id).includes("produce/request/gap/ch1")
+    expect(await go([...rows, ...calls, sel, req])).toBe(false)
+    // something new after it is still news
+    const next = [{ shape: "hop", id: "hs99", seq: 70, role: "walk", phase: "started", kind: "call", call_id: "c99", pointer_type: "git_diff", selection_ref: "sd99" },
+      { shape: "hop", id: "he99", seq: 71, role: "walk", phase: "ended", kind: "call", call_id: "c99", selection_ref: "sd99", output: { patch: "new" } }]
+    expect(await go([...rows, ...calls, sel, req, ...next])).toBe(true)
+    // a row from before selections kept the key is still compared by what it cites
+    const { seen_key: _, ...oldSel } = sel
+    expect(await go([...rows, ...calls, oldSel, { ...req, input_refs: handed }])).toBe(false)
+  })
+
   test("[MUST-FAIL] two reasons taking turns are each told once: X, Y, X, Y offers the request twice, not four times; something learned tells X again", async () => {
     for (const x of ["request", "git_worktree"]) served.add(x)
     const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
