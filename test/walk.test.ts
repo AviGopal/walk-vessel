@@ -1754,13 +1754,41 @@ describe("choosing among open requests", () => {
     const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person", t: "2026-01-01T11:00:00Z" }
     const passed = { shape: "due", id: "d0", seq: 2, role: "described", within_ms: 60_000, at: now - 60_000, input_refs: ["w1"] }
     const later = { shape: "due", id: "d2", seq: 3, role: "described", within_ms: 60_000, at: now + 300_000, input_refs: ["w1"] }
-    const bounded = await choices([], [{ root: ask as any, rows: [ask, passed, later] as any }], now)
+    const arm = { shape: "arm", id: "arm1", seq: 0, role: "walk", arm: "treated" }
+    const bounded = await choices([], [{ root: ask as any, rows: [ask, passed, later] as any }], now, {}, arm as any)
     expect(bounded.map((o) => o.cand.kind)).toEqual(["wait-for"])
     expect(bounded[0].cand.pointer.until).toBe(now + 300_000)
-    expect(bounded[0].root).toBe("w1")
-    const open = await choices([], [{ root: ask as any, rows: [ask] as any }], now)
+    const open = await choices([], [{ root: ask as any, rows: [ask] as any }], now, {}, arm as any)
     expect(open.map((o) => o.cand.kind)).toEqual(["wait-for"])
     expect("until" in open[0].cand.pointer).toBe(false)
+  })
+
+  test("[MUST-FAIL] the walk's idle wait is about no root: it is named by the walk's arm, carries no root's rows, and learns apart from any root", async () => {
+    globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+    const { choices } = await import("../src/loop")
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    // a gap a detector opened, on which nothing is left to do: every root is like it, so the walk idles
+    const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "g", status: "open", t: "2026-01-01T11:00:00Z" }
+    // and a person's request whose first deadline has passed (no root may wait then), with a later one still ahead
+    const ask = { shape: "world_changed", id: "w1", seq: 2, role: "person", t: "2026-01-01T11:00:00Z" }
+    const passed = { shape: "due", id: "d0", seq: 3, role: "described", within_ms: 60_000, at: now - 60_000, input_refs: ["w1"] }
+    const later = { shape: "due", id: "d2", seq: 4, role: "described", within_ms: 60_000, at: now + 300_000, input_refs: ["w1"] }
+    const arm = { shape: "arm", id: "arm1", seq: 0, role: "walk", arm: "treated" }
+    const roots = [{ root: gap as any, rows: [gap] as any, awaits: true }, { root: ask as any, rows: [ask, passed, later] as any, awaits: true }]
+    expect((await choices([], roots, now, {}, arm as any)).map((o) => o.cand.kind)).toEqual(["wait-for"])
+    const idle = (await choices([], roots, now, {}, arm as any)).filter((o) => o.cand.kind === "wait-for" && o.root === "arm1")
+    expect(idle).toHaveLength(1)
+    const [o] = idle
+    // named by a real row, the arm, and holding none of any root's rows, so records reads it back as no root's
+    expect(o.root).toBe("arm1")
+    expect(o.pool.map((r) => r.id)).toEqual(["arm1"])
+    // its cell is the idle cell, never an asker's
+    expect(o.context).toEqual(["idle"])
+    expect(o.cell).toBe("wait-for|idle")
+    // the next deadline ahead still bounds it
+    expect(o.cand.pointer.until).toBe(now + 300_000)
+    // with no arm to name it by, there is no idle move (never a root's)
+    expect((await choices([], roots, now)).filter((x) => x.cand.kind === "wait-for" && x.root === "g1")).toHaveLength(0)
   })
 
   test("a records that answers the single episode as a list is worked as one root", async () => {

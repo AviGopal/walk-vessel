@@ -22,7 +22,7 @@ const ageBucket = (root: Row, now: number): number => {
  * by the earliest deadline ahead across every root, and not offered once any root's deadline has passed, so one root's
  * wait never lets another's deadline pass unseen.
  */
-export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}): Promise<Option[]> => {
+export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
   let overdue = false
@@ -55,14 +55,17 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
   const offered = out.length > 0 ? out : overdue ? [] : [...waits.values()]
   if (offered.length > 0 || roots.length === 0) return offered
   // Nothing to do on any root (every produce pending, nothing to call, no wait offered): the walk waits for the next row
-  // rather than having no move. A deadline still ahead bounds it, since one passing makes a lapse gradable.
+  // rather than having no move. A deadline still ahead bounds it, since one passing makes a lapse gradable. This wait is
+  // the walk idling, about no root: it is the walk's arm's, as records names idling when no root is open. Labelled with
+  // a root's id, its selection (and any failure ending it) was read back as that root's row, and its cell learned as if
+  // waiting were that root's move. With no arm to name it by, there is no idle move.
+  if (arm === undefined) return []
   const ahead = roots.flatMap(({ rows }) => rows).filter((r) => r.shape === DUE && r.role === DESCRIBED && typeof r.at === "number" && r.at > now)
     .map((r) => Number(r.at))
-  const { root, rows } = roots[0]
-  const pool = [...shared, ...rows].sort((x, y) => x.seq - y.seq)
+  const pool = [...shared, arm].sort((x, y) => x.seq - y.seq)
   const cand: Cand = { pointer: { shapes: [], ...(ahead.length > 0 ? { until: Math.min(...ahead) } : {}) }, calls: [], t: "", id: WAIT_FOR, kind: WAIT_FOR }
-  const context = [`asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
-  return [{ cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped: [], root: root.id }]
+  const context = ["idle"]
+  return [{ cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped: [], root: arm.id }]
 }
 
 /**
@@ -175,7 +178,7 @@ export const chain = async (): Promise<void> => {
     const episodesMs = ms(t0)
     const { shared, roots } = asEpisodes(read)
     const t1 = performance.now()
-    const options = await choices(shared, roots, Date.now(), await shapeAnswers())
+    const options = await choices(shared, roots, Date.now(), await shapeAnswers(), armRow)
     const choicesMs = ms(t1)
     const cells = options.map((o) => o.cell)
     const t2 = performance.now()
