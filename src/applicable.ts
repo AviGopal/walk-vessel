@@ -31,7 +31,9 @@ export type Skipped = { id: string; unserved: string[]; of?: "request" }
 
 /** What a root's moves leave out that choices() must know across roots: a first deadline that has already passed. And
  * what records says of the root (awaits: false when no one awaits an answer on it), passed in. */
-export type Seen = { overdue?: boolean; awaits?: boolean }
+// shared: the ids of the rows every root is given (records' shared rows: the owner's configuration, earned templates),
+// as against the root's own; what is shared is about no one root.
+export type Seen = { overdue?: boolean; awaits?: boolean; shared?: ReadonlySet<string> }
 
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
@@ -163,7 +165,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // configuration (a credits row, a schema, a requires row) is from outside the walk too, but no producer is shown it,
   // so it tells a waiting request nothing and every held reason stays told.
   const readable = new Set(schemas.flatMap((x) => [x.inputs, x.context ?? []].flat().map(shapeOf)))
-  const learned = (r: Row): boolean => r.role !== WALK && r.role !== DESCRIBED && readable.has(String(r.shape))
+  // ...and only the root's own: a row every root is given is about no one root, so it re-tells no root's reasons.
+  const learned = (r: Row): boolean => r.role !== WALK && r.role !== DESCRIBED && readable.has(String(r.shape)) && note.shared?.has(r.id) !== true
   for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
     if (isHeld(r)) {
       const reason = JSON.stringify([r.unserved].flat().map(String).sort())

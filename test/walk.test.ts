@@ -707,6 +707,41 @@ describe("candidates", () => {
     expect(await go([...rows, ...calls, oldSel, { ...req, input_refs: handed }])).toBe(false)
   })
 
+  test("[MUST-FAIL] under the schemas a node runs, a person's verdict or ask on the root tells a held reason again; a row every root is given does not", async () => {
+    for (const x of ["request", "git_worktree"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    // the owner's schema rows as the seeder writes them (walk-owner-seed.ts): the request from an ask and from a gap,
+    // and the change judge, which reads the owner's repository rows
+    const context = ["hop", "failure", "answer", "outcome", { shape: "fileContent", whole: true, latest_by: "path", covers: { shape: "hop", on: "call_id" } }]
+    const rows: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "", inputs: ["world_changed"], context }, 3),
+      own({ shape: "shape_schema", id: "srg", target: "request", variant: "gap", inputs: ["gap"], context }, 4),
+      own({ shape: "shape_schema", id: "scw", target: "change_wanted", inputs: ["world_changed"], context: [{ shape: "repository", latest_by: "repo" }] }, 5),
+    ]
+    const X = ["git_worktree (requires change_wanted)"]
+    const ask = (id: string, seq: number, refs: string[]) => ({ shape: "request", id, seq, role: "described", pointer: { type: "git_worktree" }, input_refs: ["g1", ...refs] })
+    const skip = (id: string, seq: number, of: string) =>
+      ({ shape: "failure", id, seq, role: "walk", kind: "skip", request_ref: of, unserved: X, selection_ref: `s-${id}`, input_refs: [`s-${id}`, of] })
+    const go = async (pool: any[], shared: string[] = []) =>
+      (await (applicable as any)(pool, [], Date.now(), { shared: new Set(shared) })).map((c: { id: string }) => c.id).includes("produce/request/gap/ch1")
+    // held for X, the request produced over it, held for X again: told, nothing asked
+    const held = [ask("a1", 10, []), skip("f1", 11, "a1"), ask("a2", 12, ["f1"]), skip("f2", 13, "a2")]
+    expect(await go([...rows, ...held])).toBe(false)
+    // a person's ask on the root (readable: the request from an ask takes it), then X again: told again, asked
+    const reply = { shape: "world_changed", id: "w2", seq: 14, role: "person", what: "please look again", input_refs: ["g1"] }
+    expect(await go([...rows, ...held, reply, skip("f3", 15, "a2")])).toBe(true)
+    // a person's verdict at r 0 on the root: it is shown to the request and tells X again
+    const verdict = { shape: "outcome", id: "o1", seq: 14, role: "person", r: 0, input_refs: ["a2"] }
+    expect(await go([...rows, ...held, verdict, skip("f3", 15, "a2")])).toBe(true)
+    // the owner's repository row every root is given: readable (the change judge reads it) but shared, so no root's
+    // reasons are told again; the same row as the root's own would be
+    const repo = own({ shape: "repository", id: "rp1", repo: "x", units: [] }, 14)
+    expect(await go([...rows, ...held, repo, skip("f3", 15, "a2")], ["rp1"])).toBe(false)
+    expect(await go([...rows, ...held, repo, skip("f3", 15, "a2")])).toBe(true)
+  })
+
   test("[MUST-FAIL] two reasons taking turns are each told once: X, Y, X, Y offers the request twice, not four times; something learned tells X again", async () => {
     for (const x of ["request", "git_worktree"]) served.add(x)
     const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })

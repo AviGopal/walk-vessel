@@ -30,7 +30,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const ids = new Set(rows.map((r) => r.id))
     const pool = [...shared.filter((r) => !ids.has(r.id)), ...rows].sort((x, y) => x.seq - y.seq)
     const skipped: Skipped[] = []
-    const seen: Seen = { awaits }
+    const seen: Seen = { awaits, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)) }
     const cands = await applicable(pool, skipped, now, seen, answers)
     overdue = overdue || seen.overdue === true
     // A move's cell is the move in what it reads: the shapes of rows the walk did not write itself that the move consumes
