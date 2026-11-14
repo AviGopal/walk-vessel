@@ -600,6 +600,34 @@ describe("candidates", () => {
     expect(await go([...again, skip("f4", 14, "a2", ["git_worktree (requires gap)"])])).toContain("produce/request/gap/ch1")
   })
 
+  test("[MUST-FAIL] two reasons taking turns are each told once: X, Y, X, Y offers the request twice, not four times; something learned tells X again", async () => {
+    for (const x of ["request", "git_worktree"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const rows: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure"] }, 3),
+    ]
+    const X = ["git_worktree (requires change_wanted)"]
+    const Y = ["git_worktree (requires gap)"]
+    // each request cites what it was shown: the gap and the held rows that were new to it
+    const ask = (id: string, seq: number, refs: string[]) => ({ shape: "request", id, seq, role: "described", pointer: { type: "git_worktree" }, input_refs: ["g1", ...refs] })
+    const skip = (id: string, seq: number, of: string, unserved: string[]) =>
+      ({ shape: "failure", id, seq, role: "walk", kind: "skip", request_ref: of, unserved, selection_ref: `s-${id}`, input_refs: [`s-${id}`, of] })
+    const go = async (pool: any[]) => (await (applicable as any)(pool, [])).map((c: { id: string }) => c.id).includes("produce/request/gap/ch1")
+    const x1 = [ask("a1", 10, []), skip("f1", 11, "a1", X)]
+    const y1 = [...x1, ask("a2", 12, ["f1"]), skip("f2", 13, "a2", Y)]
+    const x2 = [...y1, ask("a3", 14, ["f1", "f2"]), skip("f3", 15, "a3", X)]
+    const y2 = [...x2, skip("f4", 16, "a3", Y)] // held for Y again (another of its calls), told already
+    expect([await go([...rows, ...x1]), await go([...rows, ...y1]), await go([...rows, ...x2]), await go([...rows, ...y2])])
+      .toEqual([true, true, false, false])
+    // a row the root learns from (the owner's, of a shape the request does not read), then X again: X is told again
+    const learned = own({ shape: "repository", id: "rp1", repo: "x" }, 17)
+    expect(await go([...rows, ...y2, learned, skip("f5", 18, "a3", X)])).toBe(true)
+    // the walk's own produce in between teaches nothing: X stays told
+    expect(await go([...rows, ...y2, ask("a4", 17, ["f1", "f2"]), skip("f5", 18, "a4", X)])).toBe(false)
+  })
+
   test("[MUST-FAIL] a template run in this root is not run again over the same inputs: the request it led to is called instead", async () => {
     for (const x of ["git_worktree", "fs_edit"]) served.add(x)
     const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" }

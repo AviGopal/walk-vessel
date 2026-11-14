@@ -126,20 +126,26 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // failures, as a refusal is, so the request is produced again with the reason in view; otherwise nothing new would
   // come, and the walk, with no move, would wait for a row no one writes. The request itself stays callable: once the
   // precondition is met, its call is offered.
-  // Only a reason the root has not just been told is new: a held row giving the same reason as the held row before it
-  // (another request, still waiting on the same thing) says nothing new, so the request is not produced again over it.
-  // Otherwise each request produced over the reason is held for it again, its row is new, and the root produces
-  // requests without end while the precondition stays unmet.
-  const heldNew = new Set<string>()
-  let told: string | undefined
-  for (const r of pool.filter((x) => x.shape === FAILURE && x.role === WALK && x.request_ref !== undefined).sort((a, b) => a.seq - b.seq)) {
-    const reason = JSON.stringify([r.unserved].flat().map(String).sort())
-    if (reason !== told) heldNew.add(r.id)
-    told = reason
-  }
-  const held = (r: Row): boolean => heldNew.has(r.id)
   const spoke = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.blames === "request" &&
     [CALL, RUN].some((k) => String(byId.get(String(r.selection_ref))?.a ?? "").startsWith(`${k}/`))
+  // Only a reason the root has not been told since it last learned something is new: a held row giving a reason already
+  // given (another request, still waiting on the same thing, however other holds interleave) says nothing new, so the
+  // request is not produced again over it. Otherwise each request produced over a reason is held for it again, its row
+  // is new, and the root produces requests without end while the precondition stays unmet. What the root learns from
+  // outside the walk's own work (a row someone else wrote, a call or run that ended, a refusal that spoke) starts the
+  // telling again: the walk's own produces and bookkeeping do not.
+  const heldNew = new Set<string>()
+  const told = new Set<string>()
+  const isHeld = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.request_ref !== undefined
+  const learned = (r: Row): boolean => (r.role !== WALK && r.role !== DESCRIBED) || informs(r) || spoke(r)
+  for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
+    if (isHeld(r)) {
+      const reason = JSON.stringify([r.unserved].flat().map(String).sort())
+      if (!told.has(reason)) heldNew.add(r.id)
+      told.add(reason)
+    } else if (learned(r)) told.clear()
+  }
+  const held = (r: Row): boolean => heldNew.has(r.id)
   // A row counts as graded when an outcome judged it with something the row itself did not carry: a person's verdict, a
   // grade at r 0 (which asks for another try), or a grade whose inputs reach past the row and what the row saw. An r 1
   // made from only the row and its own inputs is the producer agreeing with itself (grade independence is information,
