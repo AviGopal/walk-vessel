@@ -133,7 +133,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // request is not produced again over it. Otherwise each request produced over a reason is held for it again, its row
   // is new, and the root produces requests without end while the precondition stays unmet. A row from outside the walk
   // (a person's, the owner's, a detector's) starts the telling again: the walk's own produces, bookkeeping and call
-  // results do not (a result that is news re-offers the request by itself, through what the producer is shown).
+  // results do not (a result that is news re-offers the request by itself, through what the producer is shown)...
   // What a call brought back is new only when no call of the same kind brought it back on this root before: an ended hop
   // whose output an earlier ended hop of its pointer type had, or a tool's answer row (a gitDiff, a fileContent) whose
   // content an earlier row of its shape had, tells the root nothing, whatever came between (two files read in turn are
@@ -159,7 +159,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const heldNew = new Set<string>()
   const told = new Set<string>()
   const isHeld = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.request_ref !== undefined
-  const learned = (r: Row): boolean => r.role !== WALK && r.role !== DESCRIBED
+  // ...and only a row a producer could read: one of a shape some owner schema takes as input or context. The owner's
+  // configuration (a credits row, a schema, a requires row) is from outside the walk too, but no producer is shown it,
+  // so it tells a waiting request nothing and every held reason stays told.
+  const readable = new Set(schemas.flatMap((x) => [x.inputs, x.context ?? []].flat().map(shapeOf)))
+  const learned = (r: Row): boolean => r.role !== WALK && r.role !== DESCRIBED && readable.has(String(r.shape))
   for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
     if (isHeld(r)) {
       const reason = JSON.stringify([r.unserved].flat().map(String).sort())

@@ -643,7 +643,7 @@ describe("candidates", () => {
       own({ shape: "channel", id: "ch1", calls: [] }, 2),
       own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure", { shape: "gitDiff", latest_by: "shape" }] }, 3),
     ]
-    const READ = new Set(["hop", "failure", "gitDiff"])
+    const READ = new Set(["gap", "hop", "failure", "gitDiff"])
     const ask = (id: string, seq: number, pool: any[]) =>
       ({ shape: "request", id, seq, role: "described", pointer: { type: "git_worktree" }, input_refs: ["g1", ...pool.filter((r) => READ.has(r.shape)).map((r) => r.id)] })
     const diff = (seq: number, patch: string) => [
@@ -663,7 +663,8 @@ describe("candidates", () => {
       for (const e of events) {
         const last = [...pool].reverse().find((r) => r.shape === "request")!
         if (e === "X") pool.push({ shape: "failure", id: `f${seq}`, seq, role: "walk", kind: "skip", request_ref: last.id, unserved: X, selection_ref: `s${seq}`, input_refs: [`s${seq}`, last.id] })
-        else if (e === "P") pool.push({ shape: "note", id: `p${seq}`, seq, role: "person", text: "a reply the request does not read" })
+        else if (e === "P") pool.push({ shape: "gap", id: `p${seq}`, seq, role: "detector", gap_id: "G1", status: "open", summary: `checked again at ${seq}` })
+        else if (e === "N") pool.push({ shape: "note", id: `n${seq}`, seq, role: "person", text: "a reply the request does not read" })
         else pool.push(...diff(seq, e.toLowerCase()))
         seq += 5
         if (await go(pool)) { n++; pool.push(ask(`a${seq}`, seq, pool)); seq += 5 }
@@ -672,7 +673,8 @@ describe("candidates", () => {
     }
     expect(await offers(["X", "A", "B", "A", "B", "X"])).toBe(1) // X told once; a and b were brought before: no news
     expect(await offers(["X", "A", "C", "X"])).toBe(2) // c is news once; X held again is still told
-    expect(await offers(["X", "A", "P", "A", "X"])).toBe(2) // the person's row tells X again; a stays a repeat
+    expect(await offers(["X", "A", "P", "A", "X"])).toBe(3) // the detector's new gap row is news itself, and tells X again; a stays a repeat
+    expect(await offers(["X", "A", "N", "A", "X"])).toBe(1) // a row from outside that no producer reads tells nothing
   })
 
   test("[MUST-FAIL] a produce whose producer showed only part of a long context is not asked again over the same pool: it was made over what the walk handed it", async () => {
@@ -726,9 +728,13 @@ describe("candidates", () => {
     const y2 = [...x2, skip("f4", 16, "a3", Y)] // held for Y again (another of its calls), told already
     expect([await go([...rows, ...x1]), await go([...rows, ...y1]), await go([...rows, ...x2]), await go([...rows, ...y2])])
       .toEqual([true, true, false, false])
-    // a row the root learns from (the owner's, of a shape the request does not read), then X again: X is told again
-    const learned = own({ shape: "repository", id: "rp1", repo: "x" }, 17)
+    // a row from outside the walk that a producer reads (a detector's gap row), then X again: X is told again
+    const learned = { shape: "gap", id: "g2", seq: 17, role: "detector", gap_id: "G1", status: "open", summary: "the check changed" }
     expect(await go([...rows, ...y2, learned, skip("f5", 18, "a3", X)])).toBe(true)
+    // the owner's configuration, which no producer reads (a credits row, a repository row), tells nothing: X stays told
+    for (const config of [own({ shape: "credits", id: "cr1", target: "selection", w_person: 1 }, 17), own({ shape: "repository", id: "rp1", repo: "x" }, 17)]) {
+      expect(await go([...rows, ...y2, config, skip("f5", 18, "a3", X)])).toBe(false)
+    }
     // the walk's own produce in between teaches nothing: X stays told
     expect(await go([...rows, ...y2, ask("a4", 17, ["f1", "f2"]), skip("f5", 18, "a4", X)])).toBe(false)
   })
