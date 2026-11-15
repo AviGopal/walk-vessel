@@ -23,7 +23,7 @@ const ageBucket = (root: Row, now: number): number => {
  * by the earliest deadline ahead across every root, and not offered once any root's deadline has passed, so one root's
  * wait never lets another's deadline pass unseen.
  */
-export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row): Promise<Option[]> => {
+export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row, head?: number): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
   let overdue = false
@@ -31,7 +31,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const ids = new Set(rows.map((r) => r.id))
     const pool = [...shared.filter((r) => !ids.has(r.id)), ...rows].sort((x, y) => x.seq - y.seq)
     const skipped: Skipped[] = []
-    const seen: Seen = { awaits, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)), root: root.id }
+    const seen: Seen = { awaits, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)), root: root.id, head }
     const cands = await applicable(pool, skipped, now, seen, answers)
     overdue = overdue || seen.overdue === true
     // A move's cell is the move in what it reads: the shapes of rows the walk did not write itself that the move consumes
@@ -168,6 +168,8 @@ export const chain = async (): Promise<void> => {
   if (armRow === undefined) return
   const arm = String(armRow.arm)
   const asOf = Number(armRow.as_of_seq)
+  // The store's latest seq as records said it on the last tick (its posterior's at_seq): what a rhythm counts against.
+  let head: number | undefined
   while (!stopped()) {
     // Each part of the tick is timed and each read's tries counted, so where a tick's time goes is on its row.
     const ms = (t0: number) => Math.round(performance.now() - t0)
@@ -179,13 +181,14 @@ export const chain = async (): Promise<void> => {
     const episodesMs = ms(t0)
     const { shared, roots } = asEpisodes(read)
     const t1 = performance.now()
-    const options = await choices(shared, roots, Date.now(), await shapeAnswers(), armRow)
+    const options = await choices(shared, roots, Date.now(), await shapeAnswers(), armRow, head)
     const choicesMs = ms(t1)
     const cells = options.map((o) => o.cell)
     const t2 = performance.now()
     const post = (await readUntil(() => { posteriorReads++; return loopCall(POSTERIOR, { cells, as_of_seq: asOf }) }, isPosterior(cells.length), "posterior")) as
       { at_seq: number; posts: Post[] } | undefined
     if (post === undefined) return
+    head = post.at_seq
     const posteriorMs = ms(t2)
     const t3 = performance.now()
     const seed = Date.now() >>> 0

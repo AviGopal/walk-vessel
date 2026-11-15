@@ -37,7 +37,8 @@ export type Skipped = { id: string; unserved: string[]; of?: "request"; unbound?
 // shared: the ids of the rows every root is given (records' shared rows: the owner's configuration, earned templates),
 // as against the root's own; what is shared is about no one root.
 // root: the request the pool is for, which a template run binds its inputs from (bind.ts inputsOf).
-export type Seen = { overdue?: boolean; awaits?: boolean; shared?: ReadonlySet<string>; root?: string }
+// head: the store's latest seq as records last said it (the posterior's at_seq), which a rhythm counts rows against.
+export type Seen = { overdue?: boolean; awaits?: boolean; shared?: ReadonlySet<string>; root?: string; head?: number }
 
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
@@ -301,20 +302,24 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A template is run only when every shape it calls is served, as a call is: one naming a shape nothing serves (a
   // "hop", which is a record of a call, not a shape) would fail at its first step every time.
   // A template the owner's standing rhythm names is run on its schedule only (the USER: "Build the schedule reader
-  // first"): on the walk's idle root, when at least every_rows rows were written since the later of its last run and
-  // its rhythm row. Never offered to a request's own work. The rhythm rows are the owner's; no template is named here.
+  // first"): on the walk's idle root, when at least every_rows rows were written to the store since the later of its last
+  // run and its rhythm row. Rows written counts against the store's head (records' latest seq, note.head), never this
+  // pool's own: the idle root's pool holds only its own and the shared rows, so its newest seq is neither "now" nor
+  // anything that moves with the node's work. With no head known yet, nothing is due. Never offered to a request's own
+  // work. The rhythm rows are the owner's; no template is named here. A run finishes within its tick (the loop awaits
+  // it), so at most one of a rhythm's runs is ever in flight.
   const rhythms = new Map<string, Row>()
   for (const r of pool.filter((x) => x.shape === RHYTHM && x.role === OWNER).sort((a, b) => a.seq - b.seq)) rhythms.set(String(r.template), r)
   // Any template a rhythm row ever named is scheduled only: a retired rhythm's template is not offered at all.
   const scheduled = new Set(rhythms.keys())
   for (const [t, r] of [...rhythms]) if (r.retired === true || !(typeof r.every_rows === "number" && r.every_rows >= 1)) rhythms.delete(t)
   const idleNow = note.awaits === false || (note.awaits === undefined && pool.some((x) => x.shape === ARM))
-  const lastSeq = pool.reduce((m, x) => Math.max(m, x.seq), 0)
+  const head = typeof note.head === "number" && Number.isFinite(note.head) ? note.head : undefined
   const due = (t: Row): boolean => {
     const r = rhythms.get(t.id)
-    if (r === undefined || !idleNow) return false
+    if (r === undefined || !idleNow || head === undefined) return false
     const ran = pool.filter((x) => x.shape === SELECTION && String(x.a) === `${RUN}/${t.id}`).reduce((m, x) => Math.max(m, x.seq), 0)
-    return lastSeq - Math.max(ran, r.seq) >= Number(r.every_rows)
+    return head - Math.max(ran, r.seq) >= Number(r.every_rows)
   }
   const templates = pool.filter((r) => TEMPLATES.has(r.shape)).filter((r) => !scheduled.has(r.id) || due(r))
     .filter((r) => (r.sig as { in: string[] }).in.every((x) => have.has(x)))
