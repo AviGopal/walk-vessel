@@ -119,7 +119,7 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
   const out: Repeat[] = []
   // a call failing the same way: walk failures (no kind) of this request's selections, by the call that failed
   // A call cut by a stop (status 0: the walk was stopped before it ended) says nothing about the call: not a repeat.
-  const fails = pool.filter((r) => r.shape === FAILURE && r.role === WALK && r.kind === undefined && r.status !== 0 && mine.has(String(r.selection_ref)) && typeof r.call_id === "string")
+  const fails = pool.filter((r) => r.shape === FAILURE && r.role === WALK && r.kind === undefined && r.status !== 0 && r.refused !== "schema" && mine.has(String(r.selection_ref)) && typeof r.call_id === "string")
     .sort((a, b) => a.seq - b.seq)
   const byCall = new Map<string, Row[]>()
   for (const f of fails) { const k = callOf(String(f.call_id)); if (k !== undefined) byCall.set(k, [...(byCall.get(k) ?? []), f]) }
@@ -130,6 +130,23 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
       const [tool, ...rest] = k.split(" ")
       out.push({ call: tool, on: rest.join(" ").slice(0, OUTCOME_MAX), outcome: String(run[0].body ?? "").slice(0, OUTCOME_MAX), n: run.length, since_seq: run[0].seq })
     }
+  }
+  // a produce refused by its schema over the same rows: the walk offers it again (no hold), and this says how often. Its
+  // refusals are grouped by what it was handed (its selection's seen_key), so they are over the same rows by
+  // construction; an owner row bearing on the produced shape (its schema) or a person's row between them ends the run.
+  const refusals = pool.filter((r) => r.shape === FAILURE && r.role === WALK && r.refused === "schema" && mine.has(String(r.selection_ref)))
+    .sort((a, b) => a.seq - b.seq)
+  const byRows = new Map<string, Row[]>()
+  for (const f of refusals) {
+    const sel = byId.get(String(f.selection_ref))
+    const target = String(sel?.a ?? "").split("/")[1] ?? ""
+    const k = `${target}|${String(sel?.seen_key ?? "")}`
+    byRows.set(k, [...(byRows.get(k) ?? []), f])
+  }
+  for (const [k, fs] of byRows) {
+    const target = k.split("|")[0]
+    const run = streak(fs, () => true, () => new Set([target]))
+    if (run.length >= 2) out.push({ produce: target, on: "refused", outcome: String(run.at(-1)!.body ?? "").slice(0, OUTCOME_MAX), n: run.length, since_seq: run[0].seq })
   }
   // a produce judging the same thing the same way: land verdicts of this request, by the tree they judge
   const verdicts = pool.filter((r) => r.shape === "land_verdict" && mine.has(String(r.selection_ref)) && typeof r.tree === "string").sort((a, b) => a.seq - b.seq)

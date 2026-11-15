@@ -154,6 +154,25 @@ describe("what a request keeps repeating", () => {
     expect(actsOf(pool, "w1").repeats).toEqual([expect.objectContaining({ produce: "land_verdict", on: "tree 0e4d7b4", outcome: "r 0", n: 4 })])
   })
 
+  test("[MUST-FAIL] a produce refused by its schema three times over the same rows is a repeat ×3, on: refused; over other rows it is not", () => {
+    n = 500
+    const refusedOn = (key: string, body = '{"error":"does not fit the schema: repo must be a string"}') => {
+      const s = { ...sel("w1", "produce/change_wanted/ch1"), seen_key: key }
+      const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "change_wanted" }
+      return [s, h, { shape: "failure", id: `rf${++n}`, seq: n, role: "walk", selection_ref: s.id, call_id: h.call_id, status: 422, refused: "schema", body }]
+    }
+    const pool: any[] = [...OWNER_ROWS, ...refusedOn("k1"), ...refusedOn("k1"), ...refusedOn("k1")]
+    const reps = actsOf(pool, "w1").repeats
+    expect(reps).toEqual([expect.objectContaining({ produce: "change_wanted", on: "refused", n: 3, outcome: expect.stringContaining("repo must be") })])
+    expect(reps.some((r: any) => r.call !== undefined)).toBe(false) // a refusal is the produce's, never a call's repeat
+    // over other rows each time: no repeat
+    expect(actsOf([...OWNER_ROWS, ...refusedOn("k1"), ...refusedOn("k2"), ...refusedOn("k3")], "w1").repeats).toEqual([])
+    // the owner changing the produced shape's schema between them ends the run
+    const after: any[] = [...OWNER_ROWS, ...refusedOn("k1"), ...refusedOn("k1")]
+    after.push({ shape: "shape_schema", id: `ss${++n}`, seq: n, role: "owner", target: "change_wanted" }, ...refusedOn("k1"))
+    expect(actsOf(after, "w1").repeats).toEqual([])
+  })
+
   test("[MUST-FAIL] owner rows that do not bear on the step (a seed run's credits and answer schema) do not end a repeat; one that does, does", () => {
     n = 500
     const pool: any[] = [...OWNER_ROWS]

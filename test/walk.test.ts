@@ -313,24 +313,16 @@ describe("candidates", () => {
     expect(await ids([ask, ch, s, ended("he1", 5, "call"), r1, ended("hp1", 7, "produce")])).not.toContain("produce/answer/ch1")
   })
 
-  test("[MUST-FAIL] a produce refused as not fitting its schema is asked once more over the same rows (the refusal is new to it), then not again", async () => {
+  test("[MUST-FAIL] a produce refused by its schema is not held: refused three times over the same rows, it is still offered", async () => {
+    // the USER: "Fact + debit, no hold": how often is a fact on request_acts; each refusal is debited by records
     const s = sch("answer", [])
-    const sel = { shape: "selection", id: "sel1", seq: 5, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] }
-    const refused = { shape: "failure", id: "f1", seq: 6, role: "walk", status: 422, refused: "schema", selection_ref: "sel1" }
-    expect(await ids([ask, ch, s, sel, refused])).toContain("produce/answer/ch1") // one refusal: once more, with it to read
-    const sel2 = { ...sel, id: "sel2", seq: 8 }
-    const twice = [sel, refused, sel2, { ...refused, id: "f2", seq: 9, selection_ref: "sel2" }]
-    expect(await ids([ask, ch, s, ...twice])).not.toContain("produce/answer/ch1") // refused again over the same rows: held
-    // a channel that was down is not a refusal: asked again
-    expect(await ids([ask, ch, s, sel, { ...refused, status: 502, refused: undefined }, sel2, { ...refused, id: "f2", seq: 9, selection_ref: "sel2", status: 502, refused: undefined }])).toContain("produce/answer/ch1")
-    // nor is a 422 passed through from a read or a write
-    expect(await ids([ask, ch, s, sel, { ...refused, refused: undefined }, sel2, { ...refused, id: "f2", seq: 9, selection_ref: "sel2", refused: undefined }])).toContain("produce/answer/ch1")
-    // a new row to answer from is asked for
-    const ask2 = { ...ask, id: "w2", seq: 10 }
-    expect(await ids([ask, ch, s, ...twice, ask2])).toContain("produce/answer/ch1")
+    const sel = (n: number) => ({ shape: "selection", id: `sel${n}`, seq: 4 + 2 * n, role: "walk", a: "produce/answer/ch1", pool_refs: ["w1", "ch1", "s-answer"] })
+    const refused = (n: number) => ({ shape: "failure", id: `f${n}`, seq: 5 + 2 * n, role: "walk", status: 422, refused: "schema", selection_ref: `sel${n}` })
+    expect(await ids([ask, ch, s, sel(1), refused(1)])).toContain("produce/answer/ch1")
+    expect(await ids([ask, ch, s, sel(1), refused(1), sel(2), refused(2), sel(3), refused(3)])).toContain("produce/answer/ch1")
   })
 
-  test("[MUST-FAIL] a selection that keeps only its root and the key of what it saw is refused over the same rows as one that kept its pool", async () => {
+  test("[MUST-FAIL] a selection keeps the key of what its produce saw: short whatever the pool, and a refused produce over it is still offered", async () => {
     // the produce sees more than its root: an ended call hop is context, so its key is not the key of the root alone
     const s = { ...sch("answer", []), context: ["hop"] }
     const he = { shape: "hop", id: "he1", seq: 4, role: "walk", phase: "ended", kind: "call", call_id: "he1", output: {} }
@@ -340,9 +332,7 @@ describe("candidates", () => {
     const refused = { shape: "failure", id: "f1", seq: 6, role: "walk", status: 422, refused: "schema", selection_ref: "sel1" }
     const sel2 = { ...sel, id: "sel2", seq: 7 }
     const refused2 = { ...refused, id: "f2", seq: 8, selection_ref: "sel2" }
-    expect(await ids([ask, ch, s, he, sel, refused, sel2, refused2])).not.toContain("produce/answer/ch1") // refused twice over the same rows: held
-    const ask2 = { ...ask, id: "w2", seq: 9 }
-    expect(await ids([ask, ch, s, he, sel, refused, sel2, refused2, ask2])).toContain("produce/answer/ch1") // and new rows are asked for
+    expect(await ids([ask, ch, s, he, sel, refused, sel2, refused2])).toContain("produce/answer/ch1")
     // the stored key is short whatever the pool: what a row carries does not grow with the episode
     expect(cand.seen_key.length).toBe(64)
   })
