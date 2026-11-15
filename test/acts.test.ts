@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // What a request has done, shown to its producers as a fact recomputed from its own rows.
-import { describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, test } from "bun:test"
 
 Object.assign(process.env, {
   WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test", WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: "test-node-key",
@@ -197,6 +197,71 @@ describe("what a request keeps repeating", () => {
       cw.push(s, { shape: "change_wanted", id: `cw${++n}`, seq: n, role: "described", selection_ref: s.id, repo: "super", wanted: false })
     }
     expect(actsOf(cw, "w1").repeats).toEqual([expect.objectContaining({ produce: "change_wanted", on: "repo super", outcome: "wanted false", n: 3 })])
+  })
+
+  describe("a streak is the trailing run of equal outcomes per call (qa's pins)", () => {
+    const ARGS = { cwd: "/t/a" }
+    const started = (root: string, args: object = ARGS) => {
+      const s = sel(root, "call/git_diff")
+      const h = { shape: "hop", id: `sh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `sc${n}`, pointer_type: "git_diff", args }
+      return { s, h }
+    }
+    const F = (body: string, args: object = ARGS) => {
+      const { s, h } = started("w1", args)
+      return [s, h, { shape: "failure", id: `sf${++n}`, seq: n, role: "walk", selection_ref: s.id, call_id: h.call_id, status: 422, body }]
+    }
+    const A = (answer: Record<string, unknown>, args: object = ARGS, extra: Record<string, unknown> = {}) => {
+      const { s, h } = started("w1", args)
+      const e = { shape: "hop", id: `se${++n}`, seq: n, role: "walk", phase: "ended", selection_ref: s.id, call_id: h.call_id }
+      return [s, h, e, { shape: "gitDiff", id: `sa${++n}`, seq: n, role: "walk", call_id: h.call_id, input_refs: ["w1"], t: `2026-01-01T00:00:${n}Z`, ...answer, ...extra }]
+    }
+    const cut = () => {
+      const { s, h } = started("w1")
+      return [s, h, { shape: "failure", id: `sx${++n}`, seq: n, role: "walk", selection_ref: s.id, call_id: h.call_id, status: 0, body: "the walk was stopped before the call ended" }]
+    }
+    const reps = (...parts: any[][]) => actsOf([...OWNER_ROWS, ...parts.flat()], "w1").repeats.filter((r: any) => r.call !== undefined)
+    const D = { tree: "T1", diff: "d" }
+    beforeEach(() => { n = 700 })
+
+    test("[MUST-FAIL] 1: F(E), F(E), A(D): the success ends the failure run, no repeat", () => {
+      expect(reps(F("E"), F("E"), A(D))).toEqual([])
+    })
+    test("[MUST-FAIL] 2: 52d7's shape F(E)x8, A(D), A(D): one repeat n 2 of the answer, since the first A(D)", () => {
+      const fs = Array.from({ length: 8 }, () => F("E"))
+      const a1 = A(D)
+      const r = reps(...fs, a1, A(D))
+      expect(r).toEqual([expect.objectContaining({ call: "git_diff", n: 2, outcome: expect.stringContaining("ok "), since_seq: a1[3].seq })])
+      expect(r[0].outcome).toContain("T1")
+    })
+    test("3: F(E), F(E), A(D), F(E): the trailing run is 1, no repeat", () => {
+      expect(reps(F("E"), F("E"), A(D), F("E"))).toEqual([])
+    })
+    test("4: F(E)x3 is n 3 of E", () => {
+      expect(reps(F("E"), F("E"), F("E"))).toEqual([expect.objectContaining({ n: 3, outcome: "E" })])
+    })
+    test("5: A(D), A(D) is n 2", () => {
+      expect(reps(A(D), A(D))).toEqual([expect.objectContaining({ n: 2 })])
+    })
+    test("[MUST-FAIL] 6: A(D), A(D') differing in a field that is not bookkeeping: none", () => {
+      expect(reps(A(D), A({ ...D, diff: "other" }))).toEqual([])
+    })
+    test("[MUST-FAIL] 7: A(D), A(D) differing only in id, seq, call_id and time: n 2 (bookkeeping is dropped)", () => {
+      expect(reps(A(D, ARGS, { t: "2026-01-01T00:00:01Z" }), A(D, ARGS, { t: "2026-02-02T00:00:02Z" }))).toEqual([expect.objectContaining({ n: 2 })])
+    })
+    test("8: the same answer under other args is another call: none", () => {
+      expect(reps(A(D, { cwd: "/t/a" }), A(D, { cwd: "/t/b" }))).toEqual([])
+    })
+    test("9: F(E), F(E'): none", () => {
+      expect(reps(F("E"), F("E2"))).toEqual([])
+    })
+    test("10: F(E), a new row of a shape the call takes, F(E): none (a new fact ends the run)", () => {
+      const first = F("E")
+      const owner = { shape: "requires", id: `rq${++n}`, seq: n, role: "owner", for: "git_diff", needs: "gitWorktree" }
+      expect(reps(first, [owner], F("E"))).toEqual([])
+    })
+    test("11: a call cut by a stop has no outcome: F(E), cut, F(E) is n 2", () => {
+      expect(reps(F("E"), cut(), F("E"))).toEqual([expect.objectContaining({ n: 2, outcome: "E" })])
+    })
   })
 
   test("[MUST-FAIL] owner rows that do not bear on the step (a seed run's credits and answer schema) do not end a repeat; one that does, does", () => {

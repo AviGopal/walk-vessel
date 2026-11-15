@@ -117,18 +117,36 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
     return lastRow !== undefined && pool.some((x) => x.seq > lastRow.seq && isNew(x, takes(lastRow))) ? [] : out
   }
   const out: Repeat[] = []
-  // a call failing the same way: walk failures (no kind) of this request's selections, by the call that failed
-  // A call cut by a stop (status 0: the walk was stopped before it ended) says nothing about the call: not a repeat.
-  const fails = pool.filter((r) => r.shape === FAILURE && r.role === WALK && r.kind === undefined && r.status !== 0 && r.refused !== "schema" && mine.has(String(r.selection_ref)) && typeof r.call_id === "string")
-    .sort((a, b) => a.seq - b.seq)
-  const byCall = new Map<string, Row[]>()
-  for (const f of fails) { const k = callOf(String(f.call_id)); if (k !== undefined) byCall.set(k, [...(byCall.get(k) ?? []), f]) }
-  for (const [k, fs] of byCall) {
+  // a call ending the same way: per call (tool and args), the outcomes of this request's ENDED calls in order, and the
+  // trailing run of equal ones. An outcome is a failure (a walk failure row, no kind, not a schema refusal: its body) or an
+  // answer (an ended call with no failure: its answer row without bookkeeping). A success ends a failure run, and the same
+  // answer again is a repeat too. A call cut by a stop (status 0), one the walk declined (a kind), or one never ended has no
+  // outcome: it neither extends nor ends a run.
+  const DROP = new Set(["id", "seq", "t", "at", "time", "ts", "created_at", "updated_at", "call_id", "selection_ref", "root", "input_refs", "writer", "role"])
+  type Outcome = Row & { said: string; failed: boolean }
+  const outcomes: Outcome[] = []
+  for (const h of pool.filter((r) => r.shape === HOP && r.role === WALK && r.phase === STARTED && mine.has(String(r.selection_ref)))) {
+    const id = String(h.call_id)
+    const f = pool.find((r) => r.shape === FAILURE && r.role === WALK && String(r.call_id) === id)
+    if (f !== undefined) {
+      if (f.kind !== undefined || f.status === 0 || f.refused === "schema") continue
+      outcomes.push({ ...f, said: String(f.body ?? ""), failed: true })
+      continue
+    }
+    const ended = pool.find((r) => r.shape === HOP && r.role === WALK && r.phase === ENDED && String(r.call_id) === id)
+    if (ended === undefined) continue
+    const answer = pool.find((r) => r.role === WALK && String(r.call_id) === id && r.shape !== HOP && r.shape !== FAILURE)
+    const said = answer === undefined ? "" : stable(Object.fromEntries(Object.entries(answer).filter(([k]) => !DROP.has(k))))
+    outcomes.push({ ...(answer ?? ended), seq: (answer ?? ended).seq, selection_ref: h.selection_ref, call_id: id, said, failed: false })
+  }
+  const byCall = new Map<string, Outcome[]>()
+  for (const o of outcomes.sort((a, b) => a.seq - b.seq)) { const k = callOf(String(o.call_id)); if (k !== undefined) byCall.set(k, [...(byCall.get(k) ?? []), o]) }
+  for (const [k, os] of byCall) {
     const tool = k.split(" ")[0]
-    const run = streak(fs, (a, b) => String(a.body ?? "") === String(b.body ?? ""), (f) => new Set([...takesOf(byId.get(String(f.selection_ref))), tool]))
+    const run = streak(os, (a, b) => a.failed === b.failed && a.said === b.said, (o) => new Set([...takesOf(byId.get(String(o.selection_ref))), tool]))
     if (run.length >= 2) {
       const [tool, ...rest] = k.split(" ")
-      out.push({ call: tool, on: rest.join(" ").slice(0, OUTCOME_MAX), outcome: String(run[0].body ?? "").slice(0, OUTCOME_MAX), n: run.length, since_seq: run[0].seq })
+      out.push({ call: tool, on: rest.join(" ").slice(0, OUTCOME_MAX), outcome: (run[0].failed ? run[0].said : `ok ${run[0].said}`).slice(0, OUTCOME_MAX), n: run.length, since_seq: run[0].seq })
     }
   }
   // a produce refused by its schema over the same rows: the walk offers it again (no hold), and this says how often. Its
