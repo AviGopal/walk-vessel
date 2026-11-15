@@ -214,11 +214,21 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       const answer = kind !== CALL && kind !== RUN ? {} : r.ok ? body as Record<string, unknown> : ((): Record<string, unknown> => { try { return JSON.parse(r.text) as Record<string, unknown> } catch { return {} } })()
       const inner = typeof answer.content === "object" && answer.content !== null ? answer.content as Record<string, unknown> : {}
       const waits = answer.waits_for === "person" || inner.waits_for === "person"
+      // A call that never reached a producer (no one serves the shape, or the resolver could not serve it now) is said
+      // as `unserved`: the shape. Read as a field, from: a producer's failure envelope (failure.unserved, which
+      // described-shape builds itself, so a model's text cannot set it), a non-200 answer (the router's or transport's
+      // own body, never a produced row), or a tool's own answer (a call or a run). records blames such a failure on the
+      // callee: no producer and none of the chain is debited for a call nothing answered.
+      const str = (v: unknown): string | undefined => typeof v === "string" && v !== "" ? v : undefined
+      const sent = ((): Record<string, unknown> => { try { return JSON.parse(r.text) as Record<string, unknown> } catch { return {} } })()
+      const unserved = str((sent.failure as { unserved?: unknown } | undefined)?.unserved) ?? (r.ok ? undefined : str(sent.unserved))
+        ?? str(answer.unserved) ?? str(inner.unserved)
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
         body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
         ...(typeof refused === "string" ? { refused } : {}),
         ...(waits ? { waits_for: "person" } : {}),
+        ...(unserved !== undefined ? { unserved } : {}),
       })
       // A clone the tool moved before it failed was moved all the same: the move is recorded, as on success, or the
       // clone's rows would name a base it is no longer on.
