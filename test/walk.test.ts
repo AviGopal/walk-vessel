@@ -90,27 +90,53 @@ describe("candidates", () => {
       const { choices } = await import("../src/loop")
       return Object.fromEntries((await choices([], [{ root: ask as any, rows }], now)).map((o) => [o.cand.id, o.cell]))
     }
+    test("[MUST-FAIL] what the request has done is in every move's cell: a tool answer the walk recorded for it changes the cell", async () => {
+      const { VESSEL_ID } = await import("../src/config")
+      const before = await cellsOf([ask, sch, ch, req])
+      const clone = { shape: "gitWorktree", id: "gw1", seq: 5, role: "walk", writer: VESSEL_ID, call_id: "c1", selection_ref: "s9", input_refs: ["w1"], cwd: "/t" }
+      const after = await cellsOf([ask, sch, ch, req, clone])
+      expect(before["produce/answer/ch1"]).toContain("did:none")
+      expect(after["produce/answer/ch1"]).toBe("produce/answer/ch1|world_changed,did:gitWorktree,asker:person,age:0")
+    })
+
+    test("what a request has done: each recorded answer's shape by its latest, '!' when it said ok: false; other requests' and others' rows are not its", async () => {
+      const { progressOf } = await import("../src/loop")
+      const { VESSEL_ID } = await import("../src/config")
+      const rec = (id: string, seq: number, shape: string, extra: Record<string, unknown> = {}, root = "w1") =>
+        ({ id, seq, shape, role: "walk", writer: VESSEL_ID, call_id: `c${seq}`, selection_ref: `s${seq}`, input_refs: [root], t: "", ...extra })
+      expect(progressOf([ask as any], "w1")).toBe("did:none")
+      const rows = [
+        rec("a", 5, "gitWorktree"), rec("b", 6, "fileEditResult"),
+        rec("c", 7, "codeTypecheckResult", { ok: false }), rec("d", 8, "codeTypecheckResult", { ok: true }), // the later one stands
+        rec("e", 9, "gitCommitResult", {}, "w-other"), // another request's
+        { ...rec("f", 10, "gitLand"), writer: "someone-else" }, // not recorded by the walk
+        { ...rec("g", 11, "hop"), phase: "ended" }, // the walk's own record of a call, not an answer
+      ]
+      expect(progressOf(rows as any, "w1")).toBe("did:codeTypecheckResult+fileEditResult+gitWorktree")
+      expect(progressOf([...rows, rec("h", 12, "codeTypecheckResult", { ok: false })] as any, "w1")).toBe("did:codeTypecheckResult!+fileEditResult+gitWorktree")
+    })
+
     test("[MUST-FAIL] a shape the move does not read (an owner's new row kind, a requires row) never changes its cell", async () => {
       const before = await cellsOf([ask, sch, ch, req])
       const repo = { shape: "repository", id: "rp1", seq: 5, role: "owner", writer: "owner", repo: "x", units: [], roles: [], retired: false }
       const needs = { shape: "requires", id: "rq1", seq: 6, role: "owner", writer: "owner", for: "fileContent", needs: "world_changed" }
       const after = await cellsOf([ask, sch, ch, req, repo, needs])
-      expect(before["produce/answer/ch1"]).toBe("produce/answer/ch1|world_changed,asker:person,age:0")
-      expect(before["call/fileContent"]).toBe("call/fileContent|request,asker:person,age:0")
+      expect(before["produce/answer/ch1"]).toBe("produce/answer/ch1|world_changed,did:none,asker:person,age:0")
+      expect(before["call/fileContent"]).toBe("call/fileContent|request,did:none,asker:person,age:0")
       expect(after["produce/answer/ch1"]).toBe(before["produce/answer/ch1"])
       expect(after["call/fileContent"]).toBe(before["call/fileContent"])
     })
     test("[MUST-FAIL] the first row of a shape the move reads is a new situation: its cell changes", async () => {
       const read = { shape: "fileContent", id: "f1", seq: 5, role: "walk", writer: "local-tools-x", path: "README.md", content: "x" }
       const after = await cellsOf([ask, sch, ch, req, read])
-      expect(after["produce/answer/ch1"]).toBe("produce/answer/ch1|fileContent,world_changed,asker:person,age:0")
+      expect(after["produce/answer/ch1"]).toBe("produce/answer/ch1|fileContent,world_changed,did:none,asker:person,age:0")
     })
-    test("[MUST-FAIL] a wait reads nothing: its cell is the asker and the age only", async () => {
+    test("[MUST-FAIL] a wait reads nothing: its cell is what its request has done, the asker and the age only", async () => {
       const arm = { shape: "arm", id: "arm1", seq: 7, role: "owner", writer: "owner", arm: "treated" }
       const repo = { shape: "repository", id: "rp1", seq: 8, role: "owner", writer: "owner", repo: "x" }
       // Nothing else to do on the root (no schema, no request), so the wait is the move offered.
       const cells = await cellsOf([ask, arm, repo])
-      expect(cells["wait-for"]).toBe("wait-for|asker:person,age:0")
+      expect(cells["wait-for"]).toBe("wait-for|did:none,asker:person,age:0")
     })
   })
 
@@ -1241,10 +1267,10 @@ describe("cell context", () => {
     for (const p of selection!.posts) expect(p).toEqual({ alpha: 1, beta: 1, from: "move" })
   })
 
-  test("[MUST-FAIL] a cell's context is the shapes the move reads among rows the walk did not write, then the root's asker and age", () => {
+  test("[MUST-FAIL] a cell's context is the shapes the move reads among rows the walk did not write, then what the request has done, the root's asker and age", () => {
     expect(cells.length).toBeGreaterThan(0)
-    for (const c of cells) expect(c.split("|")[1]).toBe("world_changed,asker:person,age:0")
-    expect(selection?.cell_scheme).toBe("reads")
+    for (const c of cells) expect(c.split("|")[1]).toBe("world_changed,did:none,asker:person,age:0")
+    expect(selection?.cell_scheme).toBe("reads+did")
   })
 
   test("[MUST-FAIL] the selection row carries what the tick cost: each part's ms and each read's tries", () => {
