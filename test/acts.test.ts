@@ -8,7 +8,9 @@ Object.assign(process.env, {
 const { actsFactRow, actsOf } = await import("../src/acts")
 
 const req = (tool: string, seq: number) => ({ shape: "requires", id: `rq-${tool}`, seq, role: "owner", for: tool, needs: "change_wanted", where: { wanted: true } })
-const OWNER_ROWS = ["git_worktree", "fs_edit", "code_typecheck", "git_commit", "git_land"].map((t, i) => req(t, i + 1))
+// The owner's land_verdict schema says which fields make two verdicts the same judgment (the seed writes it).
+const LV_SCHEMA = { shape: "shape_schema", id: "ss-lv", seq: 6, role: "owner", target: "land_verdict", variant: "", repeat_key: "tree", repeat_value: "r" }
+const OWNER_ROWS: any[] = [...["git_worktree", "fs_edit", "code_typecheck", "git_commit", "git_land"].map((t, i) => req(t, i + 1)), LV_SCHEMA]
 let seq = 100
 const call = (root: string, tool: string, end: "ok" | "fail" | "notok", answer: Record<string, unknown> = {}) => {
   const sel = { shape: "selection", id: `s${++seq}`, seq, role: "walk", root }
@@ -171,6 +173,30 @@ describe("what a request keeps repeating", () => {
     const after: any[] = [...OWNER_ROWS, ...refusedOn("k1"), ...refusedOn("k1")]
     after.push({ shape: "shape_schema", id: `ss${++n}`, seq: n, role: "owner", target: "change_wanted" }, ...refusedOn("k1"))
     expect(actsOf(after, "w1").repeats).toEqual([])
+  })
+
+  test("[MUST-FAIL] which fields make a produce's repeat is read from its schema row: without repeat_key none; another target with one, keyed so", () => {
+    n = 500
+    const verdicts = (pool: any[]) => {
+      for (let i = 0; i < 4; i++) {
+        const s = sel("w1", "produce/land_verdict/ch1")
+        pool.push(s, { shape: "land_verdict", id: `lv${++n}`, seq: n, role: "described", selection_ref: s.id, tree: "0e4d7b4", r: 0 })
+      }
+      return pool
+    }
+    // no repeat_key on the land_verdict schema: no produce repeat
+    const bare = verdicts([...OWNER_ROWS.filter((r: any) => r !== LV_SCHEMA), { ...LV_SCHEMA, repeat_key: undefined, repeat_value: undefined }])
+    expect(actsOf(bare, "w1").repeats).toEqual([])
+    // a newer schema row naming none retires the older one's key
+    const retired = verdicts([...OWNER_ROWS, { ...LV_SCHEMA, id: "ss-lv2", seq: 8, repeat_key: undefined, repeat_value: undefined }])
+    expect(actsOf(retired, "w1").repeats).toEqual([])
+    // a target the code never names, keyed by its schema: change_wanted judged wanted:false for the same repo three times
+    const cw: any[] = [...OWNER_ROWS, { shape: "shape_schema", id: "ss-cw", seq: 7, role: "owner", target: "change_wanted", variant: "", repeat_key: "repo", repeat_value: "wanted" }]
+    for (let i = 0; i < 3; i++) {
+      const s = sel("w1", "produce/change_wanted/ch1")
+      cw.push(s, { shape: "change_wanted", id: `cw${++n}`, seq: n, role: "described", selection_ref: s.id, repo: "super", wanted: false })
+    }
+    expect(actsOf(cw, "w1").repeats).toEqual([expect.objectContaining({ produce: "change_wanted", on: "repo super", outcome: "wanted false", n: 3 })])
   })
 
   test("[MUST-FAIL] owner rows that do not bear on the step (a seed run's credits and answer schema) do not end a repeat; one that does, does", () => {

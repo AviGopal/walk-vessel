@@ -5,7 +5,7 @@
 // on a request with no landing). The fact states only what happened here; what to do next is the producer's to infer.
 // It is a memo of the request's own rows: the same rows always give the same fact, and nothing else goes in it.
 import { ENDED, type Row, STARTED } from "./calls"
-import { FAILURE, HOP, OWNER, PERSON, REQUIRES, SELECTION, WALK } from "./shapes"
+import { FAILURE, HOP, OWNER, PERSON, REQUIRES, SELECTION, SHAPE_SCHEMA, WALK } from "./shapes"
 
 export const REQUEST_ACTS = "request_acts"
 
@@ -148,13 +148,22 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
     const run = streak(fs, () => true, () => new Set([target]))
     if (run.length >= 2) out.push({ produce: target, on: "refused", outcome: String(run.at(-1)!.body ?? "").slice(0, OUTCOME_MAX), n: run.length, since_seq: run[0].seq })
   }
-  // a produce judging the same thing the same way: land verdicts of this request, by the tree they judge
-  const verdicts = pool.filter((r) => r.shape === "land_verdict" && mine.has(String(r.selection_ref)) && typeof r.tree === "string").sort((a, b) => a.seq - b.seq)
-  const byTree = new Map<string, Row[]>()
-  for (const v of verdicts) byTree.set(String(v.tree), [...(byTree.get(String(v.tree)) ?? []), v])
-  for (const [tree, vs] of byTree) {
-    const run = streak(vs, (a, b) => Number(a.r) === Number(b.r), () => new Set(["land_verdict"]))
-    if (run.length >= 2) out.push({ produce: "land_verdict", on: `tree ${tree}`, outcome: `r ${Number(run[0].r)}`, n: run.length, since_seq: run[0].seq })
+  // a produce judging the same thing the same way: which field names the thing judged (repeat_key) and which the way it
+  // was judged (repeat_value) is the owner's word, on the produced shape's schema row (a land verdict: the tree, and r),
+  // read for any target; a schema naming none has no such repeat
+  const keyed = new Map<string, { key: string; value: string }>()
+  for (const sc of pool.filter((r) => r.shape === SHAPE_SCHEMA && r.role === OWNER && String(r.variant ?? "") === "").sort((a, b) => a.seq - b.seq)) {
+    if (typeof sc.repeat_key === "string" && sc.repeat_key !== "" && typeof sc.repeat_value === "string" && sc.repeat_value !== "") keyed.set(String(sc.target), { key: sc.repeat_key, value: sc.repeat_value })
+    else keyed.delete(String(sc.target))
+  }
+  for (const [target, { key, value }] of keyed) {
+    const made = pool.filter((r) => r.shape === target && mine.has(String(r.selection_ref)) && (typeof r[key] === "string" || typeof r[key] === "number")).sort((a, b) => a.seq - b.seq)
+    const byKey = new Map<string, Row[]>()
+    for (const v of made) byKey.set(String(v[key]), [...(byKey.get(String(v[key])) ?? []), v])
+    for (const [k, vs] of byKey) {
+      const run = streak(vs, (a, b) => stable(a[value]) === stable(b[value]), () => new Set([target]))
+      if (run.length >= 2) out.push({ produce: target, on: `${key} ${k}`, outcome: `${value} ${stable(run[0][value])}`, n: run.length, since_seq: run[0].seq })
+    }
   }
   return out
 }
