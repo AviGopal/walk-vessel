@@ -130,6 +130,18 @@ const recordAnswer = async (sel: Row, s: Served | undefined, body: Record<string
   await writeRow({ ...fields, shape, selection_ref: sel.id, call_id: callId, input_refs: cites })
 }
 
+// A tool that brought the clone it works in onto a newer base first (local-tools clone-refresh.ts) says so in its answer:
+// `refreshed`, a row of its own with its own shape. The walk records it as a row, once, with the call that said it, so
+// the request's rows show the clone's new base as a fresh clone's answer would. Only a tool's answer (a call, or a
+// template's call): a produce's answer is a model's and never carries a row the walk would record as its own.
+const recordRefreshed = async (sel: Row, body: Record<string, unknown>, callId: string): Promise<void> => {
+  const r = body.refreshed
+  if (typeof r !== "object" || r === null || typeof (r as { shape?: unknown }).shape !== "string") return
+  const fields = Object.fromEntries(Object.entries(r as Record<string, unknown>).filter(([k]) => !OWN_FIELDS.has(k)))
+  const cites = typeof sel.root === "string" ? [sel.root] : [sel.pool_refs].flat().map(String)
+  await writeRow({ ...fields, shape: String((r as { shape: string }).shape), selection_ref: sel.id, call_id: callId, input_refs: cites })
+}
+
 // What the walk keeps of a call's answer. A hop is shown to producers as context, so a tool's whole stdout (a 237 KB
 // untracked listing, recorded on every call) would ride along in every prompt after it. Past the bound the hop keeps a
 // marked start of the answer, and says how big it was. A recorded answer row may be bigger (a gitDiff is capped at
@@ -209,6 +221,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       ? await answerServed(String(pointer.type), body as Record<string, unknown>).catch(() => undefined) : undefined
     await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: bounded(r.body, HOP_OUTPUT_MAX), input_refs: refs, ...unservedNote(served) })
     await recordAnswer(sel, served, body as Record<string, unknown>, callId)
+    if (kind === CALL || kind === RUN) await recordRefreshed(sel, body as Record<string, unknown>, callId)
     return { ok: true, body: r.body }
   } catch (e) {
     if (stopping) return { ok: false }
