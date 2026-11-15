@@ -4,7 +4,7 @@ import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
 import { type Cand, ENDED, STARTED, type Inner, type Row, exists } from "./calls"
 import { VESSEL_ID } from "./config"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
@@ -300,7 +300,24 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
 
   // A template is run only when every shape it calls is served, as a call is: one naming a shape nothing serves (a
   // "hop", which is a record of a call, not a shape) would fail at its first step every time.
-  const templates = pool.filter((r) => TEMPLATES.has(r.shape)).filter((r) => (r.sig as { in: string[] }).in.every((x) => have.has(x)))
+  // A template the owner's standing rhythm names is run on its schedule only (the USER: "Build the schedule reader
+  // first"): on the walk's idle root, when at least every_rows rows were written since the later of its last run and
+  // its rhythm row. Never offered to a request's own work. The rhythm rows are the owner's; no template is named here.
+  const rhythms = new Map<string, Row>()
+  for (const r of pool.filter((x) => x.shape === RHYTHM && x.role === OWNER).sort((a, b) => a.seq - b.seq)) rhythms.set(String(r.template), r)
+  // Any template a rhythm row ever named is scheduled only: a retired rhythm's template is not offered at all.
+  const scheduled = new Set(rhythms.keys())
+  for (const [t, r] of [...rhythms]) if (r.retired === true || !(typeof r.every_rows === "number" && r.every_rows >= 1)) rhythms.delete(t)
+  const idleNow = note.awaits === false || (note.awaits === undefined && pool.some((x) => x.shape === ARM))
+  const lastSeq = pool.reduce((m, x) => Math.max(m, x.seq), 0)
+  const due = (t: Row): boolean => {
+    const r = rhythms.get(t.id)
+    if (r === undefined || !idleNow) return false
+    const ran = pool.filter((x) => x.shape === SELECTION && String(x.a) === `${RUN}/${t.id}`).reduce((m, x) => Math.max(m, x.seq), 0)
+    return lastSeq - Math.max(ran, r.seq) >= Number(r.every_rows)
+  }
+  const templates = pool.filter((r) => TEMPLATES.has(r.shape)).filter((r) => !scheduled.has(r.id) || due(r))
+    .filter((r) => (r.sig as { in: string[] }).in.every((x) => have.has(x)))
   // A call to a shape the owner's schemas produce (an answer, a due) goes through a channel: one that names none (a
   // template that replayed a stored answer row as its pointer) is refused every time, so it is not run either, and is
   // named the same way, as "<shape> (no channel)".
@@ -351,7 +368,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const run = templates
     .map((r, i) => ({ r, i }))
     .filter(({ i }) => unserved[i].length === 0 && unbound[i].length === 0)
-    .filter(({ r }) => !ran(r))
+    // a scheduled template's re-run is its rhythm's (due, above), not this rule's
+    .filter(({ r }) => scheduled.has(r.id) || !ran(r))
     .map(({ r, i }): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in], inputs: inputs[i] }))
 
   // When to wait follows the request's own deadlines (law 5). The walk's arm row is in the pool only when the walk is

@@ -29,3 +29,5 @@ export const WALK = "walk"
 export const PERSON = "person"
 export const OWNER = "owner"
 export const DESCRIBED = "described"
+// The owner's schedule for a template the walk runs when due (records shares it with the template it names).
+export const RHYTHM = "rhythm"
