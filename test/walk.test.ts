@@ -1595,7 +1595,7 @@ describe("a learned template's calls", () => {
     expect(skipped?.selection_ref).toBe("sel-big")
   })
 
-  test("[MUST-FAIL] an answer whose shape no vessel advertises is said, not dropped; one advertised by the tool's vessel is a row citing the request", async () => {
+  test("[MUST-FAIL] an answer whose shape no vessel advertises is said on its hop, with no failure row; one advertised by the tool's vessel is a row citing the request", async () => {
     const run = async (servedBy: Record<string, string>) => {
       sent.length = 0
       globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
@@ -1608,21 +1608,22 @@ describe("a learned template's calls", () => {
       const { execute } = await import("../src/calls")
       await execute({ id: "run/t5", kind: "run", pointer: {}, t: "", calls: [{ shape: "git_worktree", pointer: { repo: "some-vessel" } }] },
         { shape: "selection", id: "sel-wt", seq: 14, root: "w7", pool_refs: ["w7"] })
-      return sent.filter((p) => p.type === "record_write").map((p) => p.row).filter((r) => r.shape !== "hop")
+      return sent.filter((p) => p.type === "record_write").map((p) => p.row)
     }
-    // The tool's vessel never advertised gitWorktree: no row of it, and a failure row naming the shape.
+    const ended = (rows: Record<string, any>[]) => rows.find((r) => r.shape === "hop" && r.phase === "ended")
+    // The tool's vessel never advertised gitWorktree: no row of it, the ended hop says so, and no failure row is written
+    // (records withdraws a selection's credit for any failure row the walk writes for it; the call succeeded).
     const unadvertised = await run({ git_worktree: "tools" })
     expect(unadvertised.some((r) => r.shape === "gitWorktree")).toBe(false)
-    const said = unadvertised.find((r) => r.shape === "failure" && r.kind === "unrecorded")
-    expect(said?.unrecorded).toBe("gitWorktree")
-    expect(said?.why).toBe("unserved")
-    expect(said?.selection_ref).toBe("sel-wt")
-    // Once it advertises it: the answer is a gitWorktree row citing its request, and nothing is said.
+    expect(ended(unadvertised)?.unrecorded).toEqual({ shape: "gitWorktree", why: "unserved" })
+    expect(unadvertised.some((r) => r.shape === "failure")).toBe(false)
+    // Once it advertises it: the answer is a gitWorktree row citing its request, and the hop says nothing.
     const advertised = await run({ git_worktree: "tools", gitWorktree: "tools" })
     const row = advertised.find((r) => r.shape === "gitWorktree")
     expect(row?.cwd).toBe("/trees/c1")
     expect(row?.input_refs).toEqual(["w7"])
-    expect(advertised.some((r) => r.kind === "unrecorded")).toBe(false)
+    expect(ended(advertised)?.unrecorded).toBeUndefined()
+    expect(advertised.some((r) => r.shape === "failure")).toBe(false)
   })
 
   test("[MUST-FAIL] a failure keeps the producer's word for what kind of refusal it was, and only that", async () => {

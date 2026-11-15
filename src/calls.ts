@@ -92,19 +92,26 @@ const servers = async (shape: string): Promise<Set<string> | null> => {
   const vessels = (r.body as { content?: { vessels?: Array<{ vesselId?: unknown }> } } | null)?.content?.vessels
   return r.ok && Array.isArray(vessels) ? new Set(vessels.map((v) => String(v.vesselId))) : null
 }
-const recordAnswer = async (sel: Row, called: string, body: Record<string, unknown>, callId: string): Promise<void> => {
+// Who serves a tool's answer shape, asked once per answer: whether it becomes a row (recordAnswer) and, when no vessel
+// advertises it at all, what the call's ended hop says about it.
+type Served = { shape: string; mine: Set<string> | null; its: Set<string> | null }
+const answerServed = async (called: string, body: Record<string, unknown>): Promise<Served | undefined> => {
   const shape = body.shape
-  if (typeof shape !== "string" || shape === called) return
+  if (typeof shape !== "string" || shape === called) return undefined
   // An answer that is itself a stored row (a records read or wait answering one) is a row already, not a tool's answer.
-  if ("seq" in body || "writer" in body) return
+  if ("seq" in body || "writer" in body) return undefined
   const [mine, its] = await Promise.all([servers(called), servers(shape)])
-  // An answer whose shape no vessel advertises is not made a row (nothing vouches for it), but it is said: a failure row
-  // naming the shape, as a too-big answer is. Otherwise a tool that never advertised its answer (a clone's gitWorktree)
-  // leaves every request blind to it with nothing anywhere saying why.
-  if (mine && its && its.size === 0) {
-    await writeRow({ shape: FAILURE, kind: "unrecorded", call_id: callId, selection_ref: sel.id, unrecorded: shape, why: "unserved", input_refs: [sel.id] })
-    return
-  }
+  return { shape, mine, its }
+}
+// An answer whose shape no vessel advertises is not made a row (nothing vouches for it), but it is said, on the call's
+// ended hop: otherwise a tool that never advertised its answer (a clone's gitWorktree) leaves every request blind to it
+// with nothing anywhere saying why. On the hop, not a failure row: records withdraws a selection's credit for any
+// failure row the walk writes for it, and the call itself succeeded.
+const unservedNote = (s: Served | undefined): { unrecorded: { shape: string; why: string } } | Record<string, never> =>
+  s && s.mine && s.its && s.its.size === 0 ? { unrecorded: { shape: s.shape, why: "unserved" } } : {}
+const recordAnswer = async (sel: Row, s: Served | undefined, body: Record<string, unknown>, callId: string): Promise<void> => {
+  if (!s) return
+  const { shape, mine, its } = s
   if (!mine || !its || ![...its].some((v) => mine.has(v))) return
   const fields = Object.fromEntries(Object.entries(body).filter(([k]) => !OWN_FIELDS.has(k)))
   // An answer too big to read whole is not made a row: every prompt that took it as an input would carry it. The skip is
@@ -182,8 +189,9 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       })
       return { ok: false }
     }
-    await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: bounded(r.body, HOP_OUTPUT_MAX), input_refs: refs })
-    if (kind === CALL || kind === RUN) await recordAnswer(sel, String(pointer.type), body as Record<string, unknown>, callId)
+    const served = kind === CALL || kind === RUN ? await answerServed(String(pointer.type), body as Record<string, unknown>) : undefined
+    await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: bounded(r.body, HOP_OUTPUT_MAX), input_refs: refs, ...unservedNote(served) })
+    await recordAnswer(sel, served, body as Record<string, unknown>, callId)
     return { ok: true }
   } catch (e) {
     if (stopping) return { ok: false }
