@@ -22,7 +22,28 @@ const call = (root: string, tool: string, end: "ok" | "fail" | "notok", answer: 
   return rows
 }
 
+// Which walk rows records returns into a request's pool (store.ts rootRows): its root, the walk's selections citing it,
+// their hops and failures, and any other walk row whose selection_ref is one of those selections.
+const episodeOf = (all: any[], root: string): any[] => {
+  const sels = new Set(all.filter((r) => r.shape === "selection" && r.role === "walk" && (r.root === root || [r.pool_refs].flat().includes(root))).map((r) => r.id))
+  return all.filter((r) => r.id === root || r.role === "owner" || sels.has(r.id) || sels.has(String(r.selection_ref)))
+}
+
 describe("what a request has done", () => {
+  test("[MUST-FAIL] through the store's real episode: a fact written on one tick is in the next tick's pool and is not written again", async () => {
+    seq = 100
+    const store: any[] = [{ shape: "world_changed", id: "w1", seq: 1, role: "person" }, ...OWNER_ROWS, ...call("w1", "fs_edit", "ok", { path: "a.ts" })]
+    const written: any[] = []
+    const write = async (row: any) => { const r = { ...row, id: `ra${written.length}`, seq: 900 + written.length, role: "walk" }; written.push(r); store.push(r); return r }
+    const sel1 = { shape: "selection", id: "s-t1", seq: 500, role: "walk", root: "w1" }; store.push(sel1)
+    await actsFactRow(episodeOf(store, "w1"), "w1", write, sel1.id)
+    const sel2 = { shape: "selection", id: "s-t2", seq: 600, role: "walk", root: "w1" }; store.push(sel2)
+    const again = await actsFactRow(episodeOf(store, "w1"), "w1", write, sel2.id)
+    expect(written).toHaveLength(1)
+    expect(again).toBe("ra0")
+    expect(written[0].selection_ref).toBe("s-t1")
+  })
+
   test("[MUST-FAIL] what the row means (a template is a plan, never an act) is said once, in the registered description", async () => {
     const { WRITTEN } = await import("../src/written")
     expect(WRITTEN.request_acts).toContain("template (activity_template) is a plan")

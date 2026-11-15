@@ -197,7 +197,7 @@ export const chain = async (): Promise<void> => {
     }))
     await recordSkipped(pool, skipped, sel)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
-    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow) : undefined
+    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
   }
 }

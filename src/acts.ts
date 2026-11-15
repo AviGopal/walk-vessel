@@ -45,7 +45,10 @@ export const actsOf = (pool: Row[], root: string): Acts => {
 
 // The fact row to hand a produce on `root`: the latest one the walk wrote for it, when it still says the same; else a
 // new one. The write is only on change, so a request shows one row per state of its acts.
-export const actsFactRow = async (pool: Row[], root: string, write: (row: object) => Promise<Row>): Promise<string | undefined> => {
+// The row names the selection it was written for (selection_ref): records returns a walk row into a request's pool only
+// through one of that request's selections, so without it the row never came back and a new one was written at every
+// produce.
+export const actsFactRow = async (pool: Row[], root: string, write: (row: object) => Promise<Row>, sel?: string): Promise<string | undefined> => {
   const now = actsOf(pool, root)
   const last = pool.filter((r) => r.shape === REQUEST_ACTS && r.role === WALK && String(r.root) === root).sort((a, b) => a.seq - b.seq).at(-1)
   const same = last !== undefined && JSON.stringify({ acts: last.acts, not_called: last.not_called }) ===
@@ -53,7 +56,7 @@ export const actsFactRow = async (pool: Row[], root: string, write: (row: object
   if (same) return last.id
   // A write that fails leaves the produce without the fact; said in the journal, so a missing fact is seen, and tried
   // again at the next produce.
-  const r = await write({ shape: REQUEST_ACTS, ...now, input_refs: [root] }).catch((e: unknown) => {
+  const r = await write({ shape: REQUEST_ACTS, ...now, input_refs: [root], ...(sel !== undefined ? { selection_ref: sel } : {}) }).catch((e: unknown) => {
     console.error(`[walk] request_acts for ${root} not written (${String(e)}); the produce runs without it`)
     return undefined
   })
