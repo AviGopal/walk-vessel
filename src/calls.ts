@@ -188,10 +188,18 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       // A producer may say what kind of refusal this was (described-shape marks one by the schema); kept as a field so a
       // reader does not have to guess from the status.
       const refused = ((): unknown => { try { return (JSON.parse(r.text) as { failure?: { refused?: unknown } }).failure?.refused } catch { return undefined } })()
+      // A tool may say its refusal waits for a person (git_land: only a person's verdict lands this change): kept as a
+      // field, read from the answer itself (top level, or under content when forwarded), so records reads the field and
+      // never a body the row may have cut short. Only a tool's answer (a call, or a template's call in a run): a produce's
+      // answer is written by a model, and must not be able to escape its own debit by saying it.
+      const answer = kind !== CALL && kind !== RUN ? {} : r.ok ? body as Record<string, unknown> : ((): Record<string, unknown> => { try { return JSON.parse(r.text) as Record<string, unknown> } catch { return {} } })()
+      const inner = typeof answer.content === "object" && answer.content !== null ? answer.content as Record<string, unknown> : {}
+      const waits = answer.waits_for === "person" || inner.waits_for === "person"
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
         body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
         ...(typeof refused === "string" ? { refused } : {}),
+        ...(waits ? { waits_for: "person" } : {}),
       })
       return { ok: false }
     }
