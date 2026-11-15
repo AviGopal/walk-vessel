@@ -86,7 +86,7 @@ describe("what a request has done", () => {
     const plan = { shape: "activity_template", id: "t-land", seq: 50, role: "described", calls: [{ shape: "git_commit", pointer: {} }, { shape: "git_land", pointer: {} }] }
     const f = actsOf([...OWNER_ROWS, plan, ...call("w1", "fs_edit", "ok")], "w1")
     expect(f.not_called).toEqual(["code_typecheck", "git_commit", "git_land", "git_worktree"])
-    expect(Object.keys(f).sort()).toEqual(["acts", "not_called", "root"]) // facts only: what a row means is said once
+    expect(Object.keys(f).sort()).toEqual(["acts", "not_called", "repeats", "root"]) // facts only: what a row means is said once
   })
 
   test("[MUST-FAIL] which tools are acts is the owner's word, read as the walk reads it: a later retired row for the same gate retires it", () => {
@@ -111,5 +111,67 @@ describe("what a request has done", () => {
     expect(await actsFactRow(pool, "w1", write)).toBe("ra1")
     expect(written[1].acts.at(-1)).toMatchObject({ tool: "git_commit", ok: true, sha: "abc" })
     expect(written[1].input_refs).toEqual(["w1"])
+  })
+})
+
+describe("what a request keeps repeating", () => {
+  let n = 500
+  const sel = (root: string, a: string) => ({ shape: "selection", id: `rs${++n}`, seq: n, role: "walk", root, a })
+  const tmpl = { shape: "activity_template", id: "t-diff", seq: 1, role: "described", sig: { in: ["gitWorktree"] }, calls: [{ shape: "git_diff", pointer: {} }] }
+  const NO_COMMIT = '{"error":"the clone has no commit since it was made: there is no change to diff"}'
+  const failedRun = (root: string, cwd: string, body = NO_COMMIT) => {
+    const s = sel(root, "run/t-diff")
+    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "git_diff", args: { cwd } }
+    const f = { shape: "failure", id: `rf${++n}`, seq: n, role: "walk", selection_ref: s.id, call_id: h.call_id, status: 422, body }
+    return [s, h, f]
+  }
+  const clone = (root: string, head: string) => {
+    const s = sel(root, "call/git_worktree")
+    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "git_worktree", args: { repo: "super" } }
+    const g = { shape: "gitWorktree", id: `rg${++n}`, seq: n, role: "walk", call_id: h.call_id, cwd: "/t/a", head, input_refs: [root] }
+    return [s, h, g]
+  }
+  const read = (root: string) => {
+    const s = sel(root, "call/fs_read")
+    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "fs_read", args: { path: "/t/a/x.ts" } }
+    const c = { shape: "fileContent", id: `rc${++n}`, seq: n, role: "walk", call_id: h.call_id, path: "/t/a/x.ts", content: "x", input_refs: [root] }
+    return [s, h, c]
+  }
+
+  test("[MUST-FAIL] eb1768f6's shape: the same call failing the same way three times, a read of its own between, is a repeat ×3", () => {
+    n = 500
+    const pool = [...OWNER_ROWS, tmpl, ...clone("w1", "h1"), ...failedRun("w1", "/t/a"), ...failedRun("w1", "/t/a"), ...read("w1"), ...failedRun("w1", "/t/a")]
+    expect(actsOf(pool, "w1").repeats).toEqual([expect.objectContaining({ call: "git_diff", n: 3, outcome: expect.stringContaining("no commit since") })])
+  })
+
+  test("[MUST-FAIL] 01557de8's shape: the same tree graded r 0 four times is a repeat ×4", () => {
+    n = 500
+    const pool: any[] = [...OWNER_ROWS]
+    for (let i = 0; i < 4; i++) {
+      const s = sel("w1", "produce/land_verdict/ch1")
+      pool.push(s, { shape: "land_verdict", id: `lv${++n}`, seq: n, role: "described", selection_ref: s.id, tree: "0e4d7b4", r: 0 })
+    }
+    expect(actsOf(pool, "w1").repeats).toEqual([expect.objectContaining({ produce: "land_verdict", on: "tree 0e4d7b4", outcome: "r 0", n: 4 })])
+  })
+
+  test("[MUST-FAIL] new content the run takes in (a clone with a new head), or a person's row, ends the repeat; a different outcome is not a repeat", () => {
+    n = 500
+    const head = [...OWNER_ROWS, tmpl, ...clone("w1", "h1"), ...failedRun("w1", "/t/a"), ...failedRun("w1", "/t/a")]
+    expect(actsOf([...head, ...clone("w1", "h2")], "w1").repeats).toEqual([])
+    expect(actsOf([...head, { shape: "outcome", id: "p1", seq: ++n, role: "person", r: 0 }], "w1").repeats).toEqual([])
+    n = 500
+    const diff = [...OWNER_ROWS, tmpl, ...failedRun("w1", "/t/a"), ...failedRun("w1", "/t/a", '{"error":"another reason"}')]
+    expect(actsOf(diff, "w1").repeats).toEqual([])
+  })
+
+  test("[MUST-FAIL] the row is written again when a repeat grows, though acts did not change", async () => {
+    n = 500
+    const written: any[] = []
+    const write = async (row: any) => { const r = { ...row, id: `rr${written.length}`, seq: 9000 + written.length, role: "walk" }; written.push(r); return r }
+    const pool: any[] = [...OWNER_ROWS, tmpl, ...failedRun("w1", "/t/a"), ...failedRun("w1", "/t/a")]
+    await actsFactRow(pool, "w1", write); pool.push(written[0])
+    pool.push(...failedRun("w1", "/t/a"))
+    await actsFactRow(pool, "w1", write)
+    expect(written.map((w) => w.repeats[0]?.n)).toEqual([2, 3])
   })
 })

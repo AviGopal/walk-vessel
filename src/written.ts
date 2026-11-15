@@ -10,7 +10,10 @@ export const WRITTEN: Record<string, string> = {
     "wanted change: tool, ok, at_seq, and path, repo or sha when its answer gave one) and not_called (those tools never " +
     "called on it). It covers only those tools, the ones that change something: of them, only the calls listed in acts " +
     "happened on that request (reads and other calls are not listed). A template (activity_template) is a plan for the " +
-    "request that wrote it, never an act on another. Written by the walk when it changes.",
+    "request that wrote it, never an act on another. repeats: a step this request keeps repeating with the same result " +
+    "over the same inputs (a call failing the same way, or the same tree graded the same way), n times in a row with " +
+    "nothing new in between or since: nothing new is a person's or the owner's row, or a tool's answer saying something " +
+    "new that the repeating step takes in. Written by the walk when it changes.",
   [HOP]: "The record of one call the walk made, not a shape to call. pointer_type is the shape it called; kind (produce, " +
     "call, run or wait-for; wait-until on older rows) is how the walk chose the call, never a shape to call. Also phase (started or " +
     "ended), selection_ref, until on a wait (the deadline it waited by) and, on ended, output: what came back, and " +

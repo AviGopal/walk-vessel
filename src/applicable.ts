@@ -353,51 +353,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // draw over calling that request, round after round. The walk's own rows since (its next selection, a hop) are how it
   // got here, not new input, even for a template that takes in selections; a template that takes in only those is run
   // again in a root only when its run failed.
-  // A template whose runs keep failing the same way over the same request state is not run again until something
-  // changes: its last failure has the same body as the one before it (exactly: the tool's answer, as recorded), and no
-  // new state has come since. New state is what a run can see change: a row of a shape it takes in (sig.in), a tool's
-  // answer the walk recorded (a commit's result: it carries a call_id), or a person's or the owner's row. A producer's
-  // own rows (an answer, another template) and the walk's bookkeeping change nothing a run reads. How many identical
-  // repeats are allowed is the owner's
-  // word on the template schema row (retries_after_identical_failure, 0 to 3); with none, 0: held after the first
-  // repeat. Before, a failed run was offered again every tick, and a request drew the same failing template over and
-  // over (52d7196f: run/398da996 four times, "no commit since the clone was made").
-  const tmplSchema = schemas.find((x) => String(x.target) === ACTIVITY_TEMPLATE)
-  const allowed = ((n: unknown): number => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 3 ? n : 0)(tmplSchema?.retries_after_identical_failure)
-  // Each selection's latest failure (any) and latest kind-less walk failure, mapped once per call: read for every run.
-  const lastFail = new Map<string, number>()
-  const lastBody = new Map<string, Row>()
-  for (const x of pool.filter((r) => r.shape === FAILURE)) {
-    const k = String(x.selection_ref)
-    lastFail.set(k, Math.max(lastFail.get(k) ?? Number.NEGATIVE_INFINITY, x.seq))
-    if (x.role === WALK && x.kind === undefined && (lastBody.get(k)?.seq ?? Number.NEGATIVE_INFINITY) < x.seq) lastBody.set(k, x)
-  }
-  const bodyOf = (sel: Row): string | undefined => {
-    const f = lastBody.get(sel.id)
-    return f === undefined ? undefined : String(f.body ?? "")
-  }
-  const isNew = (r: Row, x: Row): boolean => (r.sig as { in?: string[] } | undefined)?.in?.includes(String(x.shape)) === true
-    || (x.role === WALK && !BOOKKEEPING.has(x.shape) && typeof x.call_id === "string") || x.role === PERSON || x.role === OWNER
-  const repeating = (r: Row): boolean => {
-    const runs = pool.filter((x) => x.shape === SELECTION && x.a === [RUN, r.id].join("/")).sort((a, b) => a.seq - b.seq)
-    const lastFailure = (sel: Row): number => lastFail.get(sel.id) ?? Number.NEGATIVE_INFINITY
-    let same = 0
-    for (let i = runs.length - 1; i > 0; i--) {
-      const b = bodyOf(runs[i]); const a = bodyOf(runs[i - 1])
-      if (b === undefined || a === undefined || a !== b) break
-      // something new between the two runs (not the walk's bookkeeping) means a different state, not a repeat
-      const from = lastFailure(runs[i - 1]); const to = runs[i].seq
-      if (pool.some((x) => x.seq > from && x.seq < to && isNew(r, x))) break
-      same++
-    }
-    if (same <= allowed) return false
-    const since = lastFailure(runs.at(-1) as Row)
-    return !pool.some((x) => x.seq > since && isNew(r, x))
-  }
   const ran = (r: Row): boolean => {
     const last = pool.filter((x) => x.shape === SELECTION && x.a === [RUN, r.id].join("/")).sort((a, b) => a.seq - b.seq).at(-1)
     if (last === undefined) return false
-    if (pool.some((x) => x.shape === FAILURE && x.role === WALK && String(x.selection_ref) === last.id && x.kind === undefined)) return repeating(r)
+    if (pool.some((x) => x.shape === FAILURE && x.role === WALK && String(x.selection_ref) === last.id && x.kind === undefined)) return false
     const takes = new Set((r.sig as { in: string[] }).in)
     return !pool.some((x) => x.seq > last.seq && takes.has(x.shape) && x.role !== WALK)
   }
