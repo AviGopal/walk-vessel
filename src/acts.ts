@@ -67,9 +67,13 @@ export const actsFactRow = async (pool: Row[], root: string, write: (row: object
 }
 
 // ── repeats ──
-// What counts as new between two of them: a person's or the owner's row, or a tool's answer that says something new (its
-// result differs from the last answer to the same call) of a shape the repeating run takes in (its template's sig.in).
-// The walk's own reads, its bookkeeping and a producer's rows are not new: they change nothing the call is given.
+// What counts as new between two of them: a person's row on this request; an owner's row that bears on the step (a
+// requires row for the tool called, or a schema for the tool, one of the shapes it takes in, or the shape produced:
+// owner rows are shared by every request, so a seed run writing unrelated ones must not reset every repeat); or a tool's
+// answer that says something new (its result differs from the last answer to the same call) of a shape the repeating
+// run takes in (its template's sig.in). The walk's own reads, its bookkeeping and a producer's rows are not new: they
+// change nothing the call is given. A started hop recorded before the binder carries no args: such calls of one tool
+// share a key, and only their bodies tell them apart.
 const OUTCOME_MAX = 300
 const BOOK = new Set([SELECTION, HOP, FAILURE])
 const stable = (v: unknown): string => JSON.stringify(v, (_k, x) => x !== null && typeof x === "object" && !Array.isArray(x)
@@ -98,7 +102,9 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
     const t = a.startsWith("run/") ? byId.get(a.slice(4)) : undefined
     return new Set([(t?.sig as { in?: unknown } | undefined)?.in].flat().map(String))
   }
-  const isNew = (x: Row, takes: Set<string>): boolean => x.role === PERSON || x.role === OWNER || (novel.has(x.id) && takes.has(String(x.shape)))
+  const bears = (x: Row, about: Set<string>): boolean => x.shape === REQUIRES ? about.has(String(x.for)) : about.has(String(x.target))
+  const isNew = (x: Row, takes: Set<string>): boolean => x.role === PERSON || (x.role === OWNER && bears(x, takes))
+    || (novel.has(x.id) && takes.has(String(x.shape)))
   const streak = <T extends Row>(rows: T[], same: (a: T, b: T) => boolean, takes: (r: T) => Set<string>): T[] => {
     const out: T[] = []
     for (let i = rows.length - 1; i >= 0; i--) {
@@ -117,7 +123,8 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
   const byCall = new Map<string, Row[]>()
   for (const f of fails) { const k = callOf(String(f.call_id)); if (k !== undefined) byCall.set(k, [...(byCall.get(k) ?? []), f]) }
   for (const [k, fs] of byCall) {
-    const run = streak(fs, (a, b) => String(a.body ?? "") === String(b.body ?? ""), (f) => takesOf(byId.get(String(f.selection_ref))))
+    const tool = k.split(" ")[0]
+    const run = streak(fs, (a, b) => String(a.body ?? "") === String(b.body ?? ""), (f) => new Set([...takesOf(byId.get(String(f.selection_ref))), tool]))
     if (run.length >= 2) {
       const [tool, ...rest] = k.split(" ")
       out.push({ call: tool, on: rest.join(" ").slice(0, OUTCOME_MAX), outcome: String(run[0].body ?? "").slice(0, OUTCOME_MAX), n: run.length, since_seq: run[0].seq })
@@ -128,7 +135,7 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
   const byTree = new Map<string, Row[]>()
   for (const v of verdicts) byTree.set(String(v.tree), [...(byTree.get(String(v.tree)) ?? []), v])
   for (const [tree, vs] of byTree) {
-    const run = streak(vs, (a, b) => Number(a.r) === Number(b.r), () => new Set<string>())
+    const run = streak(vs, (a, b) => Number(a.r) === Number(b.r), () => new Set(["land_verdict"]))
     if (run.length >= 2) out.push({ produce: "land_verdict", on: `tree ${tree}`, outcome: `r ${Number(run[0].r)}`, n: run.length, since_seq: run[0].seq })
   }
   return out

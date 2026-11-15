@@ -154,6 +154,19 @@ describe("what a request keeps repeating", () => {
     expect(actsOf(pool, "w1").repeats).toEqual([expect.objectContaining({ produce: "land_verdict", on: "tree 0e4d7b4", outcome: "r 0", n: 4 })])
   })
 
+  test("[MUST-FAIL] owner rows that do not bear on the step (a seed run's credits and answer schema) do not end a repeat; one that does, does", () => {
+    n = 500
+    const pool: any[] = [...OWNER_ROWS]
+    for (let i = 0; i < 5; i++) {
+      if (i === 3) pool.push({ shape: "credits", id: `oc${++n}`, seq: n, role: "owner", target: "selection" }, { shape: "shape_schema", id: `os${++n}`, seq: n, role: "owner", target: "answer" })
+      const s = sel("w1", "produce/land_verdict/ch1")
+      pool.push(s, { shape: "land_verdict", id: `lv${++n}`, seq: n, role: "described", selection_ref: s.id, tree: "a30645e5", r: 0 })
+    }
+    expect(actsOf(pool, "w1").repeats).toEqual([expect.objectContaining({ produce: "land_verdict", n: 5 })])
+    pool.push({ shape: "shape_schema", id: `os${++n}`, seq: n, role: "owner", target: "land_verdict" }) // the grader's own schema changed
+    expect(actsOf(pool, "w1").repeats).toEqual([])
+  })
+
   test("[MUST-FAIL] new content the run takes in (a clone with a new head), or a person's row, ends the repeat; a different outcome is not a repeat", () => {
     n = 500
     const head = [...OWNER_ROWS, tmpl, ...clone("w1", "h1"), ...failedRun("w1", "/t/a"), ...failedRun("w1", "/t/a")]
