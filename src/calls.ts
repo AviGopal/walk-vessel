@@ -220,8 +220,10 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       // own body, never a produced row), or a tool's own answer (a call or a run). records blames such a failure on the
       // callee: no producer and none of the chain is debited for a call nothing answered.
       const str = (v: unknown): string | undefined => typeof v === "string" && v !== "" ? v : undefined
-      const sent = ((): Record<string, unknown> => { try { return JSON.parse(r.text) as Record<string, unknown> } catch { return {} } })()
-      const unserved = str((sent.failure as { unserved?: unknown } | undefined)?.unserved) ?? (r.ok ? undefined : str(sent.unserved))
+      // Only a non-200 is read for it from the body as sent: a 200 is the producer's answer, which a model may have
+      // written, so its fields (a `failure` object included) never lower a blame (deployment).
+      const sent = r.ok ? {} : ((): Record<string, unknown> => { try { return JSON.parse(r.text) as Record<string, unknown> } catch { return {} } })()
+      const unserved = str((sent.failure as { unserved?: unknown } | undefined)?.unserved) ?? str(sent.unserved)
         ?? str(answer.unserved) ?? str(inner.unserved)
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,

@@ -43,6 +43,8 @@ describe("a call nothing answered", () => {
 
   test("[MUST-FAIL] a produce's 200 cannot set it, nor can any answer with no such field; a producer's own 404 stays a 404", async () => {
     expect((await run(200, { error: "x", unserved: "answer" }, produce))?.unserved).toBeUndefined()
+    // a produce's 200 carrying a failure envelope of its own making cannot set it either (deployment)
+    expect((await run(200, { error: "x", failure: { status: 502, unserved: "llm_completion" } }, produce))?.unserved).toBeUndefined()
     expect((await run(200, { content: { error: "x", unserved: "answer" } }, produce))?.unserved).toBeUndefined()
     expect((await run(404, { error: "no such id" }, call))?.unserved).toBeUndefined()
     expect((await run(502, { failure: { status: 502, body: "provider refused" } }, produce))?.unserved).toBeUndefined()
