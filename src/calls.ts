@@ -189,7 +189,10 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       })
       return { ok: false }
     }
-    const served = kind === CALL || kind === RUN ? await answerServed(String(pointer.type), body as Record<string, unknown>) : undefined
+    // The call has ended well: nothing in what follows may unsettle it. A lookup that throws (discovery restarting) means
+    // no note and no row, never a failure row with no ended hop for a call whose clone, commit or landing happened.
+    const served = kind === CALL || kind === RUN
+      ? await answerServed(String(pointer.type), body as Record<string, unknown>).catch(() => undefined) : undefined
     await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: bounded(r.body, HOP_OUTPUT_MAX), input_refs: refs, ...unservedNote(served) })
     await recordAnswer(sel, served, body as Record<string, unknown>, callId)
     return { ok: true }

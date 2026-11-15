@@ -1626,6 +1626,24 @@ describe("a learned template's calls", () => {
     expect(advertised.some((r) => r.shape === "failure")).toBe(false)
   })
 
+  test("[MUST-FAIL] a call that ended well stays ended when asking who serves its answer throws", async () => {
+    sent.length = 0
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      sent.push(pointer)
+      if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
+      if (pointer.type === "vesselCapability") throw new Error("connection reset (discovery restarting)")
+      return Response.json({ shape: "gitWorktree", cwd: "/trees/c2", repo: "some-vessel", base: "b1" })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    await execute({ id: "run/t6", kind: "run", pointer: {}, t: "", calls: [{ shape: "git_worktree", pointer: { repo: "some-vessel" } }] },
+      { shape: "selection", id: "sel-rst", seq: 15, root: "w8", pool_refs: ["w8"] })
+    const rows = sent.filter((p) => p.type === "record_write").map((p) => p.row)
+    expect(rows.filter((r) => r.shape === "hop" && r.phase === "ended")).toHaveLength(1)
+    expect(rows.some((r) => r.shape === "failure")).toBe(false)
+    expect(rows.some((r) => r.shape === "gitWorktree")).toBe(false)
+  })
+
   test("[MUST-FAIL] a failure keeps the producer's word for what kind of refusal it was, and only that", async () => {
     sent.length = 0
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
