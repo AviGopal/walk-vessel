@@ -69,6 +69,15 @@ describe("a run failing the same way", () => {
     expect(await offered([...f2, input, ...run(NO_COMMIT)])).toBe(true)
   })
 
+  test("[MUST-FAIL] a 5k-row request with 40 identical failed runs is judged in well under two seconds (no scan per row)", async () => {
+    seq = 10
+    const runs = Array.from({ length: 40 }, () => run(NO_COMMIT)).flat()
+    const noise = Array.from({ length: 5000 - runs.length }, (_, i) => ({ shape: "answer", id: `n${i}`, seq: 10_000 + i, role: "described" }))
+    const t0 = performance.now()
+    expect(await offered([...runs, ...noise])).toBe(false)
+    expect(performance.now() - t0).toBeLessThan(2000)
+  })
+
   test("[MUST-FAIL] the owner's retries_after_identical_failure 1 allows one more identical repeat before the hold", async () => {
     seq = 10
     const two = [...run(NO_COMMIT), ...run(NO_COMMIT)]
