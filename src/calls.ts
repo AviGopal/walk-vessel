@@ -98,6 +98,13 @@ const recordAnswer = async (sel: Row, called: string, body: Record<string, unkno
   // An answer that is itself a stored row (a records read or wait answering one) is a row already, not a tool's answer.
   if ("seq" in body || "writer" in body) return
   const [mine, its] = await Promise.all([servers(called), servers(shape)])
+  // An answer whose shape no vessel advertises is not made a row (nothing vouches for it), but it is said: a failure row
+  // naming the shape, as a too-big answer is. Otherwise a tool that never advertised its answer (a clone's gitWorktree)
+  // leaves every request blind to it with nothing anywhere saying why.
+  if (mine && its && its.size === 0) {
+    await writeRow({ shape: FAILURE, kind: "unrecorded", call_id: callId, selection_ref: sel.id, unrecorded: shape, why: "unserved", input_refs: [sel.id] })
+    return
+  }
   if (!mine || !its || ![...its].some((v) => mine.has(v))) return
   const fields = Object.fromEntries(Object.entries(body).filter(([k]) => !OWN_FIELDS.has(k)))
   // An answer too big to read whole is not made a row: every prompt that took it as an input would carry it. The skip is

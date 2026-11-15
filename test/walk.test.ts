@@ -1595,6 +1595,36 @@ describe("a learned template's calls", () => {
     expect(skipped?.selection_ref).toBe("sel-big")
   })
 
+  test("[MUST-FAIL] an answer whose shape no vessel advertises is said, not dropped; one advertised by the tool's vessel is a row citing the request", async () => {
+    const run = async (servedBy: Record<string, string>) => {
+      sent.length = 0
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+        sent.push(pointer)
+        if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
+        if (pointer.type === "vesselCapability") return Response.json({ content: { vessels: servedBy[pointer.shape] ? [{ vesselId: servedBy[pointer.shape] }] : [] } })
+        return Response.json({ shape: "gitWorktree", cwd: "/trees/c1", repo: "some-vessel", base: "b1" })
+      }) as typeof fetch
+      const { execute } = await import("../src/calls")
+      await execute({ id: "run/t5", kind: "run", pointer: {}, t: "", calls: [{ shape: "git_worktree", pointer: { repo: "some-vessel" } }] },
+        { shape: "selection", id: "sel-wt", seq: 14, root: "w7", pool_refs: ["w7"] })
+      return sent.filter((p) => p.type === "record_write").map((p) => p.row).filter((r) => r.shape !== "hop")
+    }
+    // The tool's vessel never advertised gitWorktree: no row of it, and a failure row naming the shape.
+    const unadvertised = await run({ git_worktree: "tools" })
+    expect(unadvertised.some((r) => r.shape === "gitWorktree")).toBe(false)
+    const said = unadvertised.find((r) => r.shape === "failure" && r.kind === "unrecorded")
+    expect(said?.unrecorded).toBe("gitWorktree")
+    expect(said?.why).toBe("unserved")
+    expect(said?.selection_ref).toBe("sel-wt")
+    // Once it advertises it: the answer is a gitWorktree row citing its request, and nothing is said.
+    const advertised = await run({ git_worktree: "tools", gitWorktree: "tools" })
+    const row = advertised.find((r) => r.shape === "gitWorktree")
+    expect(row?.cwd).toBe("/trees/c1")
+    expect(row?.input_refs).toEqual(["w7"])
+    expect(advertised.some((r) => r.kind === "unrecorded")).toBe(false)
+  })
+
   test("[MUST-FAIL] a failure keeps the producer's word for what kind of refusal it was, and only that", async () => {
     sent.length = 0
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
