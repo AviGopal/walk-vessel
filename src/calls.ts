@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import type { Skipped } from "./applicable"
+import { type Scope, type Source, bind } from "./bind"
 import { DISCOVERY_URL, KEY, VESSEL_ID } from "./config"
 import { AUTH_SCHEME, RESOLVE } from "./routes"
 import {
@@ -16,6 +17,8 @@ export type Cand = {
   t: string
   /** For a call: the request row it answers, recorded on the selection so a request is called until a call ends OK. */
   from?: string
+  /** For a run: its inputs, the request's rows its placeholders are filled from (bind.ts), by sig.in order. */
+  inputs?: Array<Row | undefined>
   /**
    * The shapes this move consumes: a produce its schema's inputs and context, a call its request's shape, a run its
    * template's inputs, a wait none. Its cell context is the pool's shapes among these, so a shape it does not read (a new
@@ -157,10 +160,13 @@ export const stop = async (): Promise<void> => {
     writeRow({ shape: FAILURE, call_id: callId, selection_ref: sel.id, status: 0, body: STOPPED, input_refs: [sel.id] })))
 }
 
-const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, callId: string): Promise<{ ok: boolean; row?: Row }> => {
+const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, callId: string, args?: { args: unknown; bound: Source[] }): Promise<{ ok: boolean; row?: Row; body?: unknown }> => {
   const refs = [sel.id]
   await writeRow({
     shape: HOP, call_id: callId, phase: STARTED, kind, selection_ref: sel.id, pointer_type: String(pointer.type), input_refs: refs,
+    // A template's call as it was sent, with where each filled-in value came from: a template is written once and run in
+    // many requests, so what one run actually did is only here (bounded like an answer, since a write carries a file).
+    ...(args !== undefined ? { args: bounded(args.args, HOP_OUTPUT_MAX), bound: args.bound } : {}),
     // A wait's bound, when it has one, so how long the walk agreed to wait is in the row, not only in the request.
     ...(pointer.until !== undefined ? { until: pointer.until } : {}),
   })
@@ -195,7 +201,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       ? await answerServed(String(pointer.type), body as Record<string, unknown>).catch(() => undefined) : undefined
     await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: bounded(r.body, HOP_OUTPUT_MAX), input_refs: refs, ...unservedNote(served) })
     await recordAnswer(sel, served, body as Record<string, unknown>, callId)
-    return { ok: true }
+    return { ok: true, body: r.body }
   } catch (e) {
     if (stopping) return { ok: false }
     return {
@@ -222,14 +228,29 @@ const waitForRunner: Runner = async (c, sel) => {
   await once(sel, WAIT_FOR, pointer, crypto.randomUUID())
 }
 
+// Each call's placeholders are filled from the run's inputs and the answers of its calls so far (bind.ts). A call with a
+// placeholder that cannot be filled is not made: a placeholder sent as text reaches the tool as a path that is not
+// there. The run stops at it with a failure row naming the placeholder (kind unbound, no call made), which records
+// counts against the template's writer, not the run.
 const runRunner: Runner = async (c, sel, pool) => {
+  const scope: Scope = { sig: { in: c.inputs ?? [] }, calls: [] }
   for (const inner of c.calls) {
     const callId = crypto.randomUUID()
-    const pointer = { ...inner.pointer, type: inner.shape, input_refs: pool, selection_ref: sel.id, call_id: callId }
-    const res = await once(sel, RUN, pointer, callId)
+    const b = bind(inner.pointer, scope)
+    if (b.unbound.length > 0) {
+      await writeRow({
+        shape: FAILURE, kind: "unbound", selection_ref: sel.id, template_ref: c.id.slice(RUN.length + 1), unbound: b.unbound,
+        body: `unbound ${b.unbound.map((p) => `{{ ${p} }}`).join(", ")}: no such field in this run`, input_refs: [sel.id],
+      })
+      return
+    }
+    const args = b.value as Record<string, unknown>
+    const pointer = { ...args, type: inner.shape, input_refs: pool, selection_ref: sel.id, call_id: callId }
+    const res = await once(sel, RUN, pointer, callId, { args, bound: b.sources })
     if (!res.ok) {
       return
     }
+    scope.calls.push({ output: res.body, call_id: callId })
   }
 }
 
@@ -259,7 +280,9 @@ export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): 
       // pushes the reason out of what the producer is shown.
       ? { request_ref: t.id, body: `${t.unserved.join("; ")}: request ${t.id} cannot be called yet` }
       : { template_ref: t.id, body: `${t.unserved.join("; ")}: template ${t.id} cannot run` }
-    await writeRow({ shape: FAILURE, kind: "skip", selection_ref: sel.id, unserved: t.unserved, ...which, input_refs: [sel.id, t.id] })
+    // unbound: the template's placeholders this request cannot fill, which records counts against the template's
+    // writer (once per request, template and placeholder), since the plan, not the run, is what failed.
+    await writeRow({ shape: FAILURE, kind: "skip", selection_ref: sel.id, unserved: t.unserved, ...which, ...(t.unbound ? { unbound: t.unbound } : {}), input_refs: [sel.id, t.id] })
   }
 }
 

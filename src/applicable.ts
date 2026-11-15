@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto"
+import { type Scope, bind, inputsOf, placeholders } from "./bind"
 import { type Cand, ENDED, STARTED, type Inner, type Row, exists } from "./calls"
+import { VESSEL_ID } from "./config"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
@@ -27,13 +29,15 @@ const base = { pointer: {}, calls: [] as Inner[], t: "" }
 
 /** A template not run because it calls shapes nothing serves or not yet allowed, or a request whose call is not yet
  * allowed (of: "request"): the loop records it (calls.ts recordSkipped). */
-export type Skipped = { id: string; unserved: string[]; of?: "request" }
+// unbound: a template's placeholders this request cannot fill (the skip says them as unserved reasons too).
+export type Skipped = { id: string; unserved: string[]; of?: "request"; unbound?: string[] }
 
 /** What a root's moves leave out that choices() must know across roots: a first deadline that has already passed. And
  * what records says of the root (awaits: false when no one awaits an answer on it), passed in. */
 // shared: the ids of the rows every root is given (records' shared rows: the owner's configuration, earned templates),
 // as against the root's own; what is shared is about no one root.
-export type Seen = { overdue?: boolean; awaits?: boolean; shared?: ReadonlySet<string> }
+// root: the request the pool is for, which a template run binds its inputs from (bind.ts inputsOf).
+export type Seen = { overdue?: boolean; awaits?: boolean; shared?: ReadonlySet<string>; root?: string }
 
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
@@ -317,7 +321,20 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     // each call of the template is held to its own pointer
     return [...shapes.filter((_, i) => !served[i]), ...channelless, ...new Set(calls.flatMap((c) => unmet(c.shape, c.pointer)))]
   }))
-  templates.forEach((r, i) => { if (unserved[i].length > 0) skipped.push({ id: r.id, unserved: unserved[i] }) })
+  // A template whose calls name a field of one of its inputs is run only where this request has that field: its
+  // placeholders are filled from the request's own rows (bind.ts). One that cannot be filled here is not run, and the
+  // skip says which placeholder and which field is missing, so its writer can see it. A placeholder naming an earlier
+  // call's answer (calls.j) can only be filled during the run.
+  const inputs = templates.map((r) => note.root === undefined ? [] : inputsOf(pool, note.root, (r.sig as { in: string[] }).in, VESSEL_ID))
+  const unbound = templates.map((r, i) => {
+    const scope: Scope = { sig: { in: inputs[i] }, calls: [] }
+    return [...new Set((r.calls as Inner[]).flatMap((c) => placeholders(c.pointer)))]
+      .filter((p) => !/^calls[.[]/.test(p) && bind(`{{${p}}}`, scope).unbound.length > 0)
+  })
+  templates.forEach((r, i) => {
+    const why = [...unserved[i], ...unbound[i].map((p) => `unbound {{ ${p} }}: this request has no such field`)]
+    if (why.length > 0) skipped.push({ id: r.id, unserved: why, ...(unbound[i].length > 0 ? { unbound: unbound[i] } : {}) })
+  })
   // A template already run in this root, whose run did not fail, is not run again until a row of a shape it takes in
   // (its sig.in) comes after that run from someone other than the walk: over the same inputs it would make the same
   // thing again (a clone handed out again), and offering it beside a request the walk has just asked for lets it win the
@@ -332,9 +349,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     return !pool.some((x) => x.seq > last.seq && takes.has(x.shape) && x.role !== WALK)
   }
   const run = templates
-    .filter((_, i) => unserved[i].length === 0)
-    .filter((r) => !ran(r))
-    .map((r): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in] }))
+    .map((r, i) => ({ r, i }))
+    .filter(({ i }) => unserved[i].length === 0 && unbound[i].length === 0)
+    .filter(({ r }) => !ran(r))
+    .map(({ r, i }): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in], inputs: inputs[i] }))
 
   // When to wait follows the request's own deadlines (law 5). The walk's arm row is in the pool only when the walk is
   // idle (no open request): then it waits for the next row, unbounded, which is what idling is. While a request is open,
