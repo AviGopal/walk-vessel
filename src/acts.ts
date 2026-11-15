@@ -5,7 +5,7 @@
 // on a request with no landing). The fact states only what happened here; what to do next is the producer's to infer.
 // It is a memo of the request's own rows: the same rows always give the same fact, and nothing else goes in it.
 import { ENDED, type Row, STARTED } from "./calls"
-import { FAILURE, HOP, OWNER, PERSON, REQUIRES, SELECTION, SHAPE_SCHEMA, WALK } from "./shapes"
+import { CALL, FAILURE, HOP, OWNER, PERSON, REQUIRES, RUN, SELECTION, SHAPE_SCHEMA, WALK } from "./shapes"
 
 export const REQUEST_ACTS = "request_acts"
 
@@ -125,7 +125,8 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
   const DROP = new Set(["id", "seq", "t", "at", "time", "ts", "created_at", "updated_at", "call_id", "selection_ref", "root", "input_refs", "writer", "role"])
   type Outcome = Row & { said: string; failed: boolean }
   const outcomes: Outcome[] = []
-  for (const h of pool.filter((r) => r.shape === HOP && r.role === WALK && r.phase === STARTED && mine.has(String(r.selection_ref)))) {
+  // Only calls and template runs: a produce is a model's step, judged by its own repeat (refused) and not a tool's outcome.
+  for (const h of pool.filter((r) => r.shape === HOP && r.role === WALK && r.phase === STARTED && (r.kind === CALL || r.kind === RUN) && mine.has(String(r.selection_ref)))) {
     const id = String(h.call_id)
     const f = pool.find((r) => r.shape === FAILURE && r.role === WALK && String(r.call_id) === id)
     if (f !== undefined) {

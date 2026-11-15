@@ -15,7 +15,7 @@ let seq = 100
 const call = (root: string, tool: string, end: "ok" | "fail" | "notok", answer: Record<string, unknown> = {}) => {
   const sel = { shape: "selection", id: `s${++seq}`, seq, role: "walk", root }
   const id = `c${seq}`
-  const rows: any[] = [sel, { shape: "hop", id: `hs${++seq}`, seq, role: "walk", phase: "started", selection_ref: sel.id, call_id: id, pointer_type: tool }]
+  const rows: any[] = [sel, { shape: "hop", id: `hs${++seq}`, seq, role: "walk", phase: "started", kind: "call", selection_ref: sel.id, call_id: id, pointer_type: tool }]
   if (end === "fail") rows.push({ shape: "failure", id: `f${++seq}`, seq, role: "walk", selection_ref: sel.id, call_id: id, status: 422 })
   else {
     rows.push({ shape: "hop", id: `he${++seq}`, seq, role: "walk", phase: "ended", selection_ref: sel.id, call_id: id })
@@ -123,19 +123,19 @@ describe("what a request keeps repeating", () => {
   const NO_COMMIT = '{"error":"the clone has no commit since it was made: there is no change to diff"}'
   const failedRun = (root: string, cwd: string, body = NO_COMMIT) => {
     const s = sel(root, "run/t-diff")
-    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "git_diff", args: { cwd } }
+    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", kind: "run", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "git_diff", args: { cwd } }
     const f = { shape: "failure", id: `rf${++n}`, seq: n, role: "walk", selection_ref: s.id, call_id: h.call_id, status: 422, body }
     return [s, h, f]
   }
   const clone = (root: string, head: string) => {
     const s = sel(root, "call/git_worktree")
-    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "git_worktree", args: { repo: "super" } }
+    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", kind: "call", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "git_worktree", args: { repo: "super" } }
     const g = { shape: "gitWorktree", id: `rg${++n}`, seq: n, role: "walk", call_id: h.call_id, cwd: "/t/a", head, input_refs: [root] }
     return [s, h, g]
   }
   const read = (root: string) => {
     const s = sel(root, "call/fs_read")
-    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "fs_read", args: { path: "/t/a/x.ts" } }
+    const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", kind: "call", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "fs_read", args: { path: "/t/a/x.ts" } }
     const c = { shape: "fileContent", id: `rc${++n}`, seq: n, role: "walk", call_id: h.call_id, path: "/t/a/x.ts", content: "x", input_refs: [root] }
     return [s, h, c]
   }
@@ -160,7 +160,7 @@ describe("what a request keeps repeating", () => {
     n = 500
     const refusedOn = (key: string, body = '{"error":"does not fit the schema: repo must be a string"}') => {
       const s = { ...sel("w1", "produce/change_wanted/ch1"), seen_key: key }
-      const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "change_wanted" }
+      const h = { shape: "hop", id: `rh${++n}`, seq: n, role: "walk", phase: "started", kind: "produce", selection_ref: s.id, call_id: `rc${n}`, pointer_type: "change_wanted" }
       return [s, h, { shape: "failure", id: `rf${++n}`, seq: n, role: "walk", selection_ref: s.id, call_id: h.call_id, status: 422, refused: "schema", body }]
     }
     const pool: any[] = [...OWNER_ROWS, ...refusedOn("k1"), ...refusedOn("k1"), ...refusedOn("k1")]
@@ -203,7 +203,7 @@ describe("what a request keeps repeating", () => {
     const ARGS = { cwd: "/t/a" }
     const started = (root: string, args: object = ARGS) => {
       const s = sel(root, "call/git_diff")
-      const h = { shape: "hop", id: `sh${++n}`, seq: n, role: "walk", phase: "started", selection_ref: s.id, call_id: `sc${n}`, pointer_type: "git_diff", args }
+      const h = { shape: "hop", id: `sh${++n}`, seq: n, role: "walk", phase: "started", kind: "call", selection_ref: s.id, call_id: `sc${n}`, pointer_type: "git_diff", args }
       return { s, h }
     }
     const F = (body: string, args: object = ARGS) => {
@@ -259,6 +259,25 @@ describe("what a request keeps repeating", () => {
       const owner = { shape: "requires", id: `rq${++n}`, seq: n, role: "owner", for: "git_diff", needs: "gitWorktree" }
       expect(reps(first, [owner], F("E"))).toEqual([])
     })
+    // a produce's hops (a model's step) are not a call's outcomes
+    const P = (refused = false) => {
+      const s = sel("w1", "produce/answer/ch1")
+      const h = { shape: "hop", id: `ph${++n}`, seq: n, role: "walk", phase: "started", kind: "produce", selection_ref: s.id, call_id: `pc${n}`, pointer_type: "answer" }
+      const end = refused
+        ? { shape: "failure", id: `pf${++n}`, seq: n, role: "walk", selection_ref: s.id, call_id: h.call_id, status: 422, refused: "schema", body: "does not fit" }
+        : { shape: "hop", id: `pe${++n}`, seq: n, role: "walk", phase: "ended", kind: "produce", selection_ref: s.id, call_id: h.call_id }
+      return [{ ...s, seen_key: "k1" }, h, end]
+    }
+    test("[MUST-FAIL] two ended produces are no call repeat; two equal calls are", () => {
+      expect(actsOf([...OWNER_ROWS, ...P(), ...P()], "w1").repeats).toEqual([])
+      expect(reps(A(D), A(D))).toEqual([expect.objectContaining({ call: "git_diff", n: 2 })])
+    })
+    test("[MUST-FAIL] refused produces are their own refused entry only, never a call repeat", () => {
+      const r = actsOf([...OWNER_ROWS, ...P(true), ...P(true)], "w1").repeats
+      expect(r).toEqual([expect.objectContaining({ produce: "answer", on: "refused", n: 2 })])
+      expect(r.some((x: any) => x.call !== undefined)).toBe(false)
+    })
+
     test("11: a call cut by a stop has no outcome: F(E), cut, F(E) is n 2", () => {
       expect(reps(F("E"), cut(), F("E"))).toEqual([expect.objectContaining({ n: 2, outcome: "E" })])
     })
