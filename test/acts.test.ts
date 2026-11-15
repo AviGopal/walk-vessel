@@ -177,6 +177,24 @@ describe("what a request keeps repeating", () => {
     expect(actsOf(diff, "w1").repeats).toEqual([])
   })
 
+  test("[MUST-FAIL] a call cut by a stop (status 0) is not a repeat of the call", () => {
+    n = 500
+    const cut = (root: string) => failedRun(root, "/t/a", "the walk was stopped before the call ended").map((r: any) => r.shape === "failure" ? { ...r, status: 0 } : r)
+    expect(actsOf([...OWNER_ROWS, tmpl, ...cut("w1"), ...cut("w1"), ...cut("w1")], "w1").repeats).toEqual([])
+  })
+
+  test("[MUST-FAIL] a 5k-row request with 40 identical failures and 20 verdicts is read in well under a second", () => {
+    n = 500
+    const pool: any[] = [...OWNER_ROWS, tmpl]
+    for (let i = 0; i < 40; i++) pool.push(...failedRun("w1", "/t/a"))
+    for (let i = 0; i < 20; i++) { const s = sel("w1", "produce/land_verdict/ch1"); pool.push(s, { shape: "land_verdict", id: `lv${++n}`, seq: n, role: "described", selection_ref: s.id, tree: "t", r: 0 }) }
+    while (pool.length < 5000) pool.push({ shape: "answer", id: `an${++n}`, seq: n, role: "described", input_refs: ["w1"] })
+    const t0 = performance.now()
+    const r = actsOf(pool, "w1").repeats
+    expect(performance.now() - t0).toBeLessThan(1000)
+    expect(r.map((x) => x.n).sort()).toEqual([20, 40])
+  })
+
   test("[MUST-FAIL] the row is written again when a repeat grows, though acts did not change", async () => {
     n = 500
     const written: any[] = []

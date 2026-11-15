@@ -118,7 +118,8 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
   }
   const out: Repeat[] = []
   // a call failing the same way: walk failures (no kind) of this request's selections, by the call that failed
-  const fails = pool.filter((r) => r.shape === FAILURE && r.role === WALK && r.kind === undefined && mine.has(String(r.selection_ref)) && typeof r.call_id === "string")
+  // A call cut by a stop (status 0: the walk was stopped before it ended) says nothing about the call: not a repeat.
+  const fails = pool.filter((r) => r.shape === FAILURE && r.role === WALK && r.kind === undefined && r.status !== 0 && mine.has(String(r.selection_ref)) && typeof r.call_id === "string")
     .sort((a, b) => a.seq - b.seq)
   const byCall = new Map<string, Row[]>()
   for (const f of fails) { const k = callOf(String(f.call_id)); if (k !== undefined) byCall.set(k, [...(byCall.get(k) ?? []), f]) }
