@@ -217,8 +217,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       !(r.role === WALK && BOOKKEEPING.has(r.shape) && !brought(r) && !spoke(r) && !held(r))
   }
   // A produce the producer refused as not fitting the schema (its failure says refused: schema; nothing was written) is
-  // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. Any other
-  // failure (a channel or read that was down, a 422 passed through from a read or write) stays retryable.
+  // pending the same way, for the same rows: asking again over the same inputs mostly buys the same refusal. But not on
+  // the first refusal: the refusal is itself a fact the producer did not have (the owner's schemas show it as context,
+  // and a walk's failure row never counts as a new input, so showing it changes nothing here), so it is offered once
+  // more over the same rows, with the refusal to read. Held only after a second refusal over the same rows, until they
+  // change. Before, one refusal over inputs nothing else would change froze the produce until the request lapsed (13fb:
+  // its outcome and request, each refused once, held for a day). Any other failure (a channel or read that was down, a
+  // 422 passed through from a read or write) stays retryable.
   const refusedOver = (target: string, sees: (r: Row | undefined) => boolean): string[] => pool
     .filter((r) => r.shape === FAILURE && r.refused === "schema")
     .map((f) => byId.get(String(f.selection_ref)))
@@ -249,7 +254,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       .filter((r) => r.shape === String(s.target))
       .filter((r) => !graded.has(r.id))
       .some((r) => madeOver(r) === now) ||
-      refusedOver(String(s.target), sees).includes(now)
+      refusedOver(String(s.target), sees).filter((k) => k === now).length >= 2
   }
 
   // A grade judges something: an answer (a described row of a shape the grade reads as context, other than a grade or a
