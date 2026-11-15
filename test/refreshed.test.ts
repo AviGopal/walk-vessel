@@ -14,7 +14,12 @@ describe("a tool's refreshed clone is recorded as a row", () => {
     globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
       const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
       if (pointer.type === "record_write") { written.push(pointer.row); return Response.json({ ...pointer.row, id: `r${written.length}`, seq: written.length }) }
-      if (pointer.type === "vessel_capability") return Response.json({ content: { vessels: [] } })
+      // which vessels serve a shape: local-tools serves the clone tools and gitWorktree; records serves verdicts
+      if (pointer.type === "vesselCapability") {
+        const lt = ["git_diff", "git_worktree", "gitWorktree", "gitDiff"].includes(pointer.shape)
+        const other = ["web_search"].includes(pointer.shape)
+        return Response.json({ content: { vessels: lt ? [{ vesselId: "local-tools" }] : other ? [{ vesselId: "search" }] : pointer.shape === "land_verdict" ? [{ vesselId: "records" }] : [] } })
+      }
       return Response.json(answer, { status })
     }) as typeof fetch
     const { execute } = await import("../src/calls")
@@ -28,6 +33,13 @@ describe("a tool's refreshed clone is recorded as a row", () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ ...R, input_refs: ["w1"], selection_ref: "s1" })
     expect(typeof rows[0].call_id).toBe("string")
+  })
+
+  test("[MUST-FAIL] a refreshed row of a shape the called vessel does not serve is written by no one", async () => {
+    // a verdict named by a clone tool's answer: local-tools does not serve land_verdict
+    expect((await run(200, { refreshed: { ...R, shape: "land_verdict", r: 1, tree: "T" }, shape: "gitDiff" }, CALL))).toHaveLength(0)
+    // a gitWorktree named by another capability's answer: it does not serve gitWorktree
+    expect(await run(200, { refreshed: R, results: [] }, { id: "call/web_search", kind: "call", pointer: { type: "web_search", q: "x" } })).toHaveLength(0)
   })
 
   test("[MUST-FAIL] (i) a template's call too; a refusal, a call that was not behind, or a produce's answer: none", async () => {
