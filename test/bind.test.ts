@@ -29,9 +29,15 @@ describe("the binder", () => {
   })
 
   test("[MUST-FAIL] a placeholder that does not resolve is named, and nothing else is a path: no expression, no default", () => {
-    for (const p of ["sig.in[1].cwd", "sig.in[0].nope", "calls.3.output.cwd", "sig.in[0]", "env.HOME", "sig.in[0].cwd || '/'", "sig.in[0].constructor"]) {
+    for (const p of ["sig.in[1].cwd", "sig.in[0].nope", "calls.3.output.cwd", "sig.in[0]", "sig.in[0].cwd || '/'", "sig.in[0].constructor"]) {
       expect(bind({ v: `{{ ${p} }}` }, scope).unbound).toEqual([p])
     }
+  })
+
+  test("[MUST-FAIL] any other {{ }} is text: a Go or handlebars template in an edit is sent byte-identical", () => {
+    const p = { new_string: "{{ .MaxFailingTestGaps }} and {{range .Items}}{{.}}{{end}}", other: "{{ env.HOME }}", whole: "{{ repo }}" }
+    expect(bind(p, scope)).toEqual({ value: p, sources: [], unbound: [] })
+    expect(bind({ v: "{{ .Field }} in {{ sig.in[0].cwd }}" }, scope).value).toEqual({ v: "{{ .Field }} in /trees/r-1" })
   })
 })
 
@@ -41,6 +47,15 @@ describe("a run's inputs", () => {
       { ...clone("g5", 14, "w1", "/no-call"), call_id: undefined }]
     expect(inputsOf(pool, "w1", ["gitWorktree"], "walk-test").map((r) => r?.id)).toEqual(["g2"])
     expect(inputsOf(pool, "w3", ["gitWorktree"], "walk-test")).toEqual([undefined])
+  })
+})
+
+describe("a request with clones of two repos", () => {
+  test("[MUST-FAIL] the latest is not taken by default: the template's named repo picks, and none named binds nothing", () => {
+    const pool = [{ ...clone("g1", 5, "w1", "/trees/hsv"), repo: "human-surface-vessel" }, { ...clone("g2", 9, "w1", "/trees/super"), repo: "super" }]
+    expect(inputsOf(pool, "w1", ["gitWorktree"], "walk-test").map((r) => r?.id)).toEqual([undefined])
+    expect(inputsOf(pool, "w1", ["gitWorktree"], "walk-test", "human-surface-vessel").map((r) => r?.id)).toEqual(["g1"])
+    expect(inputsOf(pool.slice(1), "w1", ["gitWorktree"], "walk-test").map((r) => r?.id)).toEqual(["g2"]) // one repo: the latest, as before
   })
 })
 
@@ -70,6 +85,21 @@ describe("a template with placeholders", () => {
     expect(skipped.find((x) => x.id === "t-d")).toMatchObject({ unserved: ["unbound {{ sig.in[0].cwd }}: this request has no such field"], unbound: ["sig.in[0].cwd"] })
     const ok = (await applicable([ask, t, other, clone("g1", 4, "w1", "/trees/r")], [], Date.now(), { root: "w1" })).find((c) => c.id === "run/t-d")
     expect(ok?.inputs?.map((r) => r?.id)).toEqual(["g1"])
+  })
+
+  test("[MUST-FAIL] two repos' clones and a template naming none: not run, and the skip says which repos", async () => {
+    const two = [{ ...clone("g1", 4, "w1", "/trees/hsv"), repo: "human-surface-vessel" }, { ...clone("g2", 5, "w1", "/trees/super"), repo: "super" }]
+    const skipped: any[] = []
+    expect((await applicable([ask, t, ...two], skipped, Date.now(), { root: "w1" })).map((c) => c.id)).not.toContain("run/t-d")
+    expect(skipped.find((x) => x.id === "t-d")?.unserved).toEqual(["unbound {{ sig.in[0].cwd }}: more than one gitWorktree (human-surface-vessel, super), and the template names no repo"])
+  })
+
+  test("[MUST-FAIL] a template whose edit carries a Go template is offered, with no skip", async () => {
+    const go = { ...t, id: "t-go", sig: { in: ["world_changed"], out: ["fileEditResult"] },
+      calls: [{ shape: "fs_read", pointer: { path: "a.go", note: "{{ .MaxFailingTestGaps }}" } }] }
+    const skipped: any[] = []
+    expect((await applicable([ask, go], skipped, Date.now(), { root: "w1" })).map((c) => c.id)).toContain("run/t-go")
+    expect(skipped.find((x) => x.id === "t-go")).toBeUndefined()
   })
 
   test("a template with no placeholder is offered as before", async () => {

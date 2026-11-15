@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto"
-import { type Scope, bind, inputsOf, placeholders } from "./bind"
+import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
 import { type Cand, ENDED, STARTED, type Inner, type Row, exists } from "./calls"
 import { VESSEL_ID } from "./config"
 import {
@@ -325,14 +325,21 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // placeholders are filled from the request's own rows (bind.ts). One that cannot be filled here is not run, and the
   // skip says which placeholder and which field is missing, so its writer can see it. A placeholder naming an earlier
   // call's answer (calls.j) can only be filled during the run.
-  const inputs = templates.map((r) => note.root === undefined ? [] : inputsOf(pool, note.root, (r.sig as { in: string[] }).in, VESSEL_ID))
+  const inputs = templates.map((r) => note.root === undefined ? [] : inputsOf(pool, note.root, (r.sig as { in: string[] }).in, VESSEL_ID, repoOf(r.calls as Inner[])))
   const unbound = templates.map((r, i) => {
     const scope: Scope = { sig: { in: inputs[i] }, calls: [] }
     return [...new Set((r.calls as Inner[]).flatMap((c) => placeholders(c.pointer)))]
       .filter((p) => !/^calls[.[]/.test(p) && bind(`{{${p}}}`, scope).unbound.length > 0)
   })
   templates.forEach((r, i) => {
-    const why = [...unserved[i], ...unbound[i].map((p) => `unbound {{ ${p} }}: this request has no such field`)]
+    // A request holding clones of more than one repo binds only a template that names which (bind.ts inputsOf).
+    const which = (p: string): string => {
+      const shape = (r.sig as { in: string[] }).in[Number(/^sig\.in\[(\d+)\]/.exec(p)?.[1] ?? -1)]
+      const repos = new Set(pool.filter((x) => x.shape === shape && x.writer === VESSEL_ID && typeof x.call_id === "string"
+        && [x.input_refs].flat().map(String).includes(String(note.root))).map((x) => x.repo).filter((x) => typeof x === "string"))
+      return repos.size > 1 ? `more than one ${shape} (${[...repos].sort().join(", ")}), and the template names no repo` : "this request has no such field"
+    }
+    const why = [...unserved[i], ...unbound[i].map((p) => `unbound {{ ${p} }}: ${which(p)}`)]
     if (why.length > 0) skipped.push({ id: r.id, unserved: why, ...(unbound[i].length > 0 ? { unbound: unbound[i] } : {}) })
   })
   // A template already run in this root, whose run did not fail, is not run again until a row of a shape it takes in

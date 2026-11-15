@@ -16,6 +16,9 @@ export type Bound = { value: unknown; sources: Source[]; unbound: string[] }
 
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g
 const WHOLE = /^\{\{([^{}]*)\}\}$/
+// Only a path into the run (sig.… or calls.…) is a placeholder. Any other "{{ … }}" is text and is sent as written: an
+// edit may carry a Go or handlebars template ("{{ .Field }}"), and binding it would make a correct plan unrunnable.
+const isPath = (inner: string): boolean => /^(sig|calls)[.[]/.test(inner.trim())
 
 // "sig.in[0].cwd" and "calls.0.output.cwd" both read as a list of keys: sig, in, 0, cwd. Brackets and dots are the same
 // step; spaces inside the braces are not part of the path.
@@ -39,7 +42,7 @@ const lookup = (scope: Scope, path: string): { found: boolean; value?: unknown; 
 
 // Every placeholder in a value, as written (trimmed), in order.
 export const placeholders = (value: unknown): string[] => {
-  if (typeof value === "string") return [...value.matchAll(PLACEHOLDER)].map((m) => m[1].trim())
+  if (typeof value === "string") return [...value.matchAll(PLACEHOLDER)].map((m) => m[1].trim()).filter(isPath)
   if (Array.isArray(value)) return value.flatMap(placeholders)
   if (typeof value === "object" && value !== null) return Object.values(value).flatMap(placeholders)
   return []
@@ -53,13 +56,14 @@ export const bind = (value: unknown, scope: Scope): Bound => {
       if (!v.includes("{{")) return v
       // A value that is one placeholder and nothing else takes the bound value as it is: an object stays an object.
       const whole = WHOLE.exec(v)
-      if (whole) {
+      if (whole && isPath(whole[1])) {
         const r = lookup(scope, whole[1])
         if (!r.found) { unbound.push(whole[1].trim()); return v }
         sources.push({ placeholder: whole[1].trim(), from: String(r.from) })
         return r.value
       }
       return v.replace(PLACEHOLDER, (m, path: string) => {
+        if (!isPath(path)) return m
         const r = lookup(scope, path)
         if (!r.found) { unbound.push(path.trim()); return m }
         sources.push({ placeholder: path.trim(), from: String(r.from) })
@@ -77,7 +81,20 @@ export const bind = (value: unknown, scope: Scope): Bound => {
 // A run's inputs: for each shape it takes in, the latest row of that shape the walk recorded as a tool's answer for this
 // request (written by the walk, from a call, citing the request), the same rows a request's progress is read from. A row
 // someone else wrote (a forwarded record_write, another request's clone) is never an input.
-export const inputsOf = (pool: Row[], root: string, sigIn: string[], walk: string): Array<Row | undefined> => sigIn.map((shape) => pool
-  .filter((r) => r.shape === shape && r.writer === walk && typeof r.call_id === "string" && [r.input_refs].flat().map(String).includes(root))
-  .sort((a, b) => a.seq - b.seq)
-  .at(-1))
+// When those rows are of more than one repo (a request that cloned two), the latest is not taken by default: an edit
+// bound to the wrong clone is worse than no call. The input is the latest of the repo the template names (a repo field
+// in one of its calls); a template that names none, or names two, has no input there, and its skip says so.
+export const inputsOf = (pool: Row[], root: string, sigIn: string[], walk: string, repo?: string): Array<Row | undefined> => sigIn.map((shape) => {
+  const rows = pool
+    .filter((r) => r.shape === shape && r.writer === walk && typeof r.call_id === "string" && [r.input_refs].flat().map(String).includes(root))
+    .sort((a, b) => a.seq - b.seq)
+  const repos = new Set(rows.map((r) => r.repo).filter((x) => typeof x === "string"))
+  if (repos.size <= 1) return rows.at(-1)
+  return repo === undefined ? undefined : rows.filter((r) => r.repo === repo).at(-1)
+})
+
+// The repo a template's calls name, when they name exactly one.
+export const repoOf = (calls: Array<{ pointer: Record<string, unknown> }>): string | undefined => {
+  const named = new Set(calls.map((c) => c.pointer?.repo).filter((x): x is string => typeof x === "string" && !x.includes("{{")))
+  return named.size === 1 ? [...named][0] : undefined
+}
