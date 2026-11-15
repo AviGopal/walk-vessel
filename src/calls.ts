@@ -220,6 +220,9 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
         ...(typeof refused === "string" ? { refused } : {}),
         ...(waits ? { waits_for: "person" } : {}),
       })
+      // A clone the tool moved before it failed was moved all the same: the move is recorded, as on success, or the
+      // clone's rows would name a base it is no longer on.
+      if (kind === CALL || kind === RUN) await recordRefreshed(sel, String(pointer.type), answer, callId)
       return { ok: false }
     }
     // The call has ended well: nothing in what follows may unsettle it. A lookup that throws (discovery restarting) means

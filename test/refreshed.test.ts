@@ -42,9 +42,14 @@ describe("a tool's refreshed clone is recorded as a row", () => {
     expect(await run(200, { refreshed: R, results: [] }, { id: "call/web_search", kind: "call", pointer: { type: "web_search", q: "x" } })).toHaveLength(0)
   })
 
+  test("[MUST-FAIL] a tool that fails after moving its clone: the move is recorded all the same (a 200 error, or a 4xx)", async () => {
+    expect(await run(200, { refreshed: R, error: "the typecheck failed" }, CALL)).toEqual([expect.objectContaining({ ...R, input_refs: ["w1"] })])
+    expect(await run(422, { refreshed: R, error: "nothing to land" }, CALL)).toHaveLength(1)
+  })
+
   test("[MUST-FAIL] (i) a template's call too; a refusal, a call that was not behind, or a produce's answer: none", async () => {
     expect(await run(200, { refreshed: R, shape: "gitDiff" }, { id: "run/t", kind: "run", pointer: {}, calls: [{ shape: "git_diff", pointer: { cwd: "/trees/demo-1" } }] })).toHaveLength(1)
-    expect(await run(200, { error: "could not be brought onto it", conflicts: ["a.ts"] }, CALL)).toHaveLength(0)
+    expect(await run(200, { error: "could not be brought onto it", conflicts: ["a.ts"] }, CALL)).toHaveLength(0) // no move: nothing
     expect(await run(200, { shape: "gitDiff", tree: "T" }, CALL)).toHaveLength(0)
     expect(await run(200, { refreshed: R, text: "a model's answer" }, { id: "produce/answer/ch1", kind: "produce", pointer: { type: "answer", shape: "answer", via_ref: "ch1" } })).toHaveLength(0)
   })
