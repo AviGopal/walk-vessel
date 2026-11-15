@@ -3,7 +3,7 @@ import { type Seen, type Skipped, applicable } from "./applicable"
 import { type Cand, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
-import { ARM, DESCRIBED, DUE, FAILURE, HOP, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
+import { ARM, DESCRIBED, DUE, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string }
@@ -37,7 +37,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     // (cand.reads), then the root's asker and age. Keyed on every shape in the pool, as it was, any new shape anywhere (an
     // owner's new row kind, a grade nothing here reads) made every cell of every root new and its learning start over.
     const present = new Set(pool.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))
-    const tail = [progressOf(pool, root.id), `asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
+    const tail = [`asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
     for (const cand of cands) {
       const context = [...[...new Set(cand.reads ?? [])].filter((s) => present.has(s)).sort(), ...tail]
       const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id }
@@ -66,24 +66,6 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
   const cand: Cand = { pointer: { shapes: [], ...(ahead.length > 0 ? { until: Math.min(...ahead) } : {}) }, calls: [], t: "", id: WAIT_FOR, kind: WAIT_FOR }
   const context = ["idle"]
   return [{ cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped: [], root: arm.id }]
-}
-
-// What this request has done so far, as a move's context: the shapes of the tool answers the walk recorded for it (a
-// clone made, a file edited, a typecheck, a commit, a landing), each by its latest answer, marked "!" when that answer
-// said ok: false. One tag, so a move learns how it fares at each stage of a request's work (a commit after a passed
-// typecheck is not one before any edit). Read from the walk's own recorded answers: the shapes are the tools', not
-// named here. A cell keyed on it starts fresh; the fold reads the move's coarser record (its asker's, then its own)
-// until it has one of its own.
-export const progressOf = (pool: Row[], root: string): string => {
-  const latest = new Map<string, Row>()
-  for (const r of pool) {
-    if (r.writer !== VESSEL_ID || typeof r.call_id !== "string" || r.shape === HOP || r.shape === FAILURE || r.shape === SELECTION) continue
-    if (![r.input_refs].flat().map(String).includes(root)) continue
-    const prev = latest.get(String(r.shape))
-    if (prev === undefined || Number(r.seq) > Number(prev.seq)) latest.set(String(r.shape), r)
-  }
-  const done = [...latest.values()].map((r) => `${r.shape}${r.ok === false ? "!" : ""}`).sort()
-  return `did:${done.length > 0 ? done.join("+") : "none"}`
 }
 
 /**
@@ -168,9 +150,8 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
     ...(a.from ? { from: a.from } : {}),
     cell: options[i].cell,
     context,
-    // Which way the cell was keyed: "reads+did" (the move's own inputs, then what its request has done: progressOf).
-    // Before it, "reads" (the move's own inputs only); before that, every shape in the root's pool.
-    cell_scheme: "reads+did",
+    // Which way the cell was keyed: "reads" (the move's own inputs). Before it, every shape in the root's pool.
+    cell_scheme: "reads",
     root,
     // What the selection is about: its root. The rows the move had are handed to its call (a produce, a run) and not
     // kept here: kept, each selection carried every id of its root's episode, so rows grew with the episode and each
