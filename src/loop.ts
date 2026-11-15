@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
+import { actsFactRow } from "./acts"
 import { type Seen, type Skipped, applicable } from "./applicable"
 import { type Cand, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
-import { ARM, DESCRIBED, DUE, POSTERIOR, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
+import { ARM, DESCRIBED, DUE, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string }
@@ -195,6 +196,8 @@ export const chain = async (): Promise<void> => {
       posterior_reads: posteriorReads, draw_ms: ms(t3), cands: options.length, cells: new Set(cells).size,
     }))
     await recordSkipped(pool, skipped, sel)
-    await execute(a, sel, pool.map((r) => r.id))
+    // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
+    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow) : undefined
+    await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
   }
 }

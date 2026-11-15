@@ -1018,7 +1018,7 @@ describe("walk vessel process", () => {
     const body = discovery.seen.find((s) => s.path === "/register")?.body as {
       shapes: string[]; writes: string[]; shape_descriptions: Record<string, string>
     }
-    expect([...body.writes].sort()).toEqual(["failure", "hop", "selection"])
+    expect([...body.writes].sort()).toEqual(["failure", "hop", "request_acts", "selection"])
     for (const w of body.writes) {
       expect(body.shapes).not.toContain(w)
       expect(body.shape_descriptions[w]?.length ?? 0).toBeGreaterThan(0)

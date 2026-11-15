@@ -2,9 +2,13 @@
 // The rows the walk writes but does not serve, and what each is. Registration gives them to discovery as writes, so
 // every reader of these rows (a producer reading the walk's pool, the template extractor) finds what they are through
 // the shapeDescriptions read, without any of them becoming a shape anyone can call.
+import { REQUEST_ACTS } from "./acts"
 import { FAILURE, HOP, SELECTION } from "./shapes"
 
 export const WRITTEN: Record<string, string> = {
+  [REQUEST_ACTS]: "What a request has already done, from its own rows: acts (each call of a tool the owner gates on a " +
+    "wanted change: tool, ok, at_seq, and path, repo or sha when its answer gave one) and not_called (those tools never " +
+    "called on it). A template is a plan, never an act. Written by the walk when it changes.",
   [HOP]: "The record of one call the walk made, not a shape to call. pointer_type is the shape it called; kind (produce, " +
     "call, run or wait-for; wait-until on older rows) is how the walk chose the call, never a shape to call. Also phase (started or " +
     "ended), selection_ref, until on a wait (the deadline it waited by) and, on ended, output: what came back, and " +
