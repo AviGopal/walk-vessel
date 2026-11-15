@@ -23,6 +23,22 @@ const call = (root: string, tool: string, end: "ok" | "fail" | "notok", answer: 
 }
 
 describe("what a request has done", () => {
+  test("[MUST-FAIL] what the row means (a template is a plan, never an act) is said once, in the registered description", async () => {
+    const { WRITTEN } = await import("../src/written")
+    expect(WRITTEN.request_acts).toContain("template (activity_template) is a plan")
+    expect(WRITTEN.request_acts).toContain("reads and other calls are not listed") // scoped: not "nothing else happened"
+  })
+
+  test("[MUST-FAIL] a fact that cannot be written is said in the journal, and the produce runs without it", async () => {
+    const said: string[] = []
+    const real = console.error
+    console.error = (m: string) => { said.push(String(m)) }
+    const id = await actsFactRow([...OWNER_ROWS], "w9", async () => { throw new Error("records down") })
+    console.error = real
+    expect(id).toBeUndefined()
+    expect(said.join(" ")).toContain("request_acts for w9 not written")
+  })
+
   test("[MUST-FAIL] an edit and a passing typecheck with no commit: listed as done, and commit and land as never called", () => {
     seq = 100
     const pool = [...OWNER_ROWS, ...call("w1", "git_worktree", "ok", { repo: "hsv" }), ...call("w1", "fs_edit", "ok", { path: "src/limits.ts" }), ...call("w1", "code_typecheck", "ok")]
@@ -49,13 +65,15 @@ describe("what a request has done", () => {
     const plan = { shape: "activity_template", id: "t-land", seq: 50, role: "described", calls: [{ shape: "git_commit", pointer: {} }, { shape: "git_land", pointer: {} }] }
     const f = actsOf([...OWNER_ROWS, plan, ...call("w1", "fs_edit", "ok")], "w1")
     expect(f.not_called).toEqual(["code_typecheck", "git_commit", "git_land", "git_worktree"])
-    expect(f.note).toContain("plan")
+    expect(Object.keys(f).sort()).toEqual(["acts", "not_called", "root"]) // facts only: what a row means is said once
   })
 
-  test("which tools are acts is the owner's word: a retired requires row is not an act", () => {
+  test("[MUST-FAIL] which tools are acts is the owner's word, read as the walk reads it: a later retired row for the same gate retires it", () => {
     seq = 100
-    const f = actsOf([...OWNER_ROWS, { ...req("git_land", 9), id: "rq-gone", retired: true }].filter((r: any) => r.id !== "rq-git_land"), "w1")
+    const f = actsOf([...OWNER_ROWS, { ...req("git_land", 9), id: "rq-gone", retired: true }], "w1") // the earlier git_land row stays in the pool
     expect(f.not_called).not.toContain("git_land")
+    const back = actsOf([...OWNER_ROWS, { ...req("git_land", 9), id: "rq-gone", retired: true }, { ...req("git_land", 10), id: "rq-back" }], "w1")
+    expect(back.not_called).toContain("git_land") // a newer live row brings it back
   })
 
   test("[MUST-FAIL] a memo of the rows: the same rows give the same fact, written once; a new act writes a new one", async () => {

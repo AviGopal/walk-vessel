@@ -10,11 +10,9 @@ import { FAILURE, HOP, OWNER, REQUIRES, SELECTION, WALK } from "./shapes"
 export const REQUEST_ACTS = "request_acts"
 
 export type Act = { tool: string; at_seq: number; ok: boolean; status?: number; path?: string; repo?: string; sha?: string }
-export type Acts = { root: string; acts: Act[]; not_called: string[]; note: string }
-
-// Plans are not acts: a template's calls are what a run would do, never what was done.
-const NOTE = "Only the calls listed in acts happened on this request. A template (activity_template) is a plan for the " +
-  "request that wrote it: its calls are not acts on this one. A tool in not_called was never called here."
+// Facts only: what the row means (and that a template is a plan, never an act) is said once, in the walk's registered
+// description of request_acts (written.ts), not on every row.
+export type Acts = { root: string; acts: Act[]; not_called: string[] }
 
 const pick = (r: Row | undefined): Partial<Act> => {
   if (r === undefined) return {}
@@ -25,8 +23,11 @@ const pick = (r: Row | undefined): Partial<Act> => {
 // The acts on `root`, from its pool. Which tools are acts is the owner's word: the tools its requires rows gate on a
 // wanted change (the same reading as records' promise checks), never a list here.
 export const actsOf = (pool: Row[], root: string): Acts => {
-  const tools = [...new Set(pool.filter((r) => r.shape === REQUIRES && r.role === OWNER && r.needs === "change_wanted" && r.retired !== true)
-    .map((r) => String(r.for)))].sort()
+  // The owner's requires rows read as the walk reads them (applicable.ts): the latest row per (for, needs), then dropped if
+  // that latest says retired, so the two readers agree when the owner retires a gate.
+  const latest = [...pool.filter((r) => r.shape === REQUIRES && r.role === OWNER).sort((a, b) => a.seq - b.seq)
+    .reduce((m, r) => m.set(JSON.stringify([String(r.for), String(r.needs)]), r), new Map<string, Row>()).values()]
+  const tools = [...new Set(latest.filter((r) => r.retired !== true && r.needs === "change_wanted").map((r) => String(r.for)))].sort()
   const mine = new Set(pool.filter((r) => r.shape === SELECTION && r.role === WALK && String(r.root) === root).map((r) => r.id))
   const started = pool.filter((r) => r.shape === HOP && r.role === WALK && r.phase === STARTED && mine.has(String(r.selection_ref))
     && tools.includes(String(r.pointer_type))).sort((a, b) => a.seq - b.seq)
@@ -39,7 +40,7 @@ export const actsOf = (pool: Row[], root: string): Acts => {
     return { tool: String(h.pointer_type), at_seq: h.seq, ok, ...(failed && typeof failed.status === "number" ? { status: failed.status } : {}), ...pick(answer) }
   })
   const called = new Set(acts.map((a) => a.tool))
-  return { root, acts, not_called: tools.filter((t) => !called.has(t)), note: NOTE }
+  return { root, acts, not_called: tools.filter((t) => !called.has(t)) }
 }
 
 // The fact row to hand a produce on `root`: the latest one the walk wrote for it, when it still says the same; else a
@@ -47,9 +48,14 @@ export const actsOf = (pool: Row[], root: string): Acts => {
 export const actsFactRow = async (pool: Row[], root: string, write: (row: object) => Promise<Row>): Promise<string | undefined> => {
   const now = actsOf(pool, root)
   const last = pool.filter((r) => r.shape === REQUEST_ACTS && r.role === WALK && String(r.root) === root).sort((a, b) => a.seq - b.seq).at(-1)
-  const same = last !== undefined && JSON.stringify({ acts: last.acts, not_called: last.not_called, note: last.note }) ===
-    JSON.stringify({ acts: now.acts, not_called: now.not_called, note: now.note })
+  const same = last !== undefined && JSON.stringify({ acts: last.acts, not_called: last.not_called }) ===
+    JSON.stringify({ acts: now.acts, not_called: now.not_called })
   if (same) return last.id
-  const r = await write({ shape: REQUEST_ACTS, ...now, input_refs: [root] }).catch(() => undefined)
+  // A write that fails leaves the produce without the fact; said in the journal, so a missing fact is seen, and tried
+  // again at the next produce.
+  const r = await write({ shape: REQUEST_ACTS, ...now, input_refs: [root] }).catch((e: unknown) => {
+    console.error(`[walk] request_acts for ${root} not written (${String(e)}); the produce runs without it`)
+    return undefined
+  })
   return typeof r?.id === "string" ? r.id : undefined
 }

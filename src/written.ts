@@ -8,7 +8,9 @@ import { FAILURE, HOP, SELECTION } from "./shapes"
 export const WRITTEN: Record<string, string> = {
   [REQUEST_ACTS]: "What a request has already done, from its own rows: acts (each call of a tool the owner gates on a " +
     "wanted change: tool, ok, at_seq, and path, repo or sha when its answer gave one) and not_called (those tools never " +
-    "called on it). A template is a plan, never an act. Written by the walk when it changes.",
+    "called on it). It covers only those tools, the ones that change something: of them, only the calls listed in acts " +
+    "happened on that request (reads and other calls are not listed). A template (activity_template) is a plan for the " +
+    "request that wrote it, never an act on another. Written by the walk when it changes.",
   [HOP]: "The record of one call the walk made, not a shape to call. pointer_type is the shape it called; kind (produce, " +
     "call, run or wait-for; wait-until on older rows) is how the walk chose the call, never a shape to call. Also phase (started or " +
     "ended), selection_ref, until on a wait (the deadline it waited by) and, on ended, output: what came back, and " +
