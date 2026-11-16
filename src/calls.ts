@@ -69,8 +69,9 @@ export const writeRow = async (row: object): Promise<Row> =>
 // discovery that refuses, throws or declares none is no answers: the skip then says what it said before.
 // The same read keeps what each call takes (shape_inputs): the walk offers and forwards a tool call only when its callee
 // declared its inputs and the pointer meets them (inputs.ts). A read that fails, or declares no inputs at all, leaves
-// null: no tool call is made, and the pass files one gap saying so (fail closed, loudly). Not yet read: undefined (a
-// test that never reads applies no check; the loop reads it before every choice).
+// null: no tool call is made, and each call the walk would have offered is skipped saying why, a failure row the
+// walk-failure detector reads (fail closed). Named debt: no gap is filed by the walk itself for it. Not yet read:
+// undefined (a test that never reads applies no check; the loop reads it before every choice).
 let declared: Record<string, unknown> | null | undefined
 export const declaredInputs = (): Record<string, unknown> | null | undefined => declared
 /** Tests only: as if the vocabulary had not been read (each test reads its own, or none). */
@@ -208,11 +209,13 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
     // a detector or a grader (agf_g65ujxjbt2l5). A record_write forwarded this way is refused by records, which takes a
     // node-key write only with both stated; the walk's own rows go through writeRow.
     const { writer: _writer, role: _role, ...forwarded } = pointer
+    // what the producer (or the template) wrote: the forwarded pointer less the walk's own transport (TRANSPORT)
+    const written = Object.fromEntries(Object.entries(forwarded).filter(([k]) => !TRANSPORT.has(k)))
     // A tool call is forwarded only when it meets its callee's declared inputs (the same check that offered it, now on
     // the pointer as bound): a produce goes through a channel (via_ref) and is not a tool call. Refused here, it is a
     // failure the request is blamed for (records: a 4xx other than 401/403/408/429), so its writer is debited.
     const gate = (kind === CALL || kind === RUN) && forwarded.via_ref === undefined && declared !== undefined
-      ? callProblem(declared, String(forwarded.type), forwarded) : undefined
+      ? callProblem(declared, String(forwarded.type), written) : undefined
     if (gate !== undefined) {
       inFlight.delete(callId)
       await writeRow({ shape: FAILURE, call_id: callId, selection_ref: sel.id, status: 422, body: gate, refused: "inputs", input_refs: refs })
@@ -278,6 +281,13 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
 
 // A call names the selection it is made for, as a template's calls do, so a tool that keeps something per request (a
 // change clone) can tell which request is asking.
+// The walk's forward contract: every call it forwards carries, in its pointer, selection_ref (which selection it is
+// for), and a run's or a produce's also call_id and input_refs (which call, over which rows). They stay in the pointer
+// (local-tools finds a gap by the call's selection_ref), they are never held to the callee's declared inputs here (what
+// the producer wrote is), and a callee that declares additionalProperties: false must list them as taken and ignored
+// (records' record_summary does). Defined here only.
+const TRANSPORT = new Set(["selection_ref", "input_refs", "call_id"])
+
 const callRunner: Runner = async (c, sel) => {
   await once(sel, CALL, { ...c.pointer, selection_ref: sel.id }, crypto.randomUUID())
 }

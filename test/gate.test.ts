@@ -104,6 +104,39 @@ describe("the walk's gate", () => {
     expect([failure?.status, failure?.refused, failure?.body]).toEqual([422, "inputs", "fs_read: the pointer lacks path"])
   })
 
+  test("[MUST-FAIL] a call the walk builds to a tool that takes nothing extra is forwarded, as a call and in a run", async () => {
+    const { shapeAnswers, execute } = await import("../src/calls")
+    await shapeAnswers()
+    sent.length = 0
+    const sel = { shape: "selection", id: "sel-3", seq: 9, pool_refs: ["w1"] }
+    await execute({ id: "call/record_summary", kind: "call", pointer: { type: "record_summary", shape: "hop", summarize: ["pointer_type"] }, t: "", calls: [] }, sel as any)
+    await execute({ id: "run/t2", kind: "run", pointer: {}, t: "", calls: [{ shape: "record_summary", pointer: { shape: "hop", summarize: ["pointer_type"] } }] }, sel as any, [])
+    const forwarded = sent.filter((p) => p.type === "record_summary")
+    expect(forwarded.length).toBe(2)
+    expect(sent.some((p) => p.type === "record_write" && p.row?.shape === "failure")).toBe(false)
+  })
+
+  test("[MUST-FAIL] a field the producer wrote that the tool does not take is refused at forwarding", async () => {
+    const { shapeAnswers, execute } = await import("../src/calls")
+    await shapeAnswers()
+    sent.length = 0
+    const sel = { shape: "selection", id: "sel-4", seq: 9, pool_refs: ["w1"] }
+    await execute({ id: "call/record_summary", kind: "call", pointer: { type: "record_summary", shape: "hop", summarize: ["a"], root: "w1" }, t: "", calls: [] }, sel as any)
+    expect(sent.some((p) => p.type === "record_summary")).toBe(false)
+    const failure = sent.find((p) => p.type === "record_write" && p.row?.shape === "failure")?.row
+    expect([failure?.status, failure?.body]).toEqual([422, "record_summary: the pointer has root, which it does not take"])
+  })
+
+  test("[MUST-FAIL] a gated call still arrives with the walk's selection_ref, which a tool may read (local-tools' gap check)", async () => {
+    declares = { ...INPUTS, git_diff: { type: "object", required: ["cwd"], properties: { cwd: { type: "string" } } } }
+    const { shapeAnswers, execute } = await import("../src/calls")
+    await shapeAnswers()
+    sent.length = 0
+    const sel = { shape: "selection", id: "sel-5", seq: 9, pool_refs: ["w1"] }
+    await execute({ id: "call/git_diff", kind: "call", pointer: { type: "git_diff", cwd: "/trees/x" }, t: "", calls: [] }, sel as any)
+    expect(sent.find((p) => p.type === "git_diff")?.selection_ref).toBe("sel-5")
+  })
+
   test("a produce through a channel is not a tool call: forwarded as before", async () => {
     const { shapeAnswers, execute } = await import("../src/calls")
     await shapeAnswers()
