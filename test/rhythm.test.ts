@@ -76,6 +76,13 @@ describe("the owner's rhythm", () => {
     expect(await ids([arm, ch, retro, pace(3, 50)], { ...IDLE, head: 9 })).not.toContain(P)
   })
 
+  test("[MUST-FAIL] a new rhythm row with no earlier produce counts from the row itself: not due before its seq + every_rows", async () => {
+    const at = 900
+    const note = (head: number) => ({ root: "arm1", awaits: false, head })
+    expect(await ids([arm, ch, retro, pace(at, 50)], note(at + 49))).not.toContain(P)
+    expect(await ids([arm, ch, retro, pace(at, 50)], note(at + 50))).toContain(P)
+  })
+
   test("[MUST-FAIL] after its last produce, it is due again only every_rows later (store head, not the pool)", async () => {
     const made = { shape: "selection", id: "s-p", seq: 20, role: "walk", root: "arm1", a: P }
     expect(await ids([arm, ch, retro, pace(3, 5), made], { ...IDLE, head: 23 })).not.toContain(P)
