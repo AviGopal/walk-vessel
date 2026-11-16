@@ -70,7 +70,7 @@ export const writeRow = async (row: object): Promise<Row> =>
 // The same read keeps what each call takes (shape_inputs): the walk offers and forwards a tool call only when its callee
 // declared its inputs and the pointer meets them (inputs.ts). A read that fails, or declares no inputs at all, leaves
 // null: no tool call is made, and each call the walk would have offered is skipped saying why, a failure row the
-// walk-failure detector reads (fail closed). Named debt: no gap is filed by the walk itself for it. Not yet read:
+// walk-failure detector reads (fail closed). Named debt (agf_fvk6ygxdhtr2): no gap is filed by the walk itself for it. Not yet read:
 // undefined (a test that never reads applies no check; the loop reads it before every choice).
 let declared: Record<string, unknown> | null | undefined
 export const declaredInputs = (): Record<string, unknown> | null | undefined => declared
@@ -210,7 +210,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
     // node-key write only with both stated; the walk's own rows go through writeRow.
     const { writer: _writer, role: _role, ...forwarded } = pointer
     // what the producer (or the template) wrote: the forwarded pointer less the walk's own transport (TRANSPORT)
-    const written = Object.fromEntries(Object.entries(forwarded).filter(([k]) => !TRANSPORT.has(k)))
+    const written = lessTransport(forwarded)
     // A tool call is forwarded only when it meets its callee's declared inputs (the same check that offered it, now on
     // the pointer as bound): a produce goes through a channel (via_ref) and is not a tool call. Refused here, it is a
     // failure the request is blamed for (records: a 4xx other than 401/403/408/429), so its writer is debited.
@@ -285,11 +285,15 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
 // for), and a run's or a produce's also call_id and input_refs (which call, over which rows). They stay in the pointer
 // (local-tools finds a gap by the call's selection_ref), they are never held to the callee's declared inputs here (what
 // the producer wrote is), and a callee that declares additionalProperties: false must list them as taken and ignored
-// (records' record_summary does). Defined here only.
+// (records' record_summary does). Defined here only. The walk owns them: what a producer or a template wrote under
+// these names is dropped before the walk adds its own, so a callee never receives a call id or rows the walk did not
+// set (qa: a produced input_refs or call_id was forwarded as written, under the gate's exemption).
 const TRANSPORT = new Set(["selection_ref", "input_refs", "call_id"])
+const lessTransport = (p: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(p).filter(([k]) => !TRANSPORT.has(k)))
 
 const callRunner: Runner = async (c, sel) => {
-  await once(sel, CALL, { ...c.pointer, selection_ref: sel.id }, crypto.randomUUID())
+  await once(sel, CALL, { ...lessTransport(c.pointer), selection_ref: sel.id }, crypto.randomUUID())
 }
 
 const produceRunner: Runner = async (c, sel, pool) => {

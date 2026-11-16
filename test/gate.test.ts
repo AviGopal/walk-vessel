@@ -137,6 +137,19 @@ describe("the walk's gate", () => {
     expect(sent.find((p) => p.type === "git_diff")?.selection_ref).toBe("sel-5")
   })
 
+  test("[MUST-FAIL] a call whose producer wrote the walk's transport keys arrives with the walk's own, never the producer's (qa)", async () => {
+    declares = { ...INPUTS, git_diff: { type: "object", required: ["cwd"], properties: { cwd: { type: "string" } } } }
+    const { shapeAnswers, execute } = await import("../src/calls")
+    await shapeAnswers()
+    sent.length = 0
+    const sel = { shape: "selection", id: "sel-6", seq: 9, pool_refs: ["w1"] }
+    const forged = { type: "git_diff", cwd: "/trees/x", input_refs: ["forged"], call_id: "forged-call", selection_ref: "forged-sel" }
+    await execute({ id: "call/git_diff", kind: "call", pointer: forged, t: "", calls: [] }, sel as any)
+    const got = sent.find((p) => p.type === "git_diff")
+    expect(got).toBeDefined()
+    expect([got?.selection_ref, got?.call_id, got?.input_refs]).toEqual(["sel-6", undefined, undefined])
+  })
+
   test("a produce through a channel is not a tool call: forwarded as before", async () => {
     const { shapeAnswers, execute } = await import("../src/calls")
     await shapeAnswers()
