@@ -44,6 +44,30 @@ describe("a call that waits on a person", () => {
     expect(await offered([ask, req, sel, hop, waiting, { shape: "outcome", id: "p6", seq: 6, role: "person", r: 1, input_refs: ["w1"] }])).toBe(true)
   })
 
+  test("[MUST-FAIL] with a request producer ready (d929's shape), the waiting failure makes no new request: produce/request is offered at most once until a person's row (qa F2-live)", async () => {
+    const { createHash } = await import("node:crypto")
+    const key = (ids: string[]) => createHash("sha256").update([...new Set(ids)].sort().join(",")).digest("hex")
+    const owner = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const channel = owner({ shape: "channel", id: "ch", calls: [] }, -3)
+    const schema = owner({ shape: "shape_schema", id: "sr", target: "request", inputs: ["world_changed"], context: ["hop", "failure", "answer", "outcome"] }, -2)
+    // the request was produced over what the root held then (its selection kept the key)
+    const made = { shape: "selection", id: "s1", seq: 1.5, role: "walk", a: "produce/request/ch", seen_key: key(["w1"]) }
+    const reqMade = { ...req, selection_ref: "s1" }
+    const base = [channel, schema, ask, diff, made, reqMade, sel, hop]
+    const offers = async (pool: any[]) => (await applicable(pool, [], Date.now(), { root: "w1", awaits: true })).map((c) => c.id)
+    const once = await offers([...base, waiting])
+    const again = [...base, waiting, { ...hop, id: "h9", seq: 9, call_id: "c9" }, { ...waiting, id: "f10", seq: 10, call_id: "c9" }]
+    const twice = await offers(again)
+    expect(once.filter((id) => id.startsWith("produce/request")).length + twice.filter((id) => id.startsWith("produce/request")).length).toBeLessThanOrEqual(1)
+    expect(twice).not.toContain("call/git_land")
+    expect(twice).toContain("wait-for")
+    // not vacuous: a person's new word on the root does offer the request producer (and the call, once)
+    const word = { shape: "world_changed", id: "p11", seq: 11, role: "person", what: "more", input_refs: ["w1"] }
+    const after = await offers([...again, word])
+    expect([once, twice]).toEqual([["wait-for"], ["wait-for"]])
+    expect(after.some((id) => id.startsWith("produce/request")) && after.includes("call/git_land")).toBe(true)
+  })
+
   test("[MUST-FAIL] a newer row by a producer, the walk, a person of another root, or the owner does not", async () => {
     expect(await offered([ask, req, sel, hop, waiting, { shape: "answer", id: "a6", seq: 6, role: "described", input_refs: ["w1"] }])).toBe(false)
     expect(await offered([ask, req, sel, hop, waiting, { shape: "hop", id: "h6", seq: 6, role: "walk", phase: "ended" }])).toBe(false)
