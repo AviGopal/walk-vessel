@@ -831,6 +831,10 @@ describe("candidates", () => {
     expect(await why([ask, req, t, wanted(true, "human-surface-vessel")])).toContain('repo: the call\'s "super" ≠ change_wanted\'s "human-surface-vessel"')
     expect(await why([ask, req, t, wanted(false, "super")])).toContain("wanted: required true ≠ change_wanted's false")
     expect(await why([ask, req, t])).not.toContain("≠") // none here: the steps toward one, as before
+    // the skip names the row its reason compared (against_refs), so the producer shown it can be shown that row too
+    const named = async (rows: any[]) => { const s: any[] = []; await (applicable as any)(rows, s); return s.find((x) => x.id === "t-super")?.against_refs }
+    expect(await named([ask, req, t, wanted(true, "human-surface-vessel")])).toEqual(["cw-human-surface-vessel"])
+    expect(await named([ask, req, t])).toBeUndefined() // nothing compared: nothing named
     // a bound field the call's pointer does not name says so (deployment Y3, qa)
     const bare = { ...t, id: "t-bare", calls: [{ shape: "git_worktree", pointer: {} }] }
     const s2: any[] = []
@@ -1609,6 +1613,9 @@ describe("a template the walk will not run", () => {
     const told = { shape: "failure", id: "f9", seq: 21, kind: "skip", request_ref: "a1", unserved: why } as any
     await recordSkipped([told], [{ id: "a1", unserved: why, of: "request" }], sel)
     expect(written).toHaveLength(1) // the same reason: nothing
+    // the rows its reason compared are carried on the written row, so a producer shown the skip can be shown them
+    await recordSkipped([], [{ id: "a2", unserved: why, of: "request", against_refs: ["lv-1"] }], sel)
+    expect([written.length, written.pop()?.against_refs]).toEqual([2, ["lv-1"]]) // taken back off: the counts below are a1's
     await recordSkipped([told], [{ id: "a1", unserved: ["git_land (requires gap)"], of: "request" }], sel)
     expect(written).toHaveLength(2) // a new reason: said
   })

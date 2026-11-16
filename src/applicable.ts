@@ -31,7 +31,9 @@ const base = { pointer: {}, calls: [] as Inner[], t: "" }
 /** A template not run because it calls shapes nothing serves or not yet allowed, or a request whose call is not yet
  * allowed (of: "request"): the loop records it (calls.ts recordSkipped). */
 // unbound: a template's placeholders this request cannot fill (the skip says them as unserved reasons too).
-export type Skipped = { id: string; unserved: string[]; of?: "request"; unbound?: string[] }
+// against_refs: the rows a skip's reasons compared (the latest rows of a needed shape that did not meet a requirement), so
+// a producer shown the skip can be shown them too (described fits a shown skip's rows ahead of the walk's hops).
+export type Skipped = { id: string; unserved: string[]; of?: "request"; unbound?: string[]; against_refs?: string[] }
 
 /** What a root's moves leave out that choices() must know across roots: a first deadline that has already passed. And
  * what records says of the root (awaits: false when no one awaits an answer on it), passed in. */
@@ -139,6 +141,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // skipped on an ask about another repository). A field bound to the call's pointer the call does not name says so.
   // Read from the same latest rows meets() reads; the fields are the owner's.
   const val = (v: unknown): string => shownValue(v, 60)
+  // what each reason compared, by reason, so a skip can name the rows behind the reasons it shows (against_refs)
+  const comparedBy = new Map<string, string>()
   const against = (q: Row, pointer?: Record<string, unknown>): string[] => latestOf(q).flatMap((x) => {
     for (const [k, v] of Object.entries((q.where ?? {}) as Record<string, unknown>)) {
       const bound = typeof v === "object" && v !== null && "x-pointer" in v
@@ -146,11 +150,16 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       if (want === undefined) return bound && pointer !== undefined ? [`${k}: the call names none`] : []
       if (JSON.stringify(x[k]) !== JSON.stringify(want)) {
         const theirs = x[k] === undefined ? `${String(q.needs)} names none` : `≠ ${String(q.needs)}'s ${val(x[k])}`
-        return [`${k}: ${bound ? "the call's" : "required"} ${val(want)}${x[k] === undefined ? ", and " : " "}${theirs}`]
+        const reason = `${k}: ${bound ? "the call's" : "required"} ${val(want)}${x[k] === undefined ? ", and " : " "}${theirs}`
+        comparedBy.set(reason, x.id)
+        return [reason]
       }
     }
     return []
   })
+  // the rows behind the reasons the last unmet() call showed (at most 3 reasons), for the skip that carries its text
+  const refsOfReasons = (texts: string[]): string[] => [...new Set(texts.flatMap((t) => [...comparedBy.entries()]
+    .filter(([reason]) => t.includes(reason)).map(([, id]) => id)))]
   const unmet = (shape: string, pointer?: Record<string, unknown>, only: (rs: Row[]) => boolean = () => true): string[] => {
     const groups = new Map<string, Row[]>()
     for (const q of reqs.filter((q) => String(q.for) === shape)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
@@ -437,7 +446,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const prior = settled(callKey(type, argsOf(asked)))
     const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
       ...(prior !== undefined ? [`${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
-    if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request" })
+    const behind = refsOfReasons(gate)
+    if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request", ...(behind.length > 0 ? { against_refs: behind } : {}) })
     return [r].filter(() => served && !answered.has(r.id) && gate.length === 0).map((): Cand => ({
       ...base,
       id: [CALL, type].join("/"),
@@ -509,7 +519,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       return repos.size > 1 ? `more than one ${shape} (${[...repos].sort().join(", ")}), and the template names no repo` : "this request has no such field"
     }
     const why = [...unserved[i], ...unbound[i].map((p) => `unbound {{ ${p} }}: ${which(p)}`)]
-    if (why.length > 0) skipped.push({ id: r.id, unserved: why, ...(unbound[i].length > 0 ? { unbound: unbound[i] } : {}) })
+    const behind = refsOfReasons(why)
+    if (why.length > 0) skipped.push({ id: r.id, unserved: why, ...(unbound[i].length > 0 ? { unbound: unbound[i] } : {}), ...(behind.length > 0 ? { against_refs: behind } : {}) })
   })
   // A template already run in this root, whose run did not fail, is not run again until a row of a shape it takes in
   // (its sig.in) comes after that run from someone other than the walk: over the same inputs it would make the same

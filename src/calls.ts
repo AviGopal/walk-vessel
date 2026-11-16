@@ -394,7 +394,9 @@ export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): 
       : { template_ref: t.id, body: `${t.unserved.join("; ")}: template ${t.id} cannot run` }
     // unbound: the template's placeholders this request cannot fill, which records counts against the template's
     // writer (once per request, template and placeholder), since the plan, not the run, is what failed.
-    await writeRow({ shape: FAILURE, kind: "skip", selection_ref: sel.id, unserved: t.unserved, ...which, ...(t.unbound ? { unbound: t.unbound } : {}), input_refs: [sel.id, t.id] })
+    // against_refs: the rows the skip's reasons compared, named so a producer shown this skip can be shown them
+    await writeRow({ shape: FAILURE, kind: "skip", selection_ref: sel.id, unserved: t.unserved, ...which, ...(t.unbound ? { unbound: t.unbound } : {}),
+      ...(t.against_refs ? { against_refs: t.against_refs } : {}), input_refs: [sel.id, t.id] })
   }
 }
 
