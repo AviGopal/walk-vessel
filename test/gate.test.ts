@@ -46,8 +46,9 @@ describe("what a declaration takes", () => {
     // a name or a path in one case is not a key: shown
     expect(problem(words, { w: "human-surface-vessel" })).toContain('"human-surface-vessel"')
     expect(problem(words, { w: "repos/human-surface-vessel/src/ui-views.ts" })).toContain('"repos/human-surface-vessel/src/ui-views.ts"')
-    // and past the cap, however plain
-    expect(problem(words, { w: "a b ".repeat(30) })).toContain("[value withheld,")
+    // past the cap, a plain value is cut, not withheld; a key-shaped one past the cap is still withheld whole
+    expect(problem(words, { w: "a b ".repeat(30) })).toContain(`${JSON.stringify("a b ".repeat(30)).slice(0, 77)}...`)
+    expect(problem(words, { w: "x ".repeat(40) + "Ab12Cd34Ef56Gh78" })).toContain("[value withheld,")
   })
 
   test("[MUST-FAIL] a keyword this check cannot judge fails closed, named", () => {

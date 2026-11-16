@@ -286,10 +286,27 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       const by = byId.get(String(r.selection_ref))
       return typeof by?.seen_key === "string" ? by.seen_key : key([r.input_refs].flat().map(String).filter((id) => sees(byId.get(id))))
     }
-    return pool
-      .filter((r) => r.shape === String(s.target))
-      .filter((r) => !graded.has(r.id))
-      .some((r) => madeOver(r) === now)
+    const ungraded = pool.filter((r) => r.shape === String(s.target)).filter((r) => !graded.has(r.id)).sort((a, b) => a.seq - b.seq)
+    // Made by a produce whose choice kept what it was handed (seen_key): it is due again only when a row it would see
+    // arrived after that choice. A row seen now that is older was in the root's window then too (the window keeps the
+    // newest rows), and a row that has left the window since is not news: compared as sets, the window sliding over the
+    // same evidence made 52d7196f's template produce due 164 times. The walk's rows of that same tick (written for that
+    // selection) are not news either. The same rule calls and runs follow: nothing new, not again.
+    // Which produce made it is read from the root's own record: the walk's selections of this produce whose call ended
+    // and did not fail. The row it made need not come back in the root's episode (records returns an activity_template
+    // as configuration, not as the root's: on 52d7196f no template it made was ever in its pool, so each tick read as
+    // "never made"); a made row that is here and graded frees it, as before.
+    const gradedMade = new Set(pool.filter((r) => r.shape === String(s.target) && graded.has(r.id)).map((r) => String(r.selection_ref)))
+    const endedSel = new Set(pool.filter((h) => h.shape === HOP && h.phase === ENDED && h.kind === PRODUCE).map((h) => String(h.selection_ref)))
+    const failedSel = new Set(pool.filter((f) => f.shape === FAILURE).map((f) => String(f.selection_ref)))
+    const made = pool.filter((x) => x.shape === SELECTION && String(x.a).startsWith(`${PRODUCE}/${String(s.target)}/`)
+      && endedSel.has(x.id) && !failedSel.has(x.id) && !gradedMade.has(x.id))
+    const byRow = ungraded.map((r) => byId.get(String(r.selection_ref))).filter((x): x is Row => x !== undefined)
+    const chose = [...made, ...byRow].sort((a, b) => a.seq - b.seq).at(-1)
+    if (chose !== undefined && typeof chose.seen_key === "string") {
+      return !pool.some((x) => x.seq > chose.seq && x.shape !== String(s.target) && String(x.selection_ref) !== chose.id && sees(x))
+    }
+    return ungraded.some((r) => madeOver(r) === now)
   }
 
   // A grade judges something: an answer (a described row of a shape the grade reads as context, other than a grade or a
@@ -374,6 +391,41 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       (r.id === note.root || [r.input_refs].flat().map(String).some((id) => ownRows.has(id)))
     return f !== undefined && f.waits_for === "person" && !pool.some(spoke)
   }
+  // A call refused for the request's state (its failure blames the request, as records stamps it) settles that call on
+  // this root, one rule for a request's call and a template's run: over the same inputs the same call gets the same
+  // answer, so neither is made again until something new comes. The call is its shape and its arguments as sent (a run's,
+  // as its hop recorded them; a request's pointer less the walk's forwarding keys), keys in order, so five templates or
+  // nine requests making one refused call are one refusal (agf_7fcivb4rk967: a git_diff 21 times in an hour; eb1768f6's
+  // git_commit nine times, each a new request with the same pointer). A pointer that differs in any field, free text
+  // included (a commit message), is another call: the walk knows no field as "only words" (that would be a list of
+  // fields), so rewording buys one call, and the refusal it repeats is in the producer's view. New: a walk result that is
+  // news (brought: a commit made in the clone is), a row from outside the walk a producer reads (learned), or, for a run,
+  // a row of a shape it takes in from outside the walk.
+  const refusedHere = (f: Row): boolean => f.shape === FAILURE && f.role === WALK && f.blames === "request"
+  const canon = (v: unknown): unknown => Array.isArray(v) ? v.map(canon) : typeof v === "object" && v !== null
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])])) : v
+  const callKey = (shape: string, args: unknown): string => JSON.stringify([shape, canon(args)])
+  const argsOf = (p: Record<string, unknown>): Record<string, unknown> => {
+    const { writer: _w, role: _r, type: _t, ...args } = p
+    return args
+  }
+  const startedOf = new Map(pool.filter((h) => h.shape === HOP && h.phase === STARTED).map((h) => [String(h.call_id), h]))
+  const refused = pool.filter(refusedHere).flatMap((f) => {
+    const sel = byId.get(String(f.selection_ref))
+    const a = String(sel?.a ?? "")
+    if (a.startsWith(`${RUN}/`)) {
+      const h = startedOf.get(String(f.call_id))
+      return h === undefined ? [] : [{ seq: f.seq, key: callKey(String(h.pointer_type), h.args) }]
+    }
+    if (a.startsWith(`${CALL}/`)) {
+      const p = (byId.get(String(sel?.from))?.pointer ?? {}) as Record<string, unknown>
+      return [{ seq: f.seq, key: callKey(String(p.type ?? a.slice(CALL.length + 1)), argsOf(p)) }]
+    }
+    return []
+  })
+  const newsSince = (seq: number, also: (x: Row) => boolean = () => false): boolean =>
+    pool.some((x) => x.seq > seq && (brought(x) || learned(x) || also(x)))
+  const settled = (key: string, also?: (x: Row) => boolean) => refused.filter((x) => x.key === key && !newsSince(x.seq, also)).at(-1)
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
     if (waitsOnPerson(type)) return []
     const served = await exists(type)
@@ -382,7 +434,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const vocab = declaredInputs()
     const { writer: _w, role: _r, ...asked } = (r.pointer ?? {}) as Record<string, unknown>
     const takes = vocab === undefined ? undefined : callProblem(vocab, type, asked)
-    const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : [])]
+    const prior = settled(callKey(type, argsOf(asked)))
+    const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
+      ...(prior !== undefined ? [`${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
     if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request" })
     return [r].filter(() => served && !answered.has(r.id) && gate.length === 0).map((): Cand => ({
       ...base,
@@ -463,32 +517,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // draw over calling that request, round after round. The walk's own rows since (its next selection, a hop) are how it
   // got here, not new input, even for a template that takes in selections; a template that takes in only those is run
   // again in a root only when its run failed.
-  // A run refused for the request's state (its call's failure blames the request, as records stamps it) settles as a
-  // request's refused call does: over the same inputs the same call gets the same answer, so it is not run again until
-  // something new comes, and neither is another template whose first call is that very call, bound the same way. Five
-  // plans making one refused call are one refusal, not five refusals an hour (agf_7fcivb4rk967: a git_diff on a clone
-  // with no commit, 21 runs in an hour on one root). New here: a row of a shape the template takes in from someone
-  // other than the walk, or a walk result that is news (brought: a commit made in the clone is).
-  const refusedRun = (f: Row): boolean => f.shape === FAILURE && f.role === WALK && f.blames === "request" &&
-    String(byId.get(String(f.selection_ref))?.a ?? "").startsWith(`${RUN}/`)
-  const canon = (v: unknown): unknown => Array.isArray(v) ? v.map(canon) : typeof v === "object" && v !== null
-    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])])) : v
-  const callKey = (shape: string, args: unknown): string => JSON.stringify([shape, canon(args)])
-  const startedOf = new Map(pool.filter((h) => h.shape === HOP && h.phase === STARTED).map((h) => [String(h.call_id), h]))
-  const refused = pool.filter(refusedRun).flatMap((f) => {
-    const h = startedOf.get(String(f.call_id))
-    return h === undefined ? [] : [{ seq: f.seq, key: callKey(String(h.pointer_type), h.args) }]
-  })
-  const newSince = (r: Row, seq: number): boolean => {
-    const takes = new Set((r.sig as { in: string[] }).in)
-    return pool.some((x) => x.seq > seq && ((takes.has(x.shape) && x.role !== WALK) || brought(x)))
-  }
+  const takesIn = (r: Row) => { const takes = new Set((r.sig as { in: string[] }).in); return (x: Row): boolean => takes.has(x.shape) && x.role !== WALK }
   const ran = (r: Row): boolean => {
     const last = pool.filter((x) => x.shape === SELECTION && x.a === [RUN, r.id].join("/")).sort((a, b) => a.seq - b.seq).at(-1)
     if (last === undefined) return false
     const failed = pool.filter((x) => x.shape === FAILURE && x.role === WALK && String(x.selection_ref) === last.id && x.kind === undefined)
-    if (failed.length > 0 && !failed.some(refusedRun)) return false
-    if (failed.some(refusedRun)) return !newSince(r, Math.max(...failed.map((f) => f.seq)))
+    if (failed.length > 0 && !failed.some(refusedHere)) return false
+    if (failed.some(refusedHere)) return !newsSince(Math.max(...failed.map((f) => f.seq)), takesIn(r))
     const takes = new Set((r.sig as { in: string[] }).in)
     return !pool.some((x) => x.seq > last.seq && takes.has(x.shape) && x.role !== WALK)
   }
@@ -498,7 +533,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const b = bind(first.pointer, { sig: { in: inputs[i] }, calls: [] })
     if (b.unbound.length > 0) return false
     const key = callKey(first.shape, b.value)
-    return refused.some((x) => x.key === key && !newSince(r, x.seq))
+    return settled(key, takesIn(r)) !== undefined
   }
   const run = templates
     .map((r, i) => ({ r, i }))

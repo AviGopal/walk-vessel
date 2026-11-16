@@ -29,9 +29,12 @@ const typeOf = (v: unknown): string =>
 const RUN = /[A-Za-z0-9+/=_-]{16,}/g
 const keyLike = (j: string): boolean => (j.match(RUN) ?? [])
   .some((r) => [/[A-Z]/, /[a-z]/, /[0-9]/].filter((c) => c.test(r)).length >= 2)
+// A plain value past the cap is cut, not withheld: a long gap_id is what a skip naming a mismatch exists to show (qa:
+// walk_trees_reclaim's 68-character id went unreadable). Whether it is key-shaped is read on the whole value first.
 export const shownValue = (v: unknown, cap: number): string => {
   const j = JSON.stringify(v) ?? String(v)
-  return j.length <= cap && !keyLike(j) ? j : `[value withheld, ${j.length} chars]`
+  if (keyLike(j)) return `[value withheld, ${j.length} chars]`
+  return j.length <= cap ? j : `${j.slice(0, cap - 3)}...`
 }
 const shown = (v: unknown): string => shownValue(v, 80)
 

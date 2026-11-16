@@ -850,6 +850,73 @@ describe("candidates", () => {
     expect(await why([ask, req, t, wanted(true, keyRepo)])).toContain("change_wanted's [value withheld,")
   })
 
+  test("[MUST-FAIL] a request call refused for the request's state settles that call: the same pointer is not called again until news; another pointer is", async () => {
+    served.add("git_commit")
+    const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person", what: "x" }
+    const req = (id: string, seq: number, message: string) =>
+      ({ shape: "request", id, seq, role: "described", pointer: { type: "git_commit", cwd: "/c", message }, input_refs: ["w1"] })
+    const q1 = req("q1", 2, "fix: once")
+    const s1 = { shape: "selection", id: "s1", seq: 3, role: "walk", a: "call/git_commit", from: "q1", root: "w1" }
+    const h1 = { shape: "hop", id: "h1", seq: 4, role: "walk", phase: "started", kind: "call", call_id: "c1", pointer_type: "git_commit", selection_ref: "s1" }
+    const f1 = { shape: "failure", id: "f1", seq: 5, role: "walk", call_id: "c1", selection_ref: "s1", status: 200, blames: "request", body: "nothing new to commit" }
+    const base = [ask, q1, s1, h1, f1]
+    const offered = async (rows: any[]) => { const sk: any[] = []; const ids = (await (applicable as any)(rows, sk)).map((c: { id: string }) => c.id); return { call: ids.includes("call/git_commit"), skip: sk } }
+    // eb1768f6: a new request with the very same pointer is not called; the skip names the refusal
+    const same = await offered([...base, req("q2", 6, "fix: once")])
+    expect(same.call).toBe(false)
+    expect(String(same.skip.find((x) => x.id === "q2")?.unserved)).toContain("this same call was refused here (row 5)")
+    // another pointer (a reworded message is another call: the walk knows no field as only words) is called, once
+    expect((await offered([...base, req("q3", 6, "fix: worded otherwise")])).call).toBe(true)
+    // news: a call that ended with something new, after the refusal, reopens it
+    const hs = { shape: "hop", id: "h8", seq: 7, role: "walk", phase: "started", kind: "call", call_id: "c8", pointer_type: "fs_edit", selection_ref: "s8" }
+    const he = { shape: "hop", id: "h9", seq: 8, role: "walk", phase: "ended", kind: "call", call_id: "c8", selection_ref: "s8", output: { edited: "a.txt" } }
+    expect((await offered([...base, hs, he, req("q4", 9, "fix: once")])).call).toBe(true)
+  })
+
+  test("[MUST-FAIL] templates a requirement skips are never run on another repository's ask (11460d2c, 4cc718ef on 598a988a)", async () => {
+    served.add("git_worktree")
+    const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person", what: "x" }
+    const req = { shape: "requires", id: "rq", seq: 2, role: "owner", for: "git_worktree", needs: "change_wanted", where: { wanted: true, repo: { "x-pointer": "repo" } } }
+    const tpl = (id: string) => ({ shape: "activity_template", id, seq: 3, role: "described", sig: { in: ["world_changed"], out: ["gitWorktree"] }, calls: [{ shape: "git_worktree", pointer: { repo: "super" } }] })
+    const wanted = { shape: "change_wanted", id: "cw", seq: 4, role: "described", wanted: true, repo: "human-surface-vessel", input_refs: ["w1"] }
+    const runs = (await (applicable as any)([ask, req, tpl("t-a"), tpl("t-b"), wanted])).map((c: { id: string }) => c.id).filter((id: string) => id.startsWith("run/"))
+    expect(runs).toEqual([])
+  })
+
+  test("[MUST-FAIL] a produce is not offered again while nothing it sees is newer than its last ungraded row; rows leaving the window are not news (52d7196f)", async () => {
+    served.add("plan")
+    const ch = { shape: "channel", id: "ch", seq: 1, role: "owner", calls: [] }
+    const schema = { shape: "shape_schema", id: "s-plan", seq: 2, role: "owner", target: "plan", inputs: ["world_changed"], context: ["hop", "answer"] }
+    const ask = { shape: "world_changed", id: "w1", seq: 3, role: "person", what: "x" }
+    const news = (id: string, seq: number, out: string) => [
+      { shape: "hop", id: `${id}s`, seq, role: "walk", phase: "started", kind: "call", call_id: id, pointer_type: "fs_read", selection_ref: `${id}-sel` },
+      { shape: "hop", id: `${id}e`, seq: seq + 0.5, role: "walk", phase: "ended", kind: "call", call_id: id, selection_ref: `${id}-sel`, output: { text: out } }]
+    const sel = { shape: "selection", id: "sp", seq: 9, role: "walk", a: "produce/plan/ch", root: "w1", seen_key: "a key from another window" }
+    const plan = { shape: "plan", id: "p1", seq: 10, role: "described", selection_ref: "sp", input_refs: ["w1"] }
+    const P = "produce/plan/ch"
+    const ids = async (rows: any[]) => (await (applicable as any)(rows)).map((c: { id: string }) => c.id)
+    const early = news("c1", 5, "first read")
+    expect(await ids([ch, schema, ask, ...early])).toContain(P) // nothing made yet: offered (a guard: the shape is served)
+    expect(await ids([ch, schema, ask, ...early, sel, plan])).not.toContain(P)
+    // the window slid: the old news hop is gone, nothing arrived; still nothing new (by set equality it would be offered)
+    expect(await ids([ch, schema, ask, sel, plan])).not.toContain(P)
+    // a row that arrived after the produce was chosen but before its row was written was not handed to it: news
+    const between = { shape: "answer", id: "a1", seq: 9.5, role: "described", text: "arrived meanwhile", input_refs: ["w1"] }
+    expect(await ids([ch, schema, ask, sel, between, plan])).toContain(P)
+    // the row it made need not come back in the root's window (an activity_template is configuration to records): the
+    // walk's own produce selection, ended and not failed, is what says it was made (52d7196f: none ever came back)
+    const ended = { shape: "hop", id: "hp", seq: 9.8, role: "walk", phase: "ended", kind: "produce", call_id: "cp", selection_ref: "sp" }
+    expect(await ids([ch, schema, ask, sel, ended])).not.toContain(P)
+    // and one whose call failed made nothing: offered
+    const failed = { shape: "failure", id: "fp", seq: 9.8, role: "walk", call_id: "cp", selection_ref: "sp", status: 422 }
+    expect(await ids([ch, schema, ask, sel, ended, failed])).toContain(P)
+    // the negative: a new input row, not the walk's bookkeeping, reopens it
+    const answer = { shape: "answer", id: "a2", seq: 11, role: "described", text: "new", input_refs: ["w1"] }
+    expect(await ids([ch, schema, ask, sel, plan, answer])).toContain(P)
+    // and so does a call that ended with something new
+    expect(await ids([ch, schema, ask, sel, plan, ...news("c2", 12, "second read")])).toContain(P)
+  })
+
   test("[MUST-FAIL] a template run in this root is not run again over the same inputs: the request it led to is called instead", async () => {
     for (const x of ["git_worktree", "fs_edit"]) served.add(x)
     const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" }
