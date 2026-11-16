@@ -871,6 +871,14 @@ describe("candidates", () => {
     const hs = { shape: "hop", id: "h8", seq: 7, role: "walk", phase: "started", kind: "call", call_id: "c8", pointer_type: "fs_edit", selection_ref: "s8" }
     const he = { shape: "hop", id: "h9", seq: 8, role: "walk", phase: "ended", kind: "call", call_id: "c8", selection_ref: "s8", output: { edited: "a.txt" } }
     expect((await offered([...base, hs, he, req("q4", 9, "fix: once")])).call).toBe(true)
+    // the same call asked by another writer or role is the same call (the walk's forwarding keys are not the call)
+    const relabelled = { ...q1, pointer: { type: "git_commit", cwd: "/c", message: "fix: once", writer: "another", role: "described" } }
+    expect((await offered([ask, relabelled, s1, h1, f1, req("q5", 6, "fix: once")])).call).toBe(false)
+    // news from outside the walk that a producer reads (a detector's gap row, read by a schema) reopens it too
+    const reads = { shape: "shape_schema", id: "s-req", seq: 0.5, role: "owner", target: "request", inputs: ["world_changed"], context: ["gap"] }
+    const gap = { shape: "gap", id: "g-new", seq: 7, role: "detector", gap_id: "G9", status: "open", summary: "the check changed" }
+    expect((await offered([reads, ...base, req("q6", 6, "fix: once")])).call).toBe(false)
+    expect((await offered([reads, ...base, gap, req("q6", 8, "fix: once")])).call).toBe(true)
   })
 
   test("[MUST-FAIL] templates a requirement skips are never run on another repository's ask (11460d2c, 4cc718ef on 598a988a)", async () => {
@@ -900,6 +908,9 @@ describe("candidates", () => {
     expect(await ids([ch, schema, ask, ...early, sel, plan])).not.toContain(P)
     // the window slid: the old news hop is gone, nothing arrived; still nothing new (by set equality it would be offered)
     expect(await ids([ch, schema, ask, sel, plan])).not.toContain(P)
+    // the walk's rows of that very produce (written for its selection) are not news, though they are newer than the choice
+    const sameTick = { shape: "answer", id: "a-own", seq: 9.6, role: "described", text: "its own", selection_ref: "sp", input_refs: ["w1"] }
+    expect(await ids([ch, schema, ask, sel, sameTick, plan])).not.toContain(P)
     // a row that arrived after the produce was chosen but before its row was written was not handed to it: news
     const between = { shape: "answer", id: "a1", seq: 9.5, role: "described", text: "arrived meanwhile", input_refs: ["w1"] }
     expect(await ids([ch, schema, ask, sel, between, plan])).toContain(P)

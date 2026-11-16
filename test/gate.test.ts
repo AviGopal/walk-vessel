@@ -33,12 +33,18 @@ describe("what a declaration takes", () => {
     const key = "sk" + "_live_" + "Q2W8E4R6T1Y3U5I7O9P0"
     expect(problem(words, { w: key })).toBe(`w is [value withheld, ${JSON.stringify(key).length} chars], which does not match its pattern ^[a-z]{0,3}$`)
     expect(problem(words, { w: "acts.tool" })).toContain('w is "acts.tool"')
-    // the boundaries: a run with upper case of 15 is shown, of 16 withheld; lower case and digits unbroken, 31 shown, 32
-    // withheld (a hex secret's shape)
+    // the boundaries: a run with upper case of 15 is shown, of 16 withheld; a part in lower case and digits of 19 shown,
+    // of 20 withheld (a hex secret's shape)
     expect(problem(words, { w: "A1".repeat(7) + "a" })).toContain(`"${"A1".repeat(7)}a"`)
     expect(problem(words, { w: "A1".repeat(8) })).toContain("[value withheld, 18 chars]")
-    expect(problem(words, { w: "a1".repeat(15) + "a" })).toContain(`"${"a1".repeat(15)}a"`)
-    expect(problem(words, { w: "a1".repeat(16) })).toContain("[value withheld, 34 chars]")
+    expect(problem(words, { w: "a1".repeat(9) + "a" })).toContain(`"${"a1".repeat(9)}a"`)
+    expect(problem(words, { w: "a1".repeat(10) })).toContain("[value withheld, 22 chars]")
+    // qa's lower-case forms: 20 hex (a Pusher secret), a 28-character token, and a UUID (Heroku, Postmark keys)
+    for (const v of ["a1b2c3d4e5f60718293a", "k3j9x2m8q7w1e5r4t6y0u2i8o3p1", "3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f"]) {
+      expect(problem(words, { w: v })).toContain("[value withheld,")
+    }
+    // short shas and slug parts stay shown
+    expect(problem(words, { w: "ts-mwitzr10-e755acd1" })).toContain('"ts-mwitzr10-e755acd1"')
     // a long id in lower case, its parts joined by "-", is shown (a gap_id: the value a mismatch skip exists to show)
     const gapId = "pull-sync-failing-test-local-tools-vessel-ff01f630-src-git-commit-ts"
     expect(problem(words, { w: gapId })).toContain(JSON.stringify(gapId))

@@ -25,13 +25,17 @@ const typeOf = (v: unknown): string =>
 // - a run of 16 or more of the characters keys and tokens are written in (letters, digits, "+", "/", "=", "_", "-":
 //   base64 and its URL form, the common token alphabets) holding an upper-case letter and a lower-case letter or a
 //   digit (an AWS-style secret, a GitHub-style token, base64, a JWT); or
-// - lower case and digits only, one unbroken stretch of 32 or more with no separator in it (a hex secret, a full sha).
+// - a part of 20 or more, split at its separators, holding a letter and a digit (a hex secret, a full sha, a lower-case
+//   token: 20 hex is a Pusher secret's form; qa); or
+// - a UUID (8-4-4-4 hex): many service keys are written so (Heroku, Postmark). An id written so is withheld too: no skip
+//   is known to need one shown.
 // A name, a slug, a path or an id in lower case with its parts joined by "-", "_", ".", "/" or ":" is not a key, however
 // long ("human-surface-vessel"; a 68-character gap_id was withheld before, the one value a mismatch skip exists to show:
 // research, deployment). Refusals land in rows the surface shows, so nothing key-shaped is copied there (qa).
 const RUN = /[A-Za-z0-9+/=_-]{16,}/g
-const keyLike = (j: string): boolean => (j.match(RUN) ?? []).some((r) =>
-  (/[A-Z]/.test(r) && /[a-z0-9]/.test(r)) || r.split(/[-_./:+=]/).some((p) => p.length >= 32 && /[a-z]/.test(p) && /[0-9]/.test(p)))
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+const keyLike = (j: string): boolean => UUID.test(j) || (j.match(RUN) ?? []).some((r) =>
+  (/[A-Z]/.test(r) && /[a-z0-9]/.test(r)) || r.split(/[-_./:+=]/).some((p) => p.length >= 20 && /[a-z]/.test(p) && /[0-9]/.test(p)))
 // A plain value past the cap is cut, not withheld: a long gap_id is what a skip naming a mismatch exists to show (qa:
 // walk_trees_reclaim's 68-character id went unreadable). Whether it is key-shaped is read on the whole value first.
 export const shownValue = (v: unknown, cap: number): string => {
