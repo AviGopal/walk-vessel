@@ -516,6 +516,11 @@ describe("candidates", () => {
     expect(await said([...rows, diff, stale, ask], answers)).toEqual([
       "git_land (requires land_verdict; land_verdict is made from gap, gitDiff (no land_verdict here meets what is required))",
     ])
+    // with no schema making the need, an old row of it here no longer hides the call that answers it (deployment)
+    const noSchema = rows.filter((r: any) => !(r.shape === "shape_schema" && r.target === "land_verdict"))
+    expect(await said([...noSchema, diff, stale, ask], { ...answers, judge_tree: "land_verdict" })).toEqual([
+      "git_land (requires land_verdict; land_verdict comes from a judge_tree call)",
+    ])
   })
 
   test("[MUST-FAIL] the steps toward a need end, however the schemas and declared answers loop", async () => {
