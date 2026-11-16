@@ -33,11 +33,19 @@ describe("what a declaration takes", () => {
     const key = "sk" + "_live_" + "Q2W8E4R6T1Y3U5I7O9P0"
     expect(problem(words, { w: key })).toBe(`w is [value withheld, ${JSON.stringify(key).length} chars], which does not match its pattern ^[a-z]{0,3}$`)
     expect(problem(words, { w: "acts.tool" })).toContain('w is "acts.tool"')
-    // the boundary: a run of 19 letters and digits is shown, a run of 20 is withheld
-    expect(problem(words, { w: "a1".repeat(9) + "a" })).toContain(`"${"a1".repeat(9)}a"`)
-    expect(problem(words, { w: "a1".repeat(10) })).toContain("[value withheld, 22 chars]")
-    // a run of letters alone is a name, not a key: shown however long (within the cap)
+    // the boundary: a mixed run of 15 is shown, of 16 withheld
+    expect(problem(words, { w: "a1".repeat(7) + "a" })).toContain(`"${"a1".repeat(7)}a"`)
+    expect(problem(words, { w: "a1".repeat(8) })).toContain("[value withheld, 18 chars]")
+    // the common key forms (qa): an AWS-style secret with "/", a token whose run is letters of both cases, base64 with + and /
+    const withheld = (v: string) => expect(problem(words, { w: v })).toContain("[value withheld,")
+    withheld("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+    withheld("ghp_" + "AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIj")
+    withheld("dGhpcyBpcyBub3QgYS+rZXk/c2VyaW91c2x5Lg==")
+    // "/" joins short parts into one key: each part alone is too short to be withheld
+    withheld("Ab12/Cd34/Ef56/Gh78")
+    // a name or a path in one case is not a key: shown
     expect(problem(words, { w: "human-surface-vessel" })).toContain('"human-surface-vessel"')
+    expect(problem(words, { w: "repos/human-surface-vessel/src/ui-views.ts" })).toContain('"repos/human-surface-vessel/src/ui-views.ts"')
     // and past the cap, however plain
     expect(problem(words, { w: "a b ".repeat(30) })).toContain("[value withheld,")
   })

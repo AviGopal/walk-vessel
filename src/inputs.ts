@@ -21,12 +21,14 @@ const typeOf = (v: unknown): string =>
   v === null ? "null" : Array.isArray(v) ? "array" : Number.isInteger(v) ? "integer" : typeof v
 
 // A value as a refusal or a skip shows it, so the next producer sees what it sent, but only when it is plainly not a
-// credential: a value holding a run of 20 or more letters, digits, "_" or "-" that mixes letters and digits (the shape
-// of a key or token), or longer than the cap, is withheld with its length. A run of letters alone is a name
-// ("human-surface-vessel", 20 characters), not a key, and stays shown. Refusals land in rows the surface shows, so
-// nothing key-shaped is copied there (research, deployment).
-const RUN = /[A-Za-z0-9_-]{20,}/g
-const keyLike = (j: string): boolean => (j.match(RUN) ?? []).some((r) => /[A-Za-z]/.test(r) && /[0-9]/.test(r))
+// credential: a value holding a run of 16 or more of the characters keys and tokens are written in (letters, digits,
+// "+", "/", "=", "_", "-": base64 and its URL form, hex, the common token alphabets) that mixes at least two of upper
+// case, lower case and digits, or longer than the cap, is withheld with its length. A run in one case only is a name or
+// a path ("human-surface-vessel", "repos/human-surface-vessel/src/ui-views.ts"), not a key, and stays shown. Refusals
+// land in rows the surface shows, so nothing key-shaped is copied there (research, deployment, qa).
+const RUN = /[A-Za-z0-9+/=_-]{16,}/g
+const keyLike = (j: string): boolean => (j.match(RUN) ?? [])
+  .some((r) => [/[A-Z]/, /[a-z]/, /[0-9]/].filter((c) => c.test(r)).length >= 2)
 export const shownValue = (v: unknown, cap: number): string => {
   const j = JSON.stringify(v) ?? String(v)
   return j.length <= cap && !keyLike(j) ? j : `[value withheld, ${j.length} chars]`
