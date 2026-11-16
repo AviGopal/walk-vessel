@@ -96,25 +96,36 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // owner's schemas make, from which inputs (the schema missing fewest), and one a call answers with, which call (as the
   // serving vessels declare it: answers). Read from the owner's rows and the vessels' declarations, so a request told
   // its call must wait is told what to ask for instead. Each shape is followed once, so the steps end.
-  const madeFrom = (shape: string): string[] | undefined => schemas.filter((s) => String(s.target) === shape)
-    .map((s) => [s.inputs as string[]].flat().map(shapeOf).filter((x) => !have.has(x)))
-    .sort((a, b) => a.length - b.length)[0]
+  // The need itself was just found unmet (meets: no row here holds what is required, a row of the shape may well be
+  // here, an old tree's verdict), so for it every input is named and its call too; below it, a shape already here is
+  // taken as here (qa, agf_va3szit3jjul: d929's refusals named no step while an old tree's diff and verdict were here).
+  // all: every input of the schema whose inputs are most here (the one that made the row here), not only the absent ones
+  const madeFrom = (shape: string, all = false): string[] | undefined => schemas.filter((s) => String(s.target) === shape)
+    .map((s) => [s.inputs as string[]].flat().map(shapeOf))
+    .map((ins) => ({ ins, absent: ins.filter((x) => !have.has(x)) }))
+    .sort((a, b) => a.absent.length - b.absent.length)
+    .map(({ ins, absent }) => (all ? ins : absent))[0]
   const toward = (need: string): string => {
     const steps: string[] = []
     const followed = new Set<string>()
-    const follow = (shape: string): void => {
+    const follow = (shape: string, unmetHere = false): void => {
       if (followed.has(shape)) return
       followed.add(shape)
-      const missing = madeFrom(shape)
+      // an input not yet here is named as before; for the unmet need with every input here (an old tree's diff and
+      // verdict), its inputs are named all the same, since the ones here made a row that does not meet it
+      const absent = madeFrom(shape)
+      const stale = unmetHere && have.has(shape) && absent !== undefined && absent.length === 0
+      const missing = stale ? madeFrom(shape, true) : absent
       if (missing !== undefined && missing.length > 0) {
-        steps.push(`${shape} is made from ${missing.join(", ")}, not yet here`)
+        steps.push(stale ? `${shape} is made from ${missing.join(", ")} (no ${shape} here meets what is required)`
+          : `${shape} is made from ${missing.join(", ")}, not yet here`)
         for (const m of missing) follow(m)
         return
       }
       const callers = Object.keys(answers).filter((c) => answers[c] === shape).sort()
-      if (callers.length > 0 && !have.has(shape)) steps.push(`${shape} comes from a ${callers.join(" or ")} call`)
+      if (callers.length > 0 && (unmetHere || !have.has(shape))) steps.push(`${shape} comes from a ${callers.join(" or ")} call`)
     }
-    follow(need)
+    follow(need, true)
     return [need, ...steps].join("; ")
   }
   const unmet = (shape: string, pointer?: Record<string, unknown>): string[] => {

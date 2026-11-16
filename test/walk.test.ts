@@ -510,6 +510,12 @@ describe("candidates", () => {
     expect(await said([...rows, diff, ask], answers)).toEqual(["git_land (requires land_verdict)"])
     // no declared answers: as before
     expect(await said([...rows, ask], {})).toEqual(["git_land (requires land_verdict; land_verdict is made from gitDiff, not yet here)"])
+    // a verdict is here but not one that meets the need (an old tree's, r 0), and every input is here: the steps are still
+    // named (qa, agf_va3szit3jjul: d929's refusals said only "requires land_verdict" while an old tree's verdict was here)
+    const stale = { shape: "land_verdict", id: "v0", seq: 12, role: "described", r: 0, tree: "o".repeat(40), input_refs: ["g1", "d1"] }
+    expect(await said([...rows, diff, stale, ask], answers)).toEqual([
+      "git_land (requires land_verdict; land_verdict is made from gap, gitDiff (no land_verdict here meets what is required))",
+    ])
   })
 
   test("[MUST-FAIL] the steps toward a need end, however the schemas and declared answers loop", async () => {
