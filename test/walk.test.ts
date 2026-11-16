@@ -784,6 +784,35 @@ describe("candidates", () => {
     expect(await go([...rows, ...y2, ask("a4", 17, ["f1", "f2"]), skip("f5", 18, "a4", X)])).toBe(false)
   })
 
+  test("[MUST-FAIL] a run refused for the request's state settles, for every template making that same call, until something new comes", async () => {
+    served.add("git_diff")
+    const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" }
+    const tpl = (id: string, cwd: string) => ({ shape: "activity_template", id, seq: 2, role: "described", sig: { in: ["gap"], out: ["gitDiff"] }, calls: [{ shape: "git_diff", pointer: { cwd } }] })
+    const [t1, t2, t3] = [tpl("t1", "/c"), tpl("t2", "/c"), tpl("t3", "/d")]
+    const sel = { shape: "selection", id: "s1", seq: 3, role: "walk", a: "run/t1", root: "g1" }
+    const hop = { shape: "hop", id: "h1", seq: 4, role: "walk", phase: "started", kind: "run", selection_ref: "s1", call_id: "c1", pointer_type: "git_diff", args: { cwd: "/c" } }
+    const refusal = { shape: "failure", id: "f1", seq: 5, role: "walk", selection_ref: "s1", call_id: "c1", status: 200, blames: "request" }
+    const runs = async (rows: any[]) => (await (applicable as any)(rows)).map((c: { id: string }) => c.id).filter((id: string) => id.startsWith("run/")).sort()
+    const base = [gap, t1, t2, t3, sel, hop]
+    expect(await runs(base)).toEqual(["run/t2", "run/t3"]) // t1 in flight (started, not ended): as before, not run again
+    expect(await runs([...base, refusal])).toEqual(["run/t3"]) // t1 refused: t1 and t2 (the same call) settle; t3 calls another
+    // a failure that blames the callee leaves it callable, as before
+    expect(await runs([...base, { ...refusal, blames: "callee" }])).toEqual(["run/t1", "run/t2", "run/t3"])
+    // something new reopens both: a row it takes in from outside the walk, or a walk result that is news
+    expect(await runs([...base, refusal, { ...gap, id: "g2", seq: 6, summary: "changed" }])).toEqual(["run/t1", "run/t2", "run/t3"])
+    const commit = { shape: "hop", id: "h9", seq: 6, role: "walk", phase: "ended", kind: "call", call_id: "c9", output: { shape: "gitCommit", sha: "abc" } }
+    const commitStart = { shape: "hop", id: "h8", seq: 5.5, role: "walk", phase: "started", kind: "call", call_id: "c9", pointer_type: "git_commit" }
+    expect(await runs([...base, refusal, commitStart, commit])).toEqual(["run/t1", "run/t2", "run/t3"])
+    // a template refused on a later call (its first call made another one) settles too
+    served.add("git_status")
+    const two = { ...tpl("t4", "/e"), calls: [{ shape: "git_status", pointer: { cwd: "/e" } }, { shape: "git_diff", pointer: { cwd: "/e" } }] }
+    const s4 = { ...sel, id: "s4", seq: 7, a: "run/t4" }
+    const h4 = { ...hop, id: "h4", seq: 8, selection_ref: "s4", call_id: "c4", pointer_type: "git_diff", args: { cwd: "/e" } }
+    const f4 = { ...refusal, id: "f4", seq: 9, selection_ref: "s4", call_id: "c4" }
+    expect(await runs([gap, two])).toEqual(["run/t4"])
+    expect(await runs([gap, two, s4, h4, f4])).toEqual([])
+  })
+
   test("[MUST-FAIL] a template run in this root is not run again over the same inputs: the request it led to is called instead", async () => {
     for (const x of ["git_worktree", "fs_edit"]) served.add(x)
     const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" }

@@ -439,18 +439,48 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // draw over calling that request, round after round. The walk's own rows since (its next selection, a hop) are how it
   // got here, not new input, even for a template that takes in selections; a template that takes in only those is run
   // again in a root only when its run failed.
+  // A run refused for the request's state (its call's failure blames the request, as records stamps it) settles as a
+  // request's refused call does: over the same inputs the same call gets the same answer, so it is not run again until
+  // something new comes, and neither is another template whose first call is that very call, bound the same way. Five
+  // plans making one refused call are one refusal, not five refusals an hour (agf_7fcivb4rk967: a git_diff on a clone
+  // with no commit, 21 runs in an hour on one root). New here: a row of a shape the template takes in from someone
+  // other than the walk, or a walk result that is news (brought: a commit made in the clone is).
+  const refusedRun = (f: Row): boolean => f.shape === FAILURE && f.role === WALK && f.blames === "request" &&
+    String(byId.get(String(f.selection_ref))?.a ?? "").startsWith(`${RUN}/`)
+  const canon = (v: unknown): unknown => Array.isArray(v) ? v.map(canon) : typeof v === "object" && v !== null
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])])) : v
+  const callKey = (shape: string, args: unknown): string => JSON.stringify([shape, canon(args)])
+  const startedOf = new Map(pool.filter((h) => h.shape === HOP && h.phase === STARTED).map((h) => [String(h.call_id), h]))
+  const refused = pool.filter(refusedRun).flatMap((f) => {
+    const h = startedOf.get(String(f.call_id))
+    return h === undefined ? [] : [{ seq: f.seq, key: callKey(String(h.pointer_type), h.args) }]
+  })
+  const newSince = (r: Row, seq: number): boolean => {
+    const takes = new Set((r.sig as { in: string[] }).in)
+    return pool.some((x) => x.seq > seq && ((takes.has(x.shape) && x.role !== WALK) || brought(x)))
+  }
   const ran = (r: Row): boolean => {
     const last = pool.filter((x) => x.shape === SELECTION && x.a === [RUN, r.id].join("/")).sort((a, b) => a.seq - b.seq).at(-1)
     if (last === undefined) return false
-    if (pool.some((x) => x.shape === FAILURE && x.role === WALK && String(x.selection_ref) === last.id && x.kind === undefined)) return false
+    const failed = pool.filter((x) => x.shape === FAILURE && x.role === WALK && String(x.selection_ref) === last.id && x.kind === undefined)
+    if (failed.length > 0 && !failed.some(refusedRun)) return false
+    if (failed.some(refusedRun)) return !newSince(r, Math.max(...failed.map((f) => f.seq)))
     const takes = new Set((r.sig as { in: string[] }).in)
     return !pool.some((x) => x.seq > last.seq && takes.has(x.shape) && x.role !== WALK)
+  }
+  const sameRefused = (r: Row, i: number): boolean => {
+    const first = (r.calls as Inner[])[0]
+    if (first === undefined) return false
+    const b = bind(first.pointer, { sig: { in: inputs[i] }, calls: [] })
+    if (b.unbound.length > 0) return false
+    const key = callKey(first.shape, b.value)
+    return refused.some((x) => x.key === key && !newSince(r, x.seq))
   }
   const run = templates
     .map((r, i) => ({ r, i }))
     .filter(({ i }) => unserved[i].length === 0 && unbound[i].length === 0)
     // a scheduled template's re-run is its rhythm's (due, above), not this rule's
-    .filter(({ r }) => scheduled.has(r.id) || !ran(r))
+    .filter(({ r, i }) => scheduled.has(r.id) || (!ran(r) && !sameRefused(r, i)))
     .map(({ r, i }): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in], inputs: inputs[i] }))
 
   // When to wait follows the request's own deadlines (law 5). The walk's arm row is in the pool only when the walk is
