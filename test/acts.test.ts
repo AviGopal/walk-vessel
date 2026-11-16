@@ -46,6 +46,22 @@ describe("what a request has done", () => {
     expect(written[0].selection_ref).toBe("s-t1")
   })
 
+  test("[MUST-FAIL] gated is as of the row: the same gates keep the row, a changed gate writes a new one that says it", async () => {
+    seq = 200
+    const store: any[] = [{ shape: "world_changed", id: "w2", seq: 1, role: "person" }, ...OWNER_ROWS]
+    const written: any[] = []
+    const write = async (row: any) => { const r = { ...row, id: `rg${written.length}`, seq: 950 + written.length, role: "walk" }; written.push(r); store.push(r); return r }
+    const tick = async (n: number, gated: Record<string, string[]>) => {
+      const sel = { shape: "selection", id: `s-g${n}`, seq: 700 + n, role: "walk", root: "w2" }; store.push(sel)
+      return actsFactRow(episodeOf(store, "w2"), "w2", write, sel.id, gated)
+    }
+    const land = { git_land: ["git_land (requires land_verdict)"] }
+    await tick(1, land)
+    expect(await tick(2, land)).toBe("rg0")
+    await tick(3, {})
+    expect(written.map((r) => r.gated)).toEqual([land, {}])
+  })
+
   test("[MUST-FAIL] what the row means (a template is a plan, never an act) is said once, in the registered description", async () => {
     const { WRITTEN } = await import("../src/written")
     expect(WRITTEN.request_acts).toContain("template (activity_template) is a plan")

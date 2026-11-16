@@ -837,6 +837,51 @@ describe("candidates", () => {
     expect(await calls([gap, read, content(newClone, 3), edit()])).toEqual([])
   })
 
+  test("[MUST-FAIL] gated: a producer is shown what a skip says, from the same reading; a met gate is no longer listed", async () => {
+    const wants = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
+    const gapOpen = { shape: "requires", id: "rq2", seq: 8, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" } }
+    const judged = { shape: "requires", id: "rq3", seq: 9, role: "owner", for: "fileContent", needs: "verdict", where: { r: 1 }, group: "judged" }
+    const gap = { shape: "gap", id: "g-open", seq: 10, role: "detector", status: "open" }
+    const verdict = { shape: "verdict", id: "v1", seq: 11, role: "described", r: 1 }
+    const skipped: any[] = []
+    const note: any = {}
+    await applicable([...pool, wants, gapOpen, judged, gap], skipped, Date.now(), note)
+    const skip = skipped.find((s) => s.of === "request")
+    expect(skip.unserved).toEqual([expect.stringContaining("fileContent (requires verdict")])
+    expect(note.gated.fileContent).toEqual(skip.unserved)
+    const met: any = {}
+    await applicable([...pool, wants, gapOpen, judged, gap, verdict], [], Date.now(), met)
+    expect(met.gated.fileContent).toBeUndefined()
+  })
+
+  test("[MUST-FAIL] gated reaches each option through choices(), per root: a root holding the verdict is not told it is gated", async () => {
+    const { choices } = await import("../src/loop")
+    const owner = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const shared = [owner({ shape: "channel", id: "ch", calls: [] }, -5),
+      owner({ shape: "shape_schema", id: "s-answer", target: "answer", inputs: ["world_changed"] }, -4),
+      owner({ shape: "requires", id: "rv", for: "git_land", needs: "land_verdict", where: { r: 1 }, latest_by: "tree", group: "verdict" }, -3)]
+    const a = { shape: "world_changed", id: "wa", seq: 10, role: "person", what: "a" }
+    const b = { shape: "world_changed", id: "wb", seq: 11, role: "person", what: "b" }
+    const verdict = { shape: "land_verdict", id: "lv", seq: 12, role: "person", r: 1, tree: "t", input_refs: ["wa"] }
+    const options = await choices(shared as any, [{ root: a as any, rows: [a, verdict] as any }, { root: b as any, rows: [b] as any }])
+    const of = (root: string) => options.filter((o) => o.root === root)
+    expect(of("wa").length).toBeGreaterThan(0)
+    expect(of("wb").length).toBeGreaterThan(0)
+    expect(of("wa").every((o: any) => o.gated?.git_land === undefined)).toBe(true)
+    expect(of("wb").every((o: any) => String(o.gated?.git_land).startsWith("git_land (requires land_verdict"))).toBe(true)
+  })
+
+  test("[MUST-FAIL] gated: a precondition bound to the call's pointer is named per target, read or not", async () => {
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const read = own({ shape: "requires", id: "qr", for: "fs_edit", needs: "fileContent", where: { path: { "x-pointer": "path" } }, latest_by: "path", group: "read" }, 2)
+    const content = { shape: "fileContent", id: "fc", seq: 3, role: "walk", path: "/t/src/a.ts", content: "a" }
+    for (const rows of [[read], [read, content]]) {
+      const note: any = {}
+      await (applicable as any)(rows, [], Date.now(), note)
+      expect(note.gated.fs_edit).toEqual([expect.stringMatching(/^fs_edit \(requires fileContent.*, for the target the call names$/)])
+    }
+  })
+
   test("[MUST-FAIL] preconditions in different groups must each be met: a group is a gate, its rows its alternatives", async () => {
     const wants = { shape: "requires", id: "rq1", seq: 7, role: "owner", for: "fileContent", needs: "change_wanted", where: { wanted: true } }
     const gapOpen = { shape: "requires", id: "rq2", seq: 8, role: "owner", for: "fileContent", needs: "gap", where: { status: "open" } }

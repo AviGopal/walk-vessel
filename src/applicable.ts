@@ -39,7 +39,8 @@ export type Skipped = { id: string; unserved: string[]; of?: "request"; unbound?
 // as against the root's own; what is shared is about no one root.
 // root: the request the pool is for, which a template run binds its inputs from (bind.ts inputsOf).
 // head: the store's latest seq as records last said it (the posterior's at_seq), which a rhythm counts rows against.
-export type Seen = { overdue?: boolean; awaits?: boolean; shared?: ReadonlySet<string>; root?: string; head?: number }
+// gated (out): each call the owner's requires rows gate, with what it still needs here (see where it is set).
+export type Seen = { overdue?: boolean; awaits?: boolean; shared?: ReadonlySet<string>; root?: string; head?: number; gated?: Record<string, string[]> }
 
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
@@ -129,12 +130,21 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     follow(need, true)
     return [need, ...steps].join("; ")
   }
-  const unmet = (shape: string, pointer?: Record<string, unknown>): string[] => {
+  const unmet = (shape: string, pointer?: Record<string, unknown>, only: (rs: Row[]) => boolean = () => true): string[] => {
     const groups = new Map<string, Row[]>()
     for (const q of reqs.filter((q) => String(q.for) === shape)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
-    return [...groups.values()].filter((rs) => !rs.some((q) => meets(q, pointer)))
+    return [...groups.values()].filter(only).filter((rs) => !rs.some((q) => meets(q, pointer)))
       .map((rs) => `${shape} (requires ${[...new Set(rs.map((q) => toward(String(q.needs))))].join(" or ")})`)
   }
+  // What a producer is shown before it promises a call (request_acts' gated, acts.ts): each call the owner's requires rows
+  // gate, with the groups this same reading finds unmet here, worded as a skip words them. A group bound to the call's
+  // own pointer (x-pointer: an edit needs a read of the file it edits) can only be judged for one target, so it is named
+  // as needed for the target, not as met or unmet. Shown, not refused: a promise of a gated call stays allowed.
+  const pointerBound = (rs: Row[]): boolean => rs.some((q) => Object.values((q.where ?? {}) as Record<string, unknown>)
+    .some((v) => typeof v === "object" && v !== null && "x-pointer" in v))
+  note.gated = Object.fromEntries([...new Set(reqs.map((q) => String(q.for)))].sort()
+    .map((t) => [t, [...unmet(t, undefined, (rs) => !pointerBound(rs)), ...unmet(t, undefined, pointerBound).map((x) => `${x}, for the target the call names`)]])
+    .filter(([, needs]) => needs.length > 0))
   // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
   // came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that ended, it
   // is new information for a schema that reads failures, and it settles the request that made the call: the same pointer

@@ -15,7 +15,7 @@ export type Act = { tool: string; at_seq: number; ok: boolean; status?: number; 
 // A step this request keeps repeating with the same result over the same inputs: a call failing the same way, or a
 // produce judging the same thing the same way. n is how many times in a row, with nothing new in between or since.
 export type Repeat = { call?: string; produce?: string; on: string; outcome: string; n: number; since_seq: number }
-export type Acts = { root: string; acts: Act[]; not_called: string[]; repeats: Repeat[] }
+export type Acts = { root: string; acts: Act[]; not_called: string[]; repeats: Repeat[]; gated?: Record<string, string[]> }
 
 const pick = (r: Row | undefined): Partial<Act> => {
   if (r === undefined) return {}
@@ -51,11 +51,13 @@ export const actsOf = (pool: Row[], root: string): Acts => {
 // The row names the selection it was written for (selection_ref): records returns a walk row into a request's pool only
 // through one of that request's selections, so without it the row never came back and a new one was written at every
 // produce.
-export const actsFactRow = async (pool: Row[], root: string, write: (row: object) => Promise<Row>, sel?: string): Promise<string | undefined> => {
-  const now = actsOf(pool, root)
+// gated: what each gated call still needs on this root, as of this row (the walk's own reading, applicable.ts); a change
+// in it is a change of state, so the newest row says what is gated now.
+export const actsFactRow = async (pool: Row[], root: string, write: (row: object) => Promise<Row>, sel?: string, gated: Record<string, string[]> = {}): Promise<string | undefined> => {
+  const now = { ...actsOf(pool, root), gated }
   const last = pool.filter((r) => r.shape === REQUEST_ACTS && r.role === WALK && String(r.root) === root).sort((a, b) => a.seq - b.seq).at(-1)
-  const same = last !== undefined && JSON.stringify({ acts: last.acts, not_called: last.not_called, repeats: last.repeats ?? [] }) ===
-    JSON.stringify({ acts: now.acts, not_called: now.not_called, repeats: now.repeats })
+  const same = last !== undefined && JSON.stringify({ acts: last.acts, not_called: last.not_called, repeats: last.repeats ?? [], gated: last.gated ?? {} }) ===
+    JSON.stringify({ acts: now.acts, not_called: now.not_called, repeats: now.repeats, gated: now.gated })
   if (same) return last.id
   // A write that fails leaves the produce without the fact; said in the journal, so a missing fact is seen, and tried
   // again at the next produce.

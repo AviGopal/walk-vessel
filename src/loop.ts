@@ -7,7 +7,7 @@ import { type Post, draw, pick } from "./draw"
 import { ARM, DESCRIBED, DUE, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
-type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string }
+type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]> }
 
 // How long a root has waited, coarsely: 0 for its first minute, then one more per doubling of minutes. Context for
 // selection to learn from, never an order.
@@ -34,6 +34,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const seen: Seen = { awaits, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)), root: root.id, head }
     const cands = await applicable(pool, skipped, now, seen, answers)
     overdue = overdue || seen.overdue === true
+    const gated = seen.gated
     // A move's cell is the move in what it reads: the shapes of rows the walk did not write itself that the move consumes
     // (cand.reads), then the root's asker and age. Keyed on every shape in the pool, as it was, any new shape anywhere (an
     // owner's new row kind, a grade nothing here reads) made every cell of every root new and its learning start over.
@@ -41,7 +42,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const tail = [`asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
     for (const cand of cands) {
       const context = [...[...new Set(cand.reads ?? [])].filter((s) => present.has(s)).sort(), ...tail]
-      const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id }
+      const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id, gated }
       if (cand.kind !== WAIT_FOR) { out.push(o); continue }
       const seen = waits.get(cand.id)
       const until = (c: Cand): number => Number(c.pointer.until ?? Number.POSITIVE_INFINITY)
@@ -199,7 +200,7 @@ export const chain = async (): Promise<void> => {
     }))
     await recordSkipped(pool, skipped, sel)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
-    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id) : undefined
+    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
   }
 }
