@@ -283,12 +283,19 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       const sent = r.ok ? {} : ((): Record<string, unknown> => { try { return JSON.parse(r.text) as Record<string, unknown> } catch { return {} } })()
       const unserved = str((sent.failure as { unserved?: unknown } | undefined)?.unserved) ?? str(sent.unserved)
         ?? str(answer.unserved) ?? str(inner.unserved)
+      // How a produce's model answer ended (stop_reason, output_tokens), as described-shape put them on the failure it built
+      // itself: read from a non-200 envelope only, so a model's own text never sets them. Kept on the row, so a reader
+      // tells an answer cut at the output limit from a complete one that was wrong.
+      const env = (sent.failure ?? {}) as { stop_reason?: unknown; output_tokens?: unknown }
+      const ending = { ...(str(env.stop_reason) !== undefined ? { stop_reason: env.stop_reason as string } : {}),
+        ...(typeof env.output_tokens === "number" ? { output_tokens: env.output_tokens } : {}) }
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
         body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
         ...(typeof refused === "string" ? { refused } : {}),
         ...(waits ? { waits_for: "person" } : {}),
         ...(unserved !== undefined ? { unserved } : {}),
+        ...ending,
       })
       // A clone the tool moved before it failed was moved all the same: the move is recorded, as on success, or the
       // clone's rows would name a base it is no longer on.
