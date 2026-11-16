@@ -141,32 +141,34 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // skipped on an ask about another repository). A field bound to the call's pointer the call does not name says so.
   // Read from the same latest rows meets() reads; the fields are the owner's.
   const val = (v: unknown): string => shownValue(v, 60)
-  // what each reason compared, by reason, so a skip can name the rows behind the reasons it shows (against_refs)
-  const comparedBy = new Map<string, string>()
-  const against = (q: Row, pointer?: Record<string, unknown>): string[] => latestOf(q).flatMap((x) => {
+  // Each reason with the row it compared, so a skip can name every row behind the reasons it shows (against_refs): two
+  // latest rows failing the same field the same way give one reason and two rows, and both are named (qa).
+  const against = (q: Row, pointer?: Record<string, unknown>): Array<[string, string]> => latestOf(q).flatMap((x): Array<[string, string]> => {
     for (const [k, v] of Object.entries((q.where ?? {}) as Record<string, unknown>)) {
       const bound = typeof v === "object" && v !== null && "x-pointer" in v
       const want = ofCall(v, pointer)
-      if (want === undefined) return bound && pointer !== undefined ? [`${k}: the call names none`] : []
+      if (want === undefined) return bound && pointer !== undefined ? [[`${k}: the call names none`, x.id]] : []
       if (JSON.stringify(x[k]) !== JSON.stringify(want)) {
         const theirs = x[k] === undefined ? `${String(q.needs)} names none` : `≠ ${String(q.needs)}'s ${val(x[k])}`
-        const reason = `${k}: ${bound ? "the call's" : "required"} ${val(want)}${x[k] === undefined ? ", and " : " "}${theirs}`
-        comparedBy.set(reason, x.id)
-        return [reason]
+        return [[`${k}: ${bound ? "the call's" : "required"} ${val(want)}${x[k] === undefined ? ", and " : " "}${theirs}`, x.id]]
       }
     }
     return []
   })
-  // the rows behind the reasons the last unmet() call showed (at most 3 reasons), for the skip that carries its text
-  const refsOfReasons = (texts: string[]): string[] => [...new Set(texts.flatMap((t) => [...comparedBy.entries()]
-    .filter(([reason]) => t.includes(reason)).map(([, id]) => id)))]
+  // the rows behind each text unmet() returned, by the whole text (never a search inside it), for the skip that carries it
+  const behindOf = new Map<string, Set<string>>()
+  const refsOfReasons = (texts: string[]): string[] => [...new Set(texts.flatMap((t) => [...(behindOf.get(t) ?? [])]))]
   const unmet = (shape: string, pointer?: Record<string, unknown>, only: (rs: Row[]) => boolean = () => true): string[] => {
     const groups = new Map<string, Row[]>()
     for (const q of reqs.filter((q) => String(q.for) === shape)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
     return [...groups.values()].filter(only).filter((rs) => !rs.some((q) => meets(q, pointer)))
       .map((rs) => {
-        const why = [...new Set(rs.flatMap((q) => against(q, pointer)))].slice(0, 3)
-        return `${shape} (requires ${[...new Set(rs.map((q) => toward(String(q.needs))))].join(" or ")}${why.length > 0 ? `; ${why.join("; ")}` : ""})`
+        const pairs = rs.flatMap((q) => against(q, pointer))
+        const why = [...new Set(pairs.map(([reason]) => reason))].slice(0, 3)
+        const text = `${shape} (requires ${[...new Set(rs.map((q) => toward(String(q.needs))))].join(" or ")}${why.length > 0 ? `; ${why.join("; ")}` : ""})`
+        const ids = pairs.filter(([reason]) => why.includes(reason)).map(([, id]) => id)
+        if (ids.length > 0) behindOf.set(text, new Set([...(behindOf.get(text) ?? []), ...ids]))
+        return text
       })
   }
   // What a producer is shown before it promises a call (request_acts' gated, acts.ts): each call the owner's requires rows

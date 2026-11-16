@@ -835,6 +835,11 @@ describe("candidates", () => {
     const named = async (rows: any[]) => { const s: any[] = []; await (applicable as any)(rows, s); return s.find((x) => x.id === "t-super")?.against_refs }
     expect(await named([ask, req, t, wanted(true, "human-surface-vessel")])).toEqual(["cw-human-surface-vessel"])
     expect(await named([ask, req, t])).toBeUndefined() // nothing compared: nothing named
+    // two latest rows failing the same field the same way give one reason, and both rows are named (qa)
+    const reqLb = { ...req, id: "rq-lb", where: { wanted: true }, latest_by: "repo" }
+    const both = [ask, reqLb, t, wanted(false, "a"), { ...wanted(false, "b"), seq: 5 }]
+    expect(await why(both)).toContain("wanted: required true ≠ change_wanted's false")
+    expect([...(await named(both) ?? [])].sort()).toEqual(["cw-a", "cw-b"])
     // a bound field the call's pointer does not name says so (deployment Y3, qa)
     const bare = { ...t, id: "t-bare", calls: [{ shape: "git_worktree", pointer: {} }] }
     const s2: any[] = []
