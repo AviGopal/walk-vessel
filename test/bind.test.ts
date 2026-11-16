@@ -103,8 +103,9 @@ describe("a template with placeholders", () => {
   })
 
   // The owner seed's activity_template description teaches these two examples, in exactly these strings (super,
-  // scripts/substrate/walk-owner-seed.ts; its keep-visibility test, leg (d), asserts the description holds them). Change
-  // one side and the other goes red: the writer is taught only placeholders the walk binds.
+  // scripts/substrate/walk-owner-seed.ts). Keep these equal to the seed's: this test holds the walk to them, and the
+  // seed's keep-visibility test, leg (d), holds the description to them. Neither reads the other's file, so a change to
+  // one side must be made on both by hand (named debt: the strings are copied, not shared).
   const SEED_SIG_IN = ["gitWorktree"]
   const SEED_INPUT_EXAMPLE = "{{ sig.in[0].cwd }}"
   const SEED_CALL_EXAMPLE = "{{ calls.0.output.cwd }}"
