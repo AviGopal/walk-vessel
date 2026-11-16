@@ -1212,6 +1212,49 @@ describe("a records that answers a non-row while it restarts", () => {
   })
 })
 
+describe("a tick's request_acts carries what is gated on its root (deployment G3: the tick passing gated on)", () => {
+  let discovery: Fake
+  let vessel: ReturnType<typeof run>
+  let acts: Record<string, any> | undefined
+
+  beforeAll(async () => {
+    const ask = { shape: "world_changed", id: "w1", seq: 2, writer: "kid-person", role: "person", what: "x", t: new Date().toISOString() }
+    const shared = [
+      { shape: "channel", id: "ch1", seq: 3, writer: "owner", role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 4, writer: "owner", role: "owner", target: "answer", inputs: ["world_changed"] },
+      { shape: "requires", id: "rq", seq: 5, writer: "owner", role: "owner", for: "git_land", needs: "land_verdict", where: { r: 1 }, latest_by: "tree", group: "verdict" },
+    ]
+    discovery = fake((path, body) => {
+      if (path !== "/resolve") return Response.json(path === "/heartbeat" ? { nextHeartbeatMs: 600000 } : { ok: true })
+      const p = body.pointer
+      if (p.type === "record_wait_exact") return Response.json({ shape: "arm", id: "arm1", seq: 1, arm: "treated", as_of_seq: 99 })
+      if (p.type === "record_read" && p.roots === "all") return Response.json({ shared, roots: [{ root: ask, rows: [ask] }] })
+      if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+      if (p.type === "shapeDescriptions") return Response.json({ shape_answers: {} })
+      if (p.type === "posterior") return Response.json({ at_seq: 6, posts: p.cells.map(() => ({ alpha: 2, beta: 1, from: "move" })) })
+      if (p.type === "record_write" && p.row?.shape === "request_acts" && !acts) acts = p.row
+      if (p.type === "record_write") return Response.json({ ...p.row, id: `r${Math.random()}`, seq: 7 })
+      return new Promise<Response>(() => {})
+    })
+    const port = freePort()
+    vessel = run("src/index.ts", {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: String(port), DISCOVERY_URL: discovery.url,
+      WALK_ENDPOINT: `http://127.0.0.1:${port}`, METABOB_API_KEY: NODE_KEY,
+    })
+    await healthy(port)
+    for (let i = 0; i < 600 && !acts; i++) await Bun.sleep(25)
+  }, 30_000)
+
+  afterAll(() => {
+    vessel?.kill()
+    discovery?.stop()
+  })
+
+  test("[MUST-FAIL] the written row names the gated call and what it needs", () => {
+    expect(String(acts?.gated?.git_land)).toStartWith("git_land (requires land_verdict")
+  })
+})
+
 describe("a records that never answers the shape asked for", () => {
   let discovery: Fake
   let vessel: ReturnType<typeof run>
