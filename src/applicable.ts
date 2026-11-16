@@ -299,9 +299,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A CALL THAT WAITS ON A PERSON (agf_i033lib9c2hs: d929's git_land, sent again every few seconds). A tool may answer
   // that only a person's verdict lets it go on (waits_for "person" on the call's failure row, lifted by the walk from the
   // tool's own answer); asked the same again before the person speaks, it answers the same. So a call type whose latest
-  // failure on this root waits for a person is not offered until the root holds a row a person or the owner wrote after
-  // that failure; until then the walk's move is to wait for one. Read from the failure's own field and the writer kind.
+  // failure on this root waits for a person is not offered until the root holds a row a person wrote after that failure
+  // (records puts a person's row about any of the root's rows in the root's pool); until then the walk's move is to wait
+  // for one. An owner row does not lift it: a seed run says nothing about this root. Read from the failure's own field
+  // and the writer kind.
   const typeOf = new Map(pool.filter((r) => r.shape === HOP && r.phase === STARTED).map((h) => [String(h.call_id), String(h.pointer_type)]))
+  // the root's own rows: its pool, less what every root is given (the owner's configuration)
+  const ownRows = new Set(pool.filter((r) => note.shared?.has(r.id) !== true && r.role !== OWNER).map((r) => r.id))
   const lastFailure = new Map<string, Row>()
   for (const f of pool.filter((r) => r.shape === FAILURE && r.role === WALK && typeof r.call_id === "string").sort((a, b) => a.seq - b.seq)) {
     const t = typeOf.get(String(f.call_id))
@@ -309,9 +313,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const waitsOnPerson = (type: string): boolean => {
     const f = lastFailure.get(type)
-    // a person's row of this root (the root, or citing it), or any owner row: newer than the failure
-    const spoke = (r: Row): boolean => r.seq > f!.seq && (r.role === OWNER ||
-      (r.role === PERSON && note.root !== undefined && (r.id === note.root || [r.input_refs].flat().map(String).includes(note.root))))
+    // a person's row about this root (the root itself, or citing any row of the root's own: a verdict cites the diff it
+    // judges, never the ask; qa), newer than the failure
+    const spoke = (r: Row): boolean => r.seq > f!.seq && r.role === PERSON &&
+      (r.id === note.root || [r.input_refs].flat().map(String).some((id) => ownRows.has(id)))
     return f !== undefined && f.waits_for === "person" && !pool.some(spoke)
   }
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
@@ -447,7 +452,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // One wait: for the next row a person or the owner writes. The walk runs one move at a time, so while it waits none of
   // its own produces or calls is in flight, and nothing else writes the shapes they make: a wait for one of those (an
   // answer, a due, a template) could only time out. records answers any wait with the next person or owner row.
-  const waitFor = idle || ahead.length > 0
+  // A call that waits on a person (waitsOnPerson, above) makes waiting the walk's move too: what the root needs next is a
+  // person's row, which is what records answers a wait with (qa: withheld, the walk must wait, not produce another try).
+  const personWait = [...latest.keys()].some(waitsOnPerson)
+  const waitFor = idle || ahead.length > 0 || personWait
     ? [[] as string[]].map((shapes): Cand => ({
       ...base,
       id: [WAIT_FOR, ...shapes].join("/"),

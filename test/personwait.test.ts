@@ -21,17 +21,35 @@ const hop = { shape: "hop", id: "h4", seq: 4, role: "walk", phase: "started", ki
 const waiting = { shape: "failure", id: "f5", seq: 5, role: "walk", call_id: "c1", selection_ref: "s3", status: 409, waits_for: "person", input_refs: ["s3"] }
 const offered = async (pool: any[]) => (await applicable(pool, [], Date.now(), { root: "w1" })).map((c) => c.id).includes("call/git_land")
 
+// the person surface's land mark, as hsv writes it: a land_verdict citing the gitDiff it judges, never the ask
+const diff = { shape: "gitDiff", id: "d3b", seq: 3, role: "walk", call_id: "c0", tree: "t", input_refs: ["w1"] }
+const mark = (seq: number, cites = "d3b") => ({ shape: "land_verdict", id: `v${seq}`, seq, role: "person", r: 1, repo: "x", tree: "t", input_refs: [cites] })
+
 describe("a call that waits on a person", () => {
+  test("[MUST-FAIL] the person's mark as the surface writes it (citing the diff, not the ask) lets the call go; one citing another root's diff does not (qa F1)", async () => {
+    expect(await offered([ask, diff, req, sel, hop, waiting])).toBe(false)
+    expect(await offered([ask, diff, req, sel, hop, waiting, mark(6)])).toBe(true)
+    expect(await offered([ask, diff, req, sel, hop, waiting, mark(6, "d-other-root")])).toBe(false)
+  })
+
+  test("[MUST-FAIL] withheld, the walk's move is to wait, with no deadline ahead and not idle; no other try of the call (qa F2)", async () => {
+    const ids = (await applicable([ask, diff, req, sel, hop, waiting], [], Date.now(), { root: "w1", awaits: true })).map((c) => c.id)
+    expect(ids).toEqual(["wait-for"])
+    const after = (await applicable([ask, diff, req, sel, hop, waiting, mark(6)], [], Date.now(), { root: "w1", awaits: true })).map((c) => c.id)
+    expect(after).toEqual(["call/git_land"])
+  })
+
   test("[MUST-FAIL] is not sent again while the person has not spoken; a person's newer row on the root lets it go once more", async () => {
     expect(await offered([ask, req, sel, hop, waiting])).toBe(false)
     expect(await offered([ask, req, sel, hop, waiting, { shape: "outcome", id: "p6", seq: 6, role: "person", r: 1, input_refs: ["w1"] }])).toBe(true)
   })
 
-  test("[MUST-FAIL] a newer row by a producer, the walk, or a person of another root does not; the owner's does", async () => {
+  test("[MUST-FAIL] a newer row by a producer, the walk, a person of another root, or the owner does not", async () => {
     expect(await offered([ask, req, sel, hop, waiting, { shape: "answer", id: "a6", seq: 6, role: "described", input_refs: ["w1"] }])).toBe(false)
     expect(await offered([ask, req, sel, hop, waiting, { shape: "hop", id: "h6", seq: 6, role: "walk", phase: "ended" }])).toBe(false)
     expect(await offered([ask, req, sel, hop, waiting, { shape: "world_changed", id: "w9", seq: 6, role: "person", what: "other" }])).toBe(false)
-    expect(await offered([ask, req, sel, hop, waiting, { shape: "requires", id: "o6", seq: 6, role: "owner", for: "x", needs: "y" }])).toBe(true)
+    // an owner row (a seed run) says nothing about this root: it does not lift the wait (deployment)
+    expect(await offered([ask, req, sel, hop, waiting, { shape: "requires", id: "o6", seq: 6, role: "owner", for: "x", needs: "y", input_refs: ["w1"] }])).toBe(false)
   })
 
   test("[MUST-FAIL] a failure that does not wait on a person leaves the call offered, as before; an older waiting one is not the latest", async () => {
