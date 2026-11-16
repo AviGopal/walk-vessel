@@ -182,8 +182,11 @@ const recordAnswer = async (sel: Row, s: Served | undefined, body: Record<string
 // template's call): a produce's answer is a model's and never carries a row the walk would record as its own. And only
 // a row of a shape a vessel serving the called shape also serves, the rule recordAnswer holds an answer to: any
 // capability is a tool, so a refreshed row naming a verdict, a gap or an owner row is written by no one.
+// `clone`: the clone's state now (cwd, head, tree), from any tool answer, success or failure: a refresh that carried
+// commits, or a land refused on a tree it read. Recorded the same way. Tracked debt: `refreshed` is read beside it until
+// node1's installed local-tools answers with `clone` only, then a follow-up commit drops the `refreshed` read.
 const recordRefreshed = async (sel: Row, called: string, body: Record<string, unknown>, callId: string): Promise<void> => {
-  const r = body.refreshed
+  const r = body.clone ?? body.refreshed
   if (typeof r !== "object" || r === null || typeof (r as { shape?: unknown }).shape !== "string") return
   const [mine, its] = await Promise.all([servers(called), servers(String((r as { shape: string }).shape))]).catch(() => [null, null])
   if (!mine || !its || ![...its].some((v) => mine.has(v))) {

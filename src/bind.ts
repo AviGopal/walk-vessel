@@ -84,10 +84,13 @@ export const bind = (value: unknown, scope: Scope): Bound => {
 // When those rows are of more than one repo (a request that cloned two), the latest is not taken by default: an edit
 // bound to the wrong clone is worse than no call. The input is the latest of the repo the template names (a repo field
 // in one of its calls); a template that names none, or names two, has no input there, and its skip says so.
-export const inputsOf = (pool: Row[], root: string, sigIn: string[], walk: string, repo?: string): Array<Row | undefined> => sigIn.map((shape) => {
-  const rows = pool
+// roots: the request's own root first, then the earlier roots it continues (applicable.ts continued), newest first: a
+// root with no row of a shape of its own takes the newest one it continues has (a gap opened again keeps its clone).
+export const inputsOf = (pool: Row[], roots: string | string[], sigIn: string[], walk: string, repo?: string): Array<Row | undefined> => sigIn.map((shape) => {
+  const of = (root: string): Row[] => pool
     .filter((r) => r.shape === shape && r.writer === walk && typeof r.call_id === "string" && [r.input_refs].flat().map(String).includes(root))
     .sort((a, b) => a.seq - b.seq)
+  const rows = [roots].flat().map(of).find((rs) => rs.length > 0) ?? []
   const repos = new Set(rows.map((r) => r.repo).filter((x) => typeof x === "string"))
   if (repos.size <= 1) return rows.at(-1)
   return repo === undefined ? undefined : rows.filter((r) => r.repo === repo).at(-1)

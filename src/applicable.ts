@@ -54,7 +54,6 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const newest = new Map(pool.filter((r) => SCHEMAS.has(r.shape)).sort((a, b) => a.seq - b.seq).map((r) => [`${String(r.target)}|${variant(r)}`, r]))
   const schemas = [...newest.values()]
   const channels = pool.filter((r) => CHANNELS.has(r.shape))
-  const ready = schemas.filter((s) => [s.inputs].flat().every((x) => have.has(shapeOf(x))))
 
   // A produce of T is not offered while the pool holds a T row that saw exactly what this produce would see and that no
   // outcome has graded yet: an ungraded duplicate cannot be useful, because the first one's grade has not come. "What it
@@ -63,6 +62,84 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // So a new answer or due re-offers an outcome, while a repeat answer or due for the same request waits for a grade.
   // Whether to produce T again once it is graded is left to selection, not decided here.
   const byId = new Map(pool.map((r) => [r.id, r]))
+  // THE CLONE'S NEWEST TREE (x-latest). An owner value {"x-latest": {shapes, moves, same, field, continues}} is the field
+  // of the newest row, among rows of those shapes the walk recorded from a tool's answer (role walk, with a call_id: only
+  // such a row holds fields a callee wrote) on the request's clone (the same `same`, its cwd), that holds the field. A
+  // newer row of a `moves` shape without it (the clone moved and did not say where) leaves it unknown; a row without it
+  // that moves nothing (a plain diff) is passed over. Unknown meets nothing. The request's clone is the newest such
+  // gitWorktree-like row citing the root, read the way templates bind it (inputsOf); a root with none continues the
+  // newest earlier root of its shape with the same `continues` field (a gap the held-gap release opened again keeps its
+  // gap_id), and inherits that root's clone. Every shape and field is the owner's; with no x-latest value in any owner
+  // row, nothing here is read and the walk behaves as before.
+  type Latest = { shapes: string[]; moves: string[]; same: string; field: string; continues?: string }
+  const latestSpec = (v: unknown): Latest | undefined => {
+    const s = typeof v === "object" && v !== null ? (v as { "x-latest"?: unknown })["x-latest"] : undefined
+    if (typeof s !== "object" || s === null) return undefined
+    const o = s as Record<string, unknown>
+    const list = (x: unknown): string[] => Array.isArray(x) ? x.filter((y): y is string => typeof y === "string") : []
+    if (typeof o.same !== "string" || typeof o.field !== "string" || list(o.shapes).length === 0) return undefined
+    return { shapes: list(o.shapes), moves: list(o.moves), same: o.same, field: o.field, ...(typeof o.continues === "string" ? { continues: o.continues } : {}) }
+  }
+  const byTool = (r: Row): boolean => r.role === WALK && typeof r.call_id === "string"
+  const cites = (r: Row, ids: string[]): boolean => [r.input_refs].flat().map(String).some((x) => ids.includes(x))
+  // the roots whose rows this request may count as its own: itself, then (when the owner names how one root continues
+  // another) the earlier roots it continues, newest first
+  const continued = (field: string | undefined): string[] => {
+    const root = note.root === undefined ? undefined : byId.get(note.root)
+    if (root === undefined) return []
+    if (field === undefined || root[field] === undefined) return [root.id]
+    const earlier = pool.filter((r) => r.shape === root.shape && r.id !== root.id && r.seq < root.seq && JSON.stringify(r[field]) === JSON.stringify(root[field]))
+      .sort((a, b) => b.seq - a.seq).map((r) => r.id)
+    return [root.id, ...earlier]
+  }
+  const cloneOf = (spec: Latest): unknown => {
+    for (const id of continued(spec.continues)) {
+      const own = pool.filter((r) => spec.moves.includes(r.shape) && byTool(r) && r[spec.same] !== undefined && cites(r, [id])).sort((a, b) => a.seq - b.seq).at(-1)
+      if (own !== undefined) return own[spec.same]
+    }
+    return undefined
+  }
+  const latestMemo = new Map<string, unknown>()
+  const latestValue = (spec: Latest): unknown => {
+    const key = JSON.stringify(spec)
+    if (latestMemo.has(key)) return latestMemo.get(key)
+    const at = cloneOf(spec)
+    let value: unknown
+    if (at !== undefined) {
+      const rows = pool.filter((r) => spec.shapes.includes(r.shape) && byTool(r) && JSON.stringify(r[spec.same]) === JSON.stringify(at)).sort((a, b) => b.seq - a.seq)
+      for (const r of rows) {
+        if (r[spec.field] !== undefined) { value = r[spec.field]; break }
+        if (spec.moves.includes(r.shape)) break
+      }
+    }
+    latestMemo.set(key, value)
+    return value
+  }
+  // the continuity field the owner named, for templates binding a root's clone (inputsOf): read from any x-latest value
+  const continuesBy = ((): string | undefined => {
+    const found = pool.filter((r) => r.role === OWNER).flatMap((r) => [r.where, ...[r.inputs].flat()].flatMap((w) =>
+      typeof w === "object" && w !== null ? Object.values(((w as { where?: unknown }).where ?? w) as Record<string, unknown>) : []))
+      .map(latestSpec).find((s) => s?.continues !== undefined)
+    return found?.continues
+  })()
+  // a where value bound to something other than a literal: the call's pointer (x-pointer) or the clone's newest (x-latest)
+  const boundValue = (v: unknown, pointer: Record<string, unknown> | undefined): unknown => {
+    const spec = latestSpec(v)
+    if (spec !== undefined) return latestValue(spec)
+    const field = typeof v === "object" && v !== null ? (v as { "x-pointer"?: unknown })["x-pointer"] : undefined
+    return typeof field === "string" ? pointer?.[field] : v
+  }
+  // an input entry {shape, where} is here only when a row of its shape meets its where (an older tree's diff is not a
+  // diff of the clone's newest tree); an entry naming no where is here when its shape is, as before
+  const entryHere = (e: unknown): boolean => {
+    const where = typeof e === "object" && e !== null ? (e as { where?: unknown }).where : undefined
+    if (typeof where !== "object" || where === null) return have.has(shapeOf(e))
+    return pool.some((r) => r.shape === shapeOf(e) && Object.entries(where as Record<string, unknown>).every(([k, v]) => {
+      const want = boundValue(v, undefined)
+      return want !== undefined && JSON.stringify(r[k]) === JSON.stringify(want)
+    }))
+  }
+  const ready = schemas.filter((s) => [s.inputs].flat().every(entryHere))
   // The owner's preconditions on calls: a shape some requires row names is called (on its own or in a template) only when
   // the root's latest row of the shape one of those rows needs has every field its where names equal. Several rows for
   // one shape are alternatives. Which shapes, and what they need, are the owner's rows: the walk names none.
@@ -79,10 +156,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A where value may be bound to the call being asked for: {"x-pointer": "<field>"} is that call's pointer's field, so
   // one row can say "a row about the same thing this call is about" (the same path, say). A call whose pointer has no
   // such field does not meet it. The field is the owner's to name; the walk knows none.
-  const ofCall = (v: unknown, pointer: Record<string, unknown> | undefined): unknown => {
-    const field = typeof v === "object" && v !== null ? (v as { "x-pointer"?: unknown })["x-pointer"] : undefined
-    return typeof field === "string" ? pointer?.[field] : v
-  }
+  const ofCall = boundValue
   const latestOf = (q: Row): Row[] => {
     const by = typeof q.latest_by === "string" ? q.latest_by : undefined
     const latest = new Map<string, Row>()
@@ -107,11 +181,17 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // here, an old tree's verdict), so for it every input is named and its call too; below it, a shape already here is
   // taken as here (qa, agf_va3szit3jjul: d929's refusals named no step while an old tree's diff and verdict were here).
   // all: every input of the schema whose inputs are most here (the one that made the row here), not only the absent ones
+  // An input entry whose shape is here but whose where no row meets (a diff, but not of the clone's newest tree) is
+  // absent, and the step that makes it is named as for a shape not here at all.
+  const unmetEntries = new Set<string>()
   const madeFrom = (shape: string, all = false): string[] | undefined => schemas.filter((s) => String(s.target) === shape)
-    .map((s) => [s.inputs as string[]].flat().map(shapeOf))
-    .map((ins) => ({ ins, absent: ins.filter((x) => !have.has(x)) }))
+    .map((s) => [s.inputs as unknown[]].flat().map((e) => ({ shape: shapeOf(e), here: entryHere(e) })))
+    .map((ins) => ({ ins: ins.map((x) => x.shape), absent: ins.filter((x) => !x.here) }))
     .sort((a, b) => a.absent.length - b.absent.length)
-    .map(({ ins, absent }) => (all ? ins : absent))[0]
+    .map(({ ins, absent }) => {
+      for (const x of absent) if (have.has(x.shape)) unmetEntries.add(x.shape)
+      return all ? ins : absent.map((x) => x.shape)
+    })[0]
   const toward = (need: string): string => {
     const steps: string[] = []
     const followed = new Set<string>()
@@ -130,7 +210,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
         return
       }
       const callers = Object.keys(answers).filter((c) => answers[c] === shape).sort()
-      if (callers.length > 0 && (unmetHere || !have.has(shape))) steps.push(`${shape} comes from a ${callers.join(" or ")} call`)
+      if (callers.length > 0 && (unmetHere || !have.has(shape) || unmetEntries.has(shape))) steps.push(`${shape} comes from a ${callers.join(" or ")} call`)
     }
     follow(need, true)
     return [need, ...steps].join("; ")
@@ -145,12 +225,16 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // latest rows failing the same field the same way give one reason and two rows, and both are named (qa).
   const against = (q: Row, pointer?: Record<string, unknown>): Array<[string, string]> => latestOf(q).flatMap((x): Array<[string, string]> => {
     for (const [k, v] of Object.entries((q.where ?? {}) as Record<string, unknown>)) {
-      const bound = typeof v === "object" && v !== null && "x-pointer" in v
+      const toCall = typeof v === "object" && v !== null && "x-pointer" in v
+      const newest = latestSpec(v) !== undefined
       const want = ofCall(v, pointer)
-      if (want === undefined) return bound && pointer !== undefined ? [[`${k}: the call names none`, x.id]] : []
+      // the clone's newest tree is not known: its own words, never "the call names none" (the next step is a diff)
+      if (want === undefined && newest) return [[`${k}: the clone's newest ${k} is not known (no row on its clone says it since it last moved)`, x.id]]
+      if (want === undefined) return toCall && pointer !== undefined ? [[`${k}: the call names none`, x.id]] : []
       if (JSON.stringify(x[k]) !== JSON.stringify(want)) {
         const theirs = x[k] === undefined ? `${String(q.needs)} names none` : `≠ ${String(q.needs)}'s ${val(x[k])}`
-        return [[`${k}: ${bound ? "the call's" : "required"} ${val(want)}${x[k] === undefined ? ", and " : " "}${theirs}`, x.id]]
+        const whose = toCall ? "the call's" : newest ? "the clone's newest" : "required"
+        return [[`${k}: ${whose} ${val(want)}${x[k] === undefined ? ", and " : " "}${theirs}`, x.id]]
       }
     }
     return []
@@ -506,7 +590,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // placeholders are filled from the request's own rows (bind.ts). One that cannot be filled here is not run, and the
   // skip says which placeholder and which field is missing, so its writer can see it. A placeholder naming an earlier
   // call's answer (calls.j) can only be filled during the run.
-  const inputs = templates.map((r) => note.root === undefined ? [] : inputsOf(pool, note.root, (r.sig as { in: string[] }).in, VESSEL_ID, repoOf(r.calls as Inner[])))
+  const inputs = templates.map((r) => note.root === undefined ? [] : inputsOf(pool, continued(continuesBy), (r.sig as { in: string[] }).in, VESSEL_ID, repoOf(r.calls as Inner[])))
   const unbound = templates.map((r, i) => {
     const scope: Scope = { sig: { in: inputs[i] }, calls: [] }
     return [...new Set((r.calls as Inner[]).flatMap((c) => placeholders(c.pointer)))]
