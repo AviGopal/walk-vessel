@@ -465,5 +465,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     }))
     : []
 
+  // While a call waits on a person, nothing the root could produce or run moves it: the person's row is what it needs
+  // (deployment: on d929, answers, requests, deadlines, grades and templates went on being produced, a new git_land
+  // request among them, each a model call, while git_land itself was held). So the root offers its wait and nothing
+  // else, but for grading its lapse once its first deadline has passed (a fact about time, which the walk records).
+  if (personWait) {
+    const lapsing = first !== undefined && ahead.length === 0
+    return [...(lapsing ? produce.flat().filter((c) => c.pointer.type === OUTCOME) : []), ...waitFor]
+  }
   return [...produce.flat(), ...call.flat(), ...run, ...waitFor]
 }
