@@ -102,6 +102,33 @@ describe("a template with placeholders", () => {
     expect(skipped.find((x) => x.id === "t-go")).toBeUndefined()
   })
 
+  // The owner seed's activity_template description teaches these two examples, in exactly these strings (super,
+  // scripts/substrate/walk-owner-seed.ts; its keep-visibility test, leg (d), asserts the description holds them). Change
+  // one side and the other goes red: the writer is taught only placeholders the walk binds.
+  const SEED_SIG_IN = ["gitWorktree"]
+  const SEED_INPUT_EXAMPLE = "{{ sig.in[0].cwd }}"
+  const SEED_CALL_EXAMPLE = "{{ calls.0.output.cwd }}"
+
+  test("[MUST-FAIL] the owner seed's examples bind as written: sig.in input on a 489-like request, and an earlier call's answer", async () => {
+    // a request whose wanted change names another repo than the one the template was learned on, with its own clone
+    const root = { shape: "change_request", id: "r489", seq: 1, role: "person" }
+    const wanted = { shape: "change_wanted", id: "cw1", seq: 2, role: "described", repo: "walk-vessel", wanted: true, input_refs: ["r489"] }
+    const mine = { ...clone("g1", 3, "r489", "/trees/walk-vessel"), repo: "walk-vessel" }
+    const tmpl = { shape: "activity_template", id: "t-seed", seq: 4, role: "described", sig: { in: SEED_SIG_IN, out: ["gitDiff"] },
+      calls: [{ shape: "git_diff", pointer: { cwd: SEED_INPUT_EXAMPLE } }] }
+    const skipped: any[] = []
+    const run = (await applicable([root, wanted, mine, tmpl], skipped, Date.now(), { root: "r489" })).find((c) => c.id === "run/t-seed")
+    expect([run?.inputs?.map((r) => r?.id), skipped.find((x) => x.id === "t-seed")?.unbound ?? []]).toEqual([["g1"], []])
+    // the same example, its field misspelt, is a field this request has not got
+    const wrong = { ...tmpl, id: "t-wrong", calls: [{ shape: "git_diff", pointer: { cwd: SEED_INPUT_EXAMPLE.replace(".cwd", ".dir") } }] }
+    const skipped2: any[] = []
+    await applicable([root, wanted, mine, wrong], skipped2, Date.now(), { root: "r489" })
+    expect(skipped2.find((x) => x.id === "t-wrong")?.unbound).toEqual(["sig.in[0].dir"])
+    // the second example, filled from call 0's answer during the run
+    const scope = { sig: { in: [mine] }, calls: [{ output: { cwd: "/trees/walk-vessel" }, call_id: "c0" }] }
+    expect(bind({ cwd: SEED_CALL_EXAMPLE }, scope as any)).toMatchObject({ value: { cwd: "/trees/walk-vessel" }, unbound: [] })
+  })
+
   test("a template with no placeholder is offered as before", async () => {
     const lit = { ...t, id: "t-l", calls: [{ shape: "git_status", pointer: { cwd: "/fixed" } }] }
     expect((await applicable([ask, lit, clone("g1", 4, "w1", "/x")], [], Date.now(), { root: "w1" })).map((c) => c.id)).toContain("run/t-l")
