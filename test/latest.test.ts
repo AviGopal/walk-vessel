@@ -96,6 +96,39 @@ describe("the clone's newest tree", () => {
     expect(after.ids.includes("call/git_land")).toBe(true)
   })
 
+  test("[MUST-FAIL] a model's row naming a clone never becomes the request's clone", async () => {
+    const theirs = { shape: "gitWorktree", id: "wm", seq: 69700, role: "described", cwd: "/elsewhere", input_refs: [root] }
+    const r = await run([diff(69400, T(3)), verdict(69500, T(3)), theirs])
+    expect(r.ids.includes("call/git_land")).toBe(true)
+  })
+
+  test("[MUST-FAIL] an unknown newest tree meets nothing, a tree-less row included", async () => {
+    const moved = { ...clone, id: "wt2", seq: 69700, call_id: "cw2" }
+    const r = await run([moved, diff(69800, undefined)])
+    expect(verdictOffered(r.ids)).toBe(false)
+  })
+
+  test("[MUST-FAIL] a request with no clone row: nothing meets, and the step named is a diff (no silent stall)", async () => {
+    const skipped: Row[] = []
+    const rows = f.rows.filter((r) => r.shape !== "gitWorktree")
+    await applicable([f.root, ...rows, ...(f.owner ?? []), channel, ask, ...latestRows()], skipped, Date.now(), { root }, { git_diff: "gitDiff" })
+    expect(String(skipped.find((s) => s.id === "rq-land")?.unserved)).toContain("gitDiff comes from a git_diff call")
+  })
+
+  test("[MUST-FAIL] a gap opened again takes its newest tree from the clone of the gap it continues (010a)", async () => {
+    const g = fx("latest-010a.json")
+    const at = String((g.rows.find((r) => r.shape === "gitWorktree") as Row).cwd)
+    const id = g.root.id as string
+    const landAsk = { shape: "request", id: "rq-010a", seq: 69300, role: "described", pointer: { type: "git_land", cwd: at }, input_refs: [id] }
+    const d = { shape: "gitDiff", id: "d7", seq: 69400, role: "walk", call_id: "c7", cwd: at, tree: T(7), head: "h7", input_refs: [id] }
+    const v = { shape: "land_verdict", id: "v7", seq: 69500, role: "described", r: 1, tree: T(7), input_refs: [id] }
+    // a decoy: an earlier gap of ANOTHER gap_id, with its own clone, newer than the right one; it is not continued
+    const decoy = [{ shape: "gap", id: "gap-other", seq: 50000, role: "detector", gap_id: "another-gap", status: "open", input_refs: [] },
+      { shape: "gitWorktree", id: "wt-other", seq: 60000, role: "walk", call_id: "c-other", cwd: "/another-clone", input_refs: ["gap-other"] }]
+    const cands = await applicable([g.root, ...g.rows, ...decoy, landAsk, d, v, ...latestRows("gap_id")], [], Date.now(), { root: id }, { git_diff: "gitDiff" })
+    expect(cands.some((c) => c.id === "call/git_land")).toBe(true)
+  })
+
   test("[MUST-FAIL] a gap opened again with no clone of its own binds the clone of the gap it continues (010a), only when the owner names how", async () => {
     const g = fx("latest-010a.json")
     const tpl = g.templates?.[0] as Row
