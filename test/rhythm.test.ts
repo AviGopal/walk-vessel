@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 
 describe("the owner's rhythm", () => {
-  const served = new Set(["walk_failure_detect", "git_status"])
+  const served = new Set(["walk_failure_detect", "git_status", "retrospective", "answer"])
   const realFetch = globalThis.fetch
   let applicable: (pool: any[], skipped?: any[], now?: number, note?: any) => Promise<Array<{ id: string }>>
   let choices: (shared: any[], roots: any[], now?: number, answers?: any, arm?: any, head?: number) => Promise<Array<{ cand: { id: string } }>>
@@ -63,6 +63,36 @@ describe("the owner's rhythm", () => {
     const ask = { shape: "world_changed", id: "w1", seq: 3, role: "person" }
     expect(await ids([ask, tpl, rhythm(4, 1)], { root: "w1", awaits: true, head: 100 })).not.toContain("run/t-det")
     expect(await ids([arm, tpl, rhythm(3, 5), rhythm(4, 5, { retired: true })], { ...IDLE, head: 100 })).not.toContain("run/t-det")
+  })
+
+  // A produce the rhythm names (the USER, 11-16: a retrospective "on this one horizon"; "Yes, allow it").
+  const ch = { shape: "channel", id: "ch", seq: 1, role: "owner", calls: [] }
+  const retro = { shape: "shape_schema", id: "s-retro", seq: 2, role: "owner", target: "retrospective", inputs: ["arm"] }
+  const pace = (seq: number, every: number, extra: Record<string, unknown> = {}) => ({ shape: "rhythm", id: `rp${seq}`, seq, role: "owner", target: "retrospective", every_rows: every, ...extra })
+  const P = "produce/retrospective/ch"
+
+  test("[MUST-FAIL] a produce a rhythm names is offered on the idle root when due, and not before", async () => {
+    expect(await ids([arm, ch, retro, pace(3, 5)], { ...IDLE, head: 9 })).toContain(P)
+    expect(await ids([arm, ch, retro, pace(3, 50)], { ...IDLE, head: 9 })).not.toContain(P)
+  })
+
+  test("[MUST-FAIL] after its last produce, it is due again only every_rows later (store head, not the pool)", async () => {
+    const made = { shape: "selection", id: "s-p", seq: 20, role: "walk", root: "arm1", a: P }
+    expect(await ids([arm, ch, retro, pace(3, 5), made], { ...IDLE, head: 23 })).not.toContain(P)
+    expect(await ids([arm, ch, retro, pace(3, 5), made], { ...IDLE, head: 26 })).toContain(P)
+  })
+
+  test("[MUST-FAIL] a paced produce is never offered on a request's own root, nor when its rhythm is retired, nor with no head", async () => {
+    const ask = { shape: "world_changed", id: "w1", seq: 3, role: "person" }
+    const onAsk = { ...retro, id: "s-retro2", inputs: ["world_changed"] }
+    expect(await ids([ask, ch, onAsk, pace(4, 1)], { root: "w1", awaits: true, head: 100 })).not.toContain(P)
+    expect(await ids([arm, ch, retro, pace(3, 5), pace(4, 5, { retired: true })], { ...IDLE, head: 100 })).not.toContain(P)
+    expect(await ids([arm, ch, retro, pace(3, 5)], { root: "arm1", awaits: false })).not.toContain(P)
+  })
+
+  test("a produce no rhythm names is offered as before; a template rhythm still paces only its template", async () => {
+    const answer = { shape: "shape_schema", id: "s-ans", seq: 2, role: "owner", target: "answer", inputs: ["arm"] }
+    expect(await ids([arm, ch, answer, rhythm(3, 5000)], IDLE)).toContain("produce/answer/ch")
   })
 
   test("a template no rhythm names is offered as before (the schedule changes nothing else)", async () => {

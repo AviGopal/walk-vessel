@@ -266,7 +266,25 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     pool.some((r) => r.role === DESCRIBED && r.shape !== OUTCOME && !DUES.has(r.shape) && [s.context ?? []].flat().map(shapeOf).includes(r.shape)) ||
     pool.some((r) => DUES.has(r.shape) && r.role === DESCRIBED && typeof r.at === "number" && r.at <= now)
 
-  const produce = await Promise.all(ready.filter((s) => !pending(s) && judgeable(s)).map(async (s) => {
+  // A PRODUCE THE OWNER'S RHYTHM NAMES ({target, every_rows}) runs on its schedule only, as a scheduled template does
+  // (below): on the walk's idle root, when at least every_rows rows were written to the store since the later of its
+  // last produce of that target and its rhythm row (the USER, 11-16: "Yes, allow it": a retrospective "on this one
+  // horizon"). It is offered then whatever its pool, and at no other time, nor on a request's own work. The target and
+  // the count are the owner's rows; no shape is named here.
+  const idleHere = note.awaits === false || (note.awaits === undefined && pool.some((x) => x.shape === ARM))
+  const headNow = typeof note.head === "number" && Number.isFinite(note.head) ? note.head : undefined
+  const paced = new Map<string, Row>()
+  for (const r of pool.filter((x) => x.shape === RHYTHM && x.role === OWNER && typeof x.target === "string").sort((a, b) => a.seq - b.seq)) paced.set(String(r.target), r)
+  const pacedOnly = new Set(paced.keys())
+  const producedDue = (target: string): boolean => {
+    const r = paced.get(target)
+    if (r === undefined || r.retired === true || !(typeof r.every_rows === "number" && r.every_rows >= 1) || !idleHere || headNow === undefined) return false
+    const last = pool.filter((x) => x.shape === SELECTION && String(x.a).startsWith(`${PRODUCE}/${target}/`)).reduce((m, x) => Math.max(m, x.seq), 0)
+    return headNow - Math.max(last, r.seq) >= Number(r.every_rows)
+  }
+  const offerable = (s: Row): boolean => pacedOnly.has(String(s.target)) ? producedDue(String(s.target)) : !pending(s) && judgeable(s)
+
+  const produce = await Promise.all(ready.filter(offerable).map(async (s) => {
     const target = String(s.target)
     const served = await exists(target)
     const v = variant(s)
@@ -350,7 +368,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // work. The rhythm rows are the owner's; no template is named here. A run finishes within its tick (the loop awaits
   // it), so at most one of a rhythm's runs is ever in flight.
   const rhythms = new Map<string, Row>()
-  for (const r of pool.filter((x) => x.shape === RHYTHM && x.role === OWNER).sort((a, b) => a.seq - b.seq)) rhythms.set(String(r.template), r)
+  for (const r of pool.filter((x) => x.shape === RHYTHM && x.role === OWNER && x.template !== undefined).sort((a, b) => a.seq - b.seq)) rhythms.set(String(r.template), r)
   // Any template a rhythm row ever named is scheduled only: a retired rhythm's template is not offered at all.
   const scheduled = new Set(rhythms.keys())
   for (const [t, r] of [...rhythms]) if (r.retired === true || !(typeof r.every_rows === "number" && r.every_rows >= 1)) rhythms.delete(t)
