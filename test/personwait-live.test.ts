@@ -26,6 +26,16 @@ describe("a root waiting on a person, as records serves it", () => {
     const cands = await applicable(pool, [], fx.now, { awaits: fx.awaits, shared: new Set(fx.shared.map((r) => r.id)), root: fx.root.id })
     expect(cands.map((c) => c.id)).toEqual(["wait-for"])
   })
+  test("[MUST-FAIL] d929 once its first deadline has passed: still only its wait, no lapse grade (the USER: No lapse while waiting; red on f3f65ae: outcome)", async () => {
+    const { applicable } = await import("../src/applicable")
+    const ids = new Set(fx.rows.map((r) => r.id))
+    const pool = [...fx.shared.filter((r) => !ids.has(r.id)), ...fx.rows].sort((a, b) => a.seq - b.seq)
+    const first = fx.rows.filter((r) => r.shape === "due" && r.role === "described" && typeof r.within_ms === "number" && typeof r.at === "number" &&
+      [r.input_refs].flat().includes(fx.root.id)).sort((a, b) => a.seq - b.seq)[0]
+    const later = first.at + 60_000
+    const cands = await applicable(pool, [], later, { awaits: fx.awaits, shared: new Set(fx.shared.map((r) => r.id)), root: fx.root.id })
+    expect(cands.map((c) => c.id)).toEqual(["wait-for"])
+  })
   test("[MUST-FAIL] through choices(): the waiting root has no option", async () => {
     const { choices } = await import("../src/loop")
     const options = await choices(fx.shared, [{ root: fx.root, rows: fx.rows, awaits: fx.awaits }], fx.now)
