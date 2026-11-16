@@ -279,7 +279,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const producedDue = (target: string): boolean => {
     const r = paced.get(target)
     if (r === undefined || r.retired === true || !(typeof r.every_rows === "number" && r.every_rows >= 1) || !idleHere || headNow === undefined) return false
-    const last = pool.filter((x) => x.shape === SELECTION && String(x.a).startsWith(`${PRODUCE}/${target}/`)).reduce((m, x) => Math.max(m, x.seq), 0)
+    // its last produce: the selection that made it, or the row it made, whichever the pool still holds (a pool that left
+    // one out must not make it due on every idle tick)
+    const last = pool.filter((x) => (x.shape === SELECTION && String(x.a).startsWith(`${PRODUCE}/${target}/`)) || x.shape === target)
+      .reduce((m, x) => Math.max(m, x.seq), 0)
     return headNow - Math.max(last, r.seq) >= Number(r.every_rows)
   }
   const offerable = (s: Row): boolean => pacedOnly.has(String(s.target)) ? producedDue(String(s.target)) : !pending(s) && judgeable(s)

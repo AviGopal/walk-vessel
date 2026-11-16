@@ -80,6 +80,10 @@ describe("the owner's rhythm", () => {
     const made = { shape: "selection", id: "s-p", seq: 20, role: "walk", root: "arm1", a: P }
     expect(await ids([arm, ch, retro, pace(3, 5), made], { ...IDLE, head: 23 })).not.toContain(P)
     expect(await ids([arm, ch, retro, pace(3, 5), made], { ...IDLE, head: 26 })).toContain(P)
+    // the selection gone from the pool but the row it made still there: counted from the row, never due on every tick
+    const row = { shape: "retrospective", id: "r-made", seq: 21, role: "described", input_refs: ["arm1"] }
+    expect(await ids([arm, ch, retro, pace(3, 5), row], { ...IDLE, head: 24 })).not.toContain(P)
+    expect(await ids([arm, ch, retro, pace(3, 5), row], { ...IDLE, head: 27 })).toContain(P)
   })
 
   test("[MUST-FAIL] a paced produce is never offered on a request's own root, nor when its rhythm is retired, nor with no head", async () => {
