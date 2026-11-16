@@ -68,7 +68,7 @@ describe("a call that waits on a person", () => {
     expect(after.some((id) => id.startsWith("produce/request")) && after.includes("call/git_land")).toBe(true)
   })
 
-  test("[MUST-FAIL] while it waits, the root produces nothing (deployment: d929 kept making answers, requests, deadlines, templates); a passed deadline's lapse is still graded", async () => {
+  test("[MUST-FAIL] while it waits, the root produces nothing (deployment: d929 kept making answers, requests, deadlines, templates); nor is a passed deadline's lapse graded (the USER: No lapse while waiting)", async () => {
     const owner = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
     const channel = owner({ shape: "channel", id: "ch", calls: [] }, -5)
     const schemas = ["answer", "due", "outcome", "request"].map((target, i) =>
@@ -77,10 +77,22 @@ describe("a call that waits on a person", () => {
     const base = [channel, ...schemas, ask, answer, diff, req, sel, hop, waiting]
     const run = async (pool: any[], now = Date.now()) => (await applicable(pool, [], now, { root: "w1", awaits: true })).map((c) => c.id)
     expect(await run(base)).toEqual(["wait-for"])
-    // the first deadline has passed: its lapse may be graded, nothing else
+    // the first deadline has passed: still only the wait; the lapse is not graded while the person is waited on
     const due = { shape: "due", id: "d1", seq: 1.3, role: "described", within_ms: 1, at: 100, input_refs: ["w1"] }
-    const lapsed = await run([...base, due], 1_000)
-    expect(lapsed.filter((id) => id !== "wait-for")).toEqual(["produce/outcome/ch"])
+    expect(await run([...base, due], 1_000)).toEqual(["wait-for"])
+    // not vacuous: the same root without the wait grades its lapse
+    expect(await run([...base.filter((r) => r !== waiting), due], 1_000)).toContain("produce/outcome/ch")
+  })
+
+  test("[MUST-FAIL] through choices(), a waiting root past its deadline still offers its wait: it is not overdue", async () => {
+    const { choices } = await import("../src/loop")
+    const owner = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const shared = [owner({ shape: "channel", id: "ch", calls: [] }, -5),
+      ...["answer", "outcome"].map((target, i) => owner({ shape: "shape_schema", id: `s-${target}`, target, inputs: ["world_changed"], context: ["answer", "due", "hop"] }, -4 + i * 0.1))]
+    const answer = { shape: "answer", id: "a1", seq: 1.2, role: "described", text: "waiting on you", input_refs: ["w1"] }
+    const due = { shape: "due", id: "d1", seq: 1.3, role: "described", within_ms: 1, at: 100, input_refs: ["w1"] }
+    const options = await choices(shared as any, [{ root: ask as any, rows: [ask, answer, due, diff, req, sel, hop, waiting] as any, awaits: true }], 1_000)
+    expect(options.map((o) => o.cand.id)).toEqual(["wait-for"])
   })
 
   test("[MUST-FAIL] through choices() with another root that has a move: the waiting root offers no move of its own (deployment)", async () => {

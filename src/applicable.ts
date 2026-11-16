@@ -478,14 +478,15 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A passed first deadline holds every wait back only while grading its lapse is on offer this turn. Once that grade is
   // pending (the walk graded what it saw and nothing new came), waiting is the walk's move again: otherwise a request
   // graded but never closed would keep the walk from ever waiting.
-  if (first !== undefined && ahead.length === 0 && produce.flat().some((c) => c.pointer.type === OUTCOME)) note.overdue = true
+  // A root waiting on a person is not overdue: its lapse is not graded (below), so it holds no other root's wait back.
+  const personWait = [...latest.keys()].some(waitsOnPerson)
+  if (!personWait && first !== undefined && ahead.length === 0 && produce.flat().some((c) => c.pointer.type === OUTCOME)) note.overdue = true
   const bound = ahead.length > 0 ? { until: ahead[0] } : {}
   // One wait: for the next row a person or the owner writes. The walk runs one move at a time, so while it waits none of
   // its own produces or calls is in flight, and nothing else writes the shapes they make: a wait for one of those (an
   // answer, a due, a template) could only time out. records answers any wait with the next person or owner row.
   // A call that waits on a person (waitsOnPerson, above) makes waiting the walk's move too: what the root needs next is a
   // person's row, which is what records answers a wait with (qa: withheld, the walk must wait, not produce another try).
-  const personWait = [...latest.keys()].some(waitsOnPerson)
   const waitFor = idle || ahead.length > 0 || personWait
     ? [[] as string[]].map((shapes): Cand => ({
       ...base,
@@ -499,10 +500,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // While a call waits on a person, nothing the root could produce or run moves it: the person's row is what it needs
   // (deployment: on d929, answers, requests, deadlines, grades and templates went on being produced, a new git_land
   // request among them, each a model call, while git_land itself was held). So the root offers its wait and nothing
-  // else, but for grading its lapse once its first deadline has passed (a fact about time, which the walk records).
-  if (personWait) {
-    const lapsing = first !== undefined && ahead.length === 0
-    return [...(lapsing ? produce.flat().filter((c) => c.pointer.type === OUTCOME) : []), ...waitFor]
-  }
+  // else. Its lapse is not graded either, once its first deadline has passed (the USER, 11-16: "No lapse while
+  // waiting"): the deadline measured the makers' work, and the time is the person's. The person's row is what ends the
+  // wait; until then the root shows as waiting on them.
+  if (personWait) return waitFor
   return [...produce.flat(), ...call.flat(), ...run, ...waitFor]
 }
