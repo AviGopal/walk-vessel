@@ -20,8 +20,18 @@ const FORWARDING = new Set(["type"])
 const typeOf = (v: unknown): string =>
   v === null ? "null" : Array.isArray(v) ? "array" : Number.isInteger(v) ? "integer" : typeof v
 
-// A value as a refusal shows it: whole when short, else its start, so the next producer sees what it sent
-const shown = (v: unknown): string => { const j = JSON.stringify(v) ?? String(v); return j.length <= 80 ? j : `${j.slice(0, 77)}...` }
+// A value as a refusal or a skip shows it, so the next producer sees what it sent, but only when it is plainly not a
+// credential: a value holding a run of 20 or more letters, digits, "_" or "-" that mixes letters and digits (the shape
+// of a key or token), or longer than the cap, is withheld with its length. A run of letters alone is a name
+// ("human-surface-vessel", 20 characters), not a key, and stays shown. Refusals land in rows the surface shows, so
+// nothing key-shaped is copied there (research, deployment).
+const RUN = /[A-Za-z0-9_-]{20,}/g
+const keyLike = (j: string): boolean => (j.match(RUN) ?? []).some((r) => /[A-Za-z]/.test(r) && /[0-9]/.test(r))
+export const shownValue = (v: unknown, cap: number): string => {
+  const j = JSON.stringify(v) ?? String(v)
+  return j.length <= cap && !keyLike(j) ? j : `[value withheld, ${j.length} chars]`
+}
+const shown = (v: unknown): string => shownValue(v, 80)
 
 const fits = (want: unknown, v: unknown): boolean => {
   const ts = [want].flat().map(String)

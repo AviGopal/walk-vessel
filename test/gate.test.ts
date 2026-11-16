@@ -28,6 +28,20 @@ describe("what a declaration takes", () => {
     expect(problem({ const: "landing" }, "rail")).toBe('the pointer is "rail", not "landing"')
   })
 
+  test("[MUST-FAIL] a value shaped like a key is withheld from a refusal, with its length; a plain one is shown", () => {
+    const words = { type: "object", properties: { w: { type: "string", pattern: "^[a-z]{0,3}$" } } }
+    const key = "sk" + "_live_" + "Q2W8E4R6T1Y3U5I7O9P0"
+    expect(problem(words, { w: key })).toBe(`w is [value withheld, ${JSON.stringify(key).length} chars], which does not match its pattern ^[a-z]{0,3}$`)
+    expect(problem(words, { w: "acts.tool" })).toContain('w is "acts.tool"')
+    // the boundary: a run of 19 letters and digits is shown, a run of 20 is withheld
+    expect(problem(words, { w: "a1".repeat(9) + "a" })).toContain(`"${"a1".repeat(9)}a"`)
+    expect(problem(words, { w: "a1".repeat(10) })).toContain("[value withheld, 22 chars]")
+    // a run of letters alone is a name, not a key: shown however long (within the cap)
+    expect(problem(words, { w: "human-surface-vessel" })).toContain('"human-surface-vessel"')
+    // and past the cap, however plain
+    expect(problem(words, { w: "a b ".repeat(30) })).toContain("[value withheld,")
+  })
+
   test("[MUST-FAIL] a keyword this check cannot judge fails closed, named", () => {
     expect(problem({ type: "object", oneOf: [{}] }, {})).toBe("the pointer: its declaration uses oneOf, which this check cannot judge")
   })

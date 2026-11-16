@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto"
 import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
 import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists } from "./calls"
-import { callProblem } from "./inputs"
+import { callProblem, shownValue } from "./inputs"
 import { VESSEL_ID } from "./config"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
@@ -138,7 +138,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // what is required" named neither the field nor the two values, and two templates bound to repo super kept being
   // skipped on an ask about another repository). A field bound to the call's pointer the call does not name says so.
   // Read from the same latest rows meets() reads; the fields are the owner's.
-  const val = (v: unknown): string => { const j = JSON.stringify(v) ?? String(v); return j.length <= 60 ? j : `${j.slice(0, 57)}...` }
+  const val = (v: unknown): string => shownValue(v, 60)
   const against = (q: Row, pointer?: Record<string, unknown>): string[] => latestOf(q).flatMap((x) => {
     for (const [k, v] of Object.entries((q.where ?? {}) as Record<string, unknown>)) {
       const bound = typeof v === "object" && v !== null && "x-pointer" in v

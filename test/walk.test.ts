@@ -831,6 +831,23 @@ describe("candidates", () => {
     expect(await why([ask, req, t, wanted(true, "human-surface-vessel")])).toContain('repo: the call\'s "super" ≠ change_wanted\'s "human-surface-vessel"')
     expect(await why([ask, req, t, wanted(false, "super")])).toContain("wanted: required true ≠ change_wanted's false")
     expect(await why([ask, req, t])).not.toContain("≠") // none here: the steps toward one, as before
+    // a bound field the call's pointer does not name says so (deployment Y3, qa)
+    const bare = { ...t, id: "t-bare", calls: [{ shape: "git_worktree", pointer: {} }] }
+    const s2: any[] = []
+    await (applicable as any)([ask, req, bare, wanted(true, "human-surface-vessel")], s2)
+    expect(String(s2.find((x) => x.id === "t-bare")?.unserved)).toContain("repo: the call names none")
+    // every latest row here that differs is named, not only the first (qa): two gaps, each by its own gap_id
+    served.add("fs_edit")
+    const gapReq = { shape: "requires", id: "rq-g", seq: 2, role: "owner", for: "fs_edit", needs: "gap", where: { status: "open" }, latest_by: "gap_id" }
+    const g = (id: string, status: string) => ({ shape: "gap", id: `g-${id}`, seq: 5, role: "detector", gap_id: id, status })
+    const tg = { ...t, id: "t-gap", calls: [{ shape: "fs_edit", pointer: { path: "a" } }] }
+    const s3: any[] = []
+    await (applicable as any)([ask, gapReq, tg, g("A", "closed"), g("B", "held")], s3)
+    const said = String(s3.find((x) => x.id === "t-gap")?.unserved)
+    expect([said.includes('gap\'s "closed"'), said.includes('gap\'s "held"')]).toEqual([true, true])
+    // a key-shaped value in a row is withheld from the skip too
+    const keyRepo = "r" + "Q2W8E4R6T1Y3U5I7O9P0x"
+    expect(await why([ask, req, t, wanted(true, keyRepo)])).toContain("change_wanted's [value withheld,")
   })
 
   test("[MUST-FAIL] a template run in this root is not run again over the same inputs: the request it led to is called instead", async () => {
