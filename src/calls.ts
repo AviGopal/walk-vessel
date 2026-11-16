@@ -37,7 +37,11 @@ export const ENDED = "ended"
 // infra: the call never got an answer (the connection was refused or reset, the body broke off): an outage between the
 // walk and what it called, never a refusal of what was asked. Status 0, as every unanswered call is recorded (records
 // blames it on the callee: no writer is debited, and the walk-failure detector files it as infra).
-type Answer = { ok: boolean; status: number; body: unknown; text: string; infra?: true }
+// unsent: the connection was refused, so the call provably never reached its callee (a reset or a broken body may come
+// after the callee acted).
+type Answer = { ok: boolean; status: number; body: unknown; text: string; infra?: true; unsent?: true }
+// The errors that say a connection was never made (Bun's and Node's names for it).
+const NEVER_CONNECTED = new Set(["ConnectionRefused", "ECONNREFUSED"])
 
 // Every call the walk makes goes through here, and none throws (agf_v6jjy70pfiis: an ECONNRESET thrown out of a read the
 // walk needed killed the process, and every call then in flight was cut): an error on the way is an answer, infra.
@@ -55,7 +59,9 @@ const resolve = async (pointer: object): Promise<Answer> => {
     }
     return { ok: true, status: r.status, body: (await r.json()) as unknown, text: "" }
   } catch (e) {
-    return { ok: false, status: 0, body: null, text: `no answer: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`, infra: true }
+    const code = String((e as { code?: unknown })?.code ?? (e as { name?: unknown })?.name ?? "")
+    return { ok: false, status: 0, body: null, text: `no answer: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`, infra: true,
+      ...(NEVER_CONNECTED.has(code) ? { unsent: true as const } : {}) }
   }
 }
 
@@ -66,14 +72,17 @@ export const READ_AGAIN_MS = 2_000
 export const READ_WAIT_MS = 60_000
 
 // What the walk cannot go on without. A refusal stops the walk (its unit restarts it). An outage on the way (infra) is
-// asked again, within READ_WAIT_MS, rather than ending a walk whose calls are in flight.
+// asked again, within READ_WAIT_MS, rather than ending a walk whose calls are in flight: any outage for a call that may be
+// made twice (repeatable: a read), and only a refused connection for one that may not (a write: records gives each
+// row its own id and keeps no write key, so a write whose answer was lost after records appended it would be written
+// twice, a false fact; qa). A write that may have landed stops the walk, as before.
 export const loopCall = async (shape: string, pointer: object, pause: (ms: number) => Promise<unknown> = (ms) => Bun.sleep(ms),
-  now: () => number = Date.now): Promise<unknown> => {
+  now: () => number = Date.now, repeatable = true): Promise<unknown> => {
   const start = now()
   for (;;) {
     const r = await resolve({ ...pointer, type: shape })
     if (r.ok) return r.body
-    if (r.infra === true && now() - start < READ_WAIT_MS) {
+    if (r.infra === true && (repeatable || r.unsent === true) && now() - start < READ_WAIT_MS) {
       console.error(`${shape}: ${r.text}; asking again`)
       await pause(READ_AGAIN_MS)
       continue
@@ -85,7 +94,7 @@ export const loopCall = async (shape: string, pointer: object, pause: (ms: numbe
 
 import { callProblem } from "./inputs"
 export const writeRow = async (row: object): Promise<Row> =>
-  (await loopCall(RECORD_WRITE, { row, writer: VESSEL_ID, role: WALK })) as Row
+  (await loopCall(RECORD_WRITE, { row, writer: VESSEL_ID, role: WALK }, undefined, undefined, false)) as Row
 
 // What each call answers with, as the serving vessels declare it to discovery (shape_answers): read once per pass, so a
 // skip can name the call that makes a shape a step still needs. It only adds to what a skip says, so it never stops the

@@ -8,6 +8,9 @@ const realFetch = globalThis.fetch
 const realExit = process.exit
 let throwsLeft = 0
 let refuse = false
+// record_write: "reset" appends the row and then loses the answer; "refused" never connects
+let writeFault: "reset" | "refused" | undefined
+const stored: Array<Record<string, any>> = []
 const sent: Array<Record<string, any>> = []
 let exited = 0
 beforeAll(() => {
@@ -27,6 +30,13 @@ beforeAll(() => {
       throwsLeft--
       throw Object.assign(new Error("socket hang up"), { name: "ECONNRESET" })
     }
+    if (pointer.type === "record_write" && writeFault !== undefined) {
+      const f = writeFault
+      writeFault = undefined
+      if (f === "reset") { stored.push(pointer.row); throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }) }
+      throw Object.assign(new Error("Unable to connect"), { code: "ConnectionRefused" })
+    }
+    if (pointer.type === "record_write") stored.push(pointer.row)
     if (refuse) return new Response("no", { status: 403 })
     if (pointer.type === "shapeDescriptions") return Response.json({ shape_answers: {}, shape_inputs: { git_diff: { type: "object", properties: { cwd: { type: "string" } } } } })
     if (pointer.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "tools", endpoint: "http://tools.test" }] } })
@@ -65,6 +75,20 @@ describe("a call that gets no answer", () => {
     await loopCall("vesselCapability", { shape: "x" }, async (ms) => { pausedOnRefusal.push(ms) }, () => 0).catch(() => undefined)
     expect([exited, pausedOnRefusal.length]).toEqual([1, 0])
     refuse = false
+  })
+
+  test("[MUST-FAIL] a write whose answer was lost after it may have landed is never written again: one row, and the walk stops (qa)", async () => {
+    const { writeRow } = await import("../src/calls")
+    exited = 0; stored.length = 0; writeFault = "reset"
+    await writeRow({ shape: "hop", n: 1 }).catch(() => undefined)
+    expect([stored.length, exited]).toEqual([1, 1])
+  })
+
+  test("[MUST-FAIL] a write whose connection was refused never reached records: asked again, one row, the walk stays up", async () => {
+    const { writeRow } = await import("../src/calls")
+    exited = 0; stored.length = 0; writeFault = "refused"
+    const row = await writeRow({ shape: "hop", n: 2 })
+    expect([stored.length, exited, (row as Record<string, unknown>).n]).toEqual([1, 0, 2])
   })
 
   test("[MUST-FAIL] a tool call that gets no answer is recorded as unanswered (status 0, blamed on no writer), never thrown", async () => {
