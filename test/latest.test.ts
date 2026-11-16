@@ -13,8 +13,8 @@ const XL = (continues?: string) => ({ "x-latest": { shapes: ["gitCommitResult", 
 // the three owner rows the seed writes, newer than every row in the fixture
 const latestRows = (continues?: string): Row[] => [
   { shape: "requires", id: "xl-req", seq: 90001, role: "owner", for: "git_land", needs: "land_verdict", where: { r: 1, tree: XL(continues) }, latest_by: "tree", group: "verdict" },
-  { shape: "shape_schema", id: "xl-lv", seq: 90002, role: "owner", target: "land_verdict", variant: "", inputs: ["world_changed", { shape: "gitDiff", latest_by: "shape", where: { tree: XL(continues) } }] },
-  { shape: "shape_schema", id: "xl-lvg", seq: 90003, role: "owner", target: "land_verdict", variant: "gap", inputs: ["gap", { shape: "gitDiff", latest_by: "shape", where: { tree: XL(continues) } }] },
+  { shape: "shape_schema", id: "xl-lv", seq: 90002, role: "owner", target: "land_verdict", variant: "", inputs: ["world_changed", { shape: "gitDiff", latest_by: "shape", where: { tree: XL(continues), role: "walk" } }] },
+  { shape: "shape_schema", id: "xl-lvg", seq: 90003, role: "owner", target: "land_verdict", variant: "gap", inputs: ["gap", { shape: "gitDiff", latest_by: "shape", where: { tree: XL(continues), role: "walk" } }] },
 ]
 
 describe("the clone's newest tree", () => {
@@ -79,6 +79,12 @@ describe("the clone's newest tree", () => {
     const plain = await run([...base, diff(69700, undefined)]) // a diff with no tree moves nothing
     const refused = await run([...base, { shape: "failure", id: "f1", seq: 69700, role: "walk", call_id: "cf", status: 200, blames: "request", input_refs: [root] }])
     expect([other, model, plain, refused].map((x) => x.ids.includes("call/git_land"))).toEqual([true, true, true, true])
+  })
+
+  test("[MUST-FAIL] a model's diff of the clone's newest tree is no diff of it: no verdict is made from it", async () => {
+    const commit = { shape: "gitCommitResult", id: "k1", seq: 69400, role: "walk", call_id: "ck", cwd, tree: T(6), input_refs: [root] }
+    const r = await run([commit, diff(69500, T(6), cwd, "described")])
+    expect([verdictOffered(r.ids), r.land?.includes("gitDiff comes from a git_diff call")]).toEqual([false, true])
   })
 
   test("[MUST-FAIL] a move that does not say its tree (a refresh that carried commits) leaves the tree unknown until the next diff", async () => {
