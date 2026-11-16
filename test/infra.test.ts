@@ -2,7 +2,7 @@
 // A call that gets no answer (a connection refused or reset) is an outage, never a throw (agf_v6jjy70pfiis: an ECONNRESET
 // thrown out of a read the walk needed killed it, and every call in flight was cut): what the walk cannot go on without
 // is asked again within READ_WAIT_MS; a tool call is recorded as unanswered (status 0); a refusal still stops the walk.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 const realFetch = globalThis.fetch
 const realExit = process.exit
@@ -13,7 +13,9 @@ let writeFault: "reset" | "refused" | undefined
 const stored: Array<Record<string, any>> = []
 const sent: Array<Record<string, any>> = []
 let exited = 0
-beforeAll(() => {
+// Each test swaps fetch and exit in and out, and forgets the vocabulary it read, so nothing here reaches another file
+// run in the same process (deployment: a vocabulary left declaring only git_diff gated other files' calls).
+beforeEach(() => {
   Object.assign(process.env, {
     WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test", WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: "k",
   })
@@ -44,7 +46,11 @@ beforeAll(() => {
     return Response.json({ ok: true })
   }) as typeof fetch
 })
-afterAll(() => { globalThis.fetch = realFetch; process.exit = realExit })
+afterEach(async () => {
+  globalThis.fetch = realFetch
+  process.exit = realExit
+  ;(await import("../src/calls")).forgetDeclaredInputs()
+})
 
 const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person" }
 const request = { shape: "request", id: "q2", seq: 2, role: "described", pointer: { type: "git_diff", cwd: "/trees/x" }, input_refs: ["w1"] }
