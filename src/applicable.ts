@@ -81,11 +81,14 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const field = typeof v === "object" && v !== null ? (v as { "x-pointer"?: unknown })["x-pointer"] : undefined
     return typeof field === "string" ? pointer?.[field] : v
   }
-  const meets = (q: Row, pointer?: Record<string, unknown>): boolean => {
+  const latestOf = (q: Row): Row[] => {
     const by = typeof q.latest_by === "string" ? q.latest_by : undefined
     const latest = new Map<string, Row>()
     for (const x of pool.filter((r) => r.shape === String(q.needs)).sort((a, b) => a.seq - b.seq)) latest.set(by ? JSON.stringify(x[by]) : "", x)
-    return [...latest.values()].some((x) =>
+    return [...latest.values()]
+  }
+  const meets = (q: Row, pointer?: Record<string, unknown>): boolean => {
+    return latestOf(q).some((x) =>
       Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => {
         const want = ofCall(v, pointer)
         return want !== undefined && JSON.stringify(x[k]) === JSON.stringify(want)
@@ -130,11 +133,32 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     follow(need, true)
     return [need, ...steps].join("; ")
   }
+  // Why a row of the needed shape that IS here does not meet a requirement: for each latest one, the first field of the
+  // where it differs on, with both values, so a skip says what to change (agf_zwbwadr9y08l: "no change_wanted here meets
+  // what is required" named neither the field nor the two values, and two templates bound to repo super kept being
+  // skipped on an ask about another repository). A field bound to the call's pointer the call does not name says so.
+  // Read from the same latest rows meets() reads; the fields are the owner's.
+  const val = (v: unknown): string => { const j = JSON.stringify(v) ?? String(v); return j.length <= 60 ? j : `${j.slice(0, 57)}...` }
+  const against = (q: Row, pointer?: Record<string, unknown>): string[] => latestOf(q).flatMap((x) => {
+    for (const [k, v] of Object.entries((q.where ?? {}) as Record<string, unknown>)) {
+      const bound = typeof v === "object" && v !== null && "x-pointer" in v
+      const want = ofCall(v, pointer)
+      if (want === undefined) return bound && pointer !== undefined ? [`${k}: the call names none`] : []
+      if (JSON.stringify(x[k]) !== JSON.stringify(want)) {
+        const theirs = x[k] === undefined ? `${String(q.needs)} names none` : `≠ ${String(q.needs)}'s ${val(x[k])}`
+        return [`${k}: ${bound ? "the call's" : "required"} ${val(want)}${x[k] === undefined ? ", and " : " "}${theirs}`]
+      }
+    }
+    return []
+  })
   const unmet = (shape: string, pointer?: Record<string, unknown>, only: (rs: Row[]) => boolean = () => true): string[] => {
     const groups = new Map<string, Row[]>()
     for (const q of reqs.filter((q) => String(q.for) === shape)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
     return [...groups.values()].filter(only).filter((rs) => !rs.some((q) => meets(q, pointer)))
-      .map((rs) => `${shape} (requires ${[...new Set(rs.map((q) => toward(String(q.needs))))].join(" or ")})`)
+      .map((rs) => {
+        const why = [...new Set(rs.flatMap((q) => against(q, pointer)))].slice(0, 3)
+        return `${shape} (requires ${[...new Set(rs.map((q) => toward(String(q.needs))))].join(" or ")}${why.length > 0 ? `; ${why.join("; ")}` : ""})`
+      })
   }
   // What a producer is shown before it promises a call (request_acts' gated, acts.ts): each call the owner's requires rows
   // gate, with the groups this same reading finds unmet here, worded as a skip words them. A group bound to the call's

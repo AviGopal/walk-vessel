@@ -20,7 +20,12 @@ describe("what a declaration takes", () => {
     expect(problem(INPUTS.record_summary, { shape: "hop", summarize: ["a"], root: "w1" })).toBe("the pointer has root, which it does not take")
     expect(problem(INPUTS.record_summary, { shape: "hop", summarize: ["a"], top: 50 })).toBe("top is above 20")
     expect(problem(INPUTS.record_summary, { shape: "hop", summarize: [1] })).toBe("summarize[0] is integer, not string")
-    expect(problem({ enum: ["a", "b"] }, "c")).toBe("the pointer is not one of its values")
+    expect(problem({ enum: ["a", "b"] }, "c")).toBe('the pointer is "c", not one of ["a","b"]')
+    // [MUST-FAIL] a refusal names what was sent and the rule it broke, so the next producer can see what to change
+    // (598a988a: "entries[3].words[0] does not match its pattern" named neither)
+    expect(problem({ type: "object", properties: { words: { type: "array", items: { type: "string", pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" } } } }, { words: ["acts.tool"] }))
+      .toBe('words[0] is "acts.tool", which does not match its pattern ^[A-Za-z_][A-Za-z0-9_]{0,63}$')
+    expect(problem({ const: "landing" }, "rail")).toBe('the pointer is "rail", not "landing"')
   })
 
   test("[MUST-FAIL] a keyword this check cannot judge fails closed, named", () => {

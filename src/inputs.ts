@@ -20,6 +20,9 @@ const FORWARDING = new Set(["type"])
 const typeOf = (v: unknown): string =>
   v === null ? "null" : Array.isArray(v) ? "array" : Number.isInteger(v) ? "integer" : typeof v
 
+// A value as a refusal shows it: whole when short, else its start, so the next producer sees what it sent
+const shown = (v: unknown): string => { const j = JSON.stringify(v) ?? String(v); return j.length <= 80 ? j : `${j.slice(0, 77)}...` }
+
 const fits = (want: unknown, v: unknown): boolean => {
   const ts = [want].flat().map(String)
   const t = typeOf(v)
@@ -34,15 +37,17 @@ export const problem = (schema: unknown, value: unknown, at = ""): string | unde
   if (unknown.length > 0) return `${at || "the pointer"}: its declaration uses ${unknown.join(", ")}, which this check cannot judge`
   const where = at || "the pointer"
   if (s.type !== undefined && !fits(s.type, value)) return `${where} is ${typeOf(value)}, not ${[s.type].flat().join(" or ")}`
-  if (s.const !== undefined && JSON.stringify(s.const) !== JSON.stringify(value)) return `${where} is not the one value it takes`
-  if (Array.isArray(s.enum) && !s.enum.some((e) => JSON.stringify(e) === JSON.stringify(value))) return `${where} is not one of its values`
+  // what was sent and the rule it broke, so the next producer can see what to change (a refusal naming neither left
+  // the request producer guessing: "entries[3].words[0] does not match its pattern", 598a988a)
+  if (s.const !== undefined && JSON.stringify(s.const) !== JSON.stringify(value)) return `${where} is ${shown(value)}, not ${shown(s.const)}`
+  if (Array.isArray(s.enum) && !s.enum.some((e) => JSON.stringify(e) === JSON.stringify(value))) return `${where} is ${shown(value)}, not one of ${shown(s.enum)}`
   if (typeof value === "string") {
     if (typeof s.minLength === "number" && value.length < s.minLength) return `${where} is shorter than ${s.minLength}`
     if (typeof s.maxLength === "number" && value.length > s.maxLength) return `${where} is longer than ${s.maxLength}`
     if (typeof s.pattern === "string") {
       let re: RegExp
       try { re = new RegExp(s.pattern, "u") } catch { return `${where}: its declared pattern cannot be read` }
-      if (!re.test(value)) return `${where} does not match its pattern`
+      if (!re.test(value)) return `${where} is ${shown(value)}, which does not match its pattern ${s.pattern}`
     }
   }
   if (typeof value === "number") {

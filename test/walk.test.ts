@@ -518,12 +518,12 @@ describe("candidates", () => {
     // named (qa, agf_va3szit3jjul: d929's refusals said only "requires land_verdict" while an old tree's verdict was here)
     const stale = { shape: "land_verdict", id: "v0", seq: 12, role: "described", r: 0, tree: "o".repeat(40), input_refs: ["g1", "d1"] }
     expect(await said([...rows, diff, stale, ask], answers)).toEqual([
-      "git_land (requires land_verdict; land_verdict is made from gap, gitDiff (no land_verdict here meets what is required))",
+      "git_land (requires land_verdict; land_verdict is made from gap, gitDiff (no land_verdict here meets what is required); r: required 1 ≠ land_verdict's 0)",
     ])
     // with no schema making the need, an old row of it here no longer hides the call that answers it (deployment)
     const noSchema = rows.filter((r: any) => !(r.shape === "shape_schema" && r.target === "land_verdict"))
     expect(await said([...noSchema, diff, stale, ask], { ...answers, judge_tree: "land_verdict" })).toEqual([
-      "git_land (requires land_verdict; land_verdict comes from a judge_tree call)",
+      "git_land (requires land_verdict; land_verdict comes from a judge_tree call; r: required 1 ≠ land_verdict's 0)",
     ])
   })
 
@@ -803,6 +803,14 @@ describe("candidates", () => {
     const commit = { shape: "hop", id: "h9", seq: 6, role: "walk", phase: "ended", kind: "call", call_id: "c9", output: { shape: "gitCommit", sha: "abc" } }
     const commitStart = { shape: "hop", id: "h8", seq: 5.5, role: "walk", phase: "started", kind: "call", call_id: "c9", pointer_type: "git_commit" }
     expect(await runs([...base, refusal, commitStart, commit])).toEqual(["run/t1", "run/t2", "run/t3"])
+    // the same call written by another template with its pointer's keys in another order is the same call (qa)
+    served.add("fs_read")
+    const ka = { ...tpl("t6", "/k"), calls: [{ shape: "fs_read", pointer: { cwd: "/k", path: "x" } }] }
+    const kb = { ...tpl("t7", "/k"), calls: [{ shape: "fs_read", pointer: { path: "x", cwd: "/k" } }] }
+    const s6 = { ...sel, id: "s6", seq: 10, a: "run/t6" }
+    const h6 = { ...hop, id: "h6", seq: 11, selection_ref: "s6", call_id: "c6", pointer_type: "fs_read", args: { cwd: "/k", path: "x" } }
+    const f6 = { ...refusal, id: "f6", seq: 12, selection_ref: "s6", call_id: "c6" }
+    expect(await runs([gap, ka, kb, s6, h6, f6])).toEqual([])
     // a template refused on a later call (its first call made another one) settles too
     served.add("git_status")
     const two = { ...tpl("t4", "/e"), calls: [{ shape: "git_status", pointer: { cwd: "/e" } }, { shape: "git_diff", pointer: { cwd: "/e" } }] }
@@ -811,6 +819,18 @@ describe("candidates", () => {
     const f4 = { ...refusal, id: "f4", seq: 9, selection_ref: "s4", call_id: "c4" }
     expect(await runs([gap, two])).toEqual(["run/t4"])
     expect(await runs([gap, two, s4, h4, f4])).toEqual([])
+  })
+
+  test("[MUST-FAIL] a requirement a row here does not meet says which field and both values (agf_zwbwadr9y08l)", async () => {
+    served.add("git_worktree")
+    const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person", what: "x" }
+    const req = { shape: "requires", id: "rq", seq: 2, role: "owner", for: "git_worktree", needs: "change_wanted", where: { wanted: true, repo: { "x-pointer": "repo" } } }
+    const t = { shape: "activity_template", id: "t-super", seq: 3, role: "described", sig: { in: ["world_changed"], out: ["gitWorktree"] }, calls: [{ shape: "git_worktree", pointer: { repo: "super" } }] }
+    const why = async (rows: any[]) => { const s: any[] = []; await (applicable as any)(rows, s); return String(s.find((x) => x.id === "t-super")?.unserved) }
+    const wanted = (w: boolean, repo: string) => ({ shape: "change_wanted", id: `cw-${repo}`, seq: 4, role: "described", wanted: w, repo, input_refs: ["w1"] })
+    expect(await why([ask, req, t, wanted(true, "human-surface-vessel")])).toContain('repo: the call\'s "super" ≠ change_wanted\'s "human-surface-vessel"')
+    expect(await why([ask, req, t, wanted(false, "super")])).toContain("wanted: required true ≠ change_wanted's false")
+    expect(await why([ask, req, t])).not.toContain("≠") // none here: the steps toward one, as before
   })
 
   test("[MUST-FAIL] a template run in this root is not run again over the same inputs: the request it led to is called instead", async () => {
@@ -958,7 +978,7 @@ describe("candidates", () => {
     const skipped: Array<{ id: string; unserved: string[] }> = []
     const t = { shape: "activity_template", id: "t-q", seq: 6, role: "described", sig: { in: ["world_changed"], out: ["fileContent"] }, calls: [{ shape: "fileContent", pointer: {} }] }
     await applicable([...pool, t, loose, tight, cw()] as any, skipped)
-    expect(skipped.find((x) => x.id === "t-q")?.unserved).toEqual(["fileContent (requires change_wanted)"])
+    expect(skipped.find((x) => x.id === "t-q")?.unserved).toEqual(['fileContent (requires change_wanted; repo: required "r1", and change_wanted names none)'])
   })
 
   test("[MUST-FAIL] a precondition the owner retires counts no more, and does not bring back the row it replaced", async () => {
