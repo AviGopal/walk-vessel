@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { actsFactRow } from "./acts"
 import { type Seen, type Skipped, applicable } from "./applicable"
-import { type Cand, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
+import { type Cand, READ_AGAIN_MS, READ_WAIT_MS, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
 import { ARM, DESCRIBED, DUE, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
@@ -100,9 +100,8 @@ export const isEpisodes = (a: unknown): boolean =>
   Array.isArray(a) || (isObject(a) && Array.isArray(a.roots) && Array.isArray(a.shared))
 export const isPosterior = (cells: number) => (a: unknown): boolean =>
   isObject(a) && typeof a.at_seq === "number" && Number.isFinite(a.at_seq) && Array.isArray(a.posts) && a.posts.length === cells
-const READ_AGAIN_MS = 2_000
 const SAY_EVERY_MS = 20_000
-export const READ_WAIT_MS = 60_000
+export { READ_WAIT_MS }
 // What an answer was, without its values: a list and its length, an object's keys, or its type.
 export const shapeOf = (a: unknown): string =>
   Array.isArray(a) ? `a list of ${a.length}` : isObject(a) ? `an object with keys [${Object.keys(a).slice(0, 12).join(",")}]` : String(a === null ? "null" : typeof a)

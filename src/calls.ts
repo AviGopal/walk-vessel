@@ -34,8 +34,13 @@ type Runner = (c: Cand, sel: Row, pool: string[]) => Promise<void>
 export const STARTED = "started"
 export const ENDED = "ended"
 
-type Answer = { ok: boolean; status: number; body: unknown; text: string }
+// infra: the call never got an answer (the connection was refused or reset, the body broke off): an outage between the
+// walk and what it called, never a refusal of what was asked. Status 0, as every unanswered call is recorded (records
+// blames it on the callee: no writer is debited, and the walk-failure detector files it as infra).
+type Answer = { ok: boolean; status: number; body: unknown; text: string; infra?: true }
 
+// Every call the walk makes goes through here, and none throws (agf_v6jjy70pfiis: an ECONNRESET thrown out of a read the
+// walk needed killed the process, and every call then in flight was cut): an error on the way is an answer, infra.
 const resolve = async (pointer: object): Promise<Answer> => {
   const init = {
     method: "POST",
@@ -43,20 +48,39 @@ const resolve = async (pointer: object): Promise<Answer> => {
     body: JSON.stringify({ pointer }),
     timeout: false,
   }
-  const r = await fetch(new URL(RESOLVE, DISCOVERY_URL).href, init)
-  if (!r.ok) {
-    return { ok: false, status: r.status, body: null, text: await r.text() }
+  try {
+    const r = await fetch(new URL(RESOLVE, DISCOVERY_URL).href, init)
+    if (!r.ok) {
+      return { ok: false, status: r.status, body: null, text: await r.text() }
+    }
+    return { ok: true, status: r.status, body: (await r.json()) as unknown, text: "" }
+  } catch (e) {
+    return { ok: false, status: 0, body: null, text: `no answer: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`, infra: true }
   }
-  return { ok: true, status: r.status, body: (await r.json()) as unknown, text: "" }
 }
 
-export const loopCall = async (shape: string, pointer: object): Promise<unknown> => {
-  const r = await resolve({ ...pointer, type: shape })
-  if (!r.ok) {
+// How long the walk waits for what it cannot go on without (its own rows, records' reads) while it gets no usable
+// answer, asking again every READ_AGAIN_MS: well past a records or discovery restart (seconds). Past it the walk stops,
+// non-zero, so its unit restarts it and the restart counter shows the fault.
+export const READ_AGAIN_MS = 2_000
+export const READ_WAIT_MS = 60_000
+
+// What the walk cannot go on without. A refusal stops the walk (its unit restarts it). An outage on the way (infra) is
+// asked again, within READ_WAIT_MS, rather than ending a walk whose calls are in flight.
+export const loopCall = async (shape: string, pointer: object, pause: (ms: number) => Promise<unknown> = (ms) => Bun.sleep(ms),
+  now: () => number = Date.now): Promise<unknown> => {
+  const start = now()
+  for (;;) {
+    const r = await resolve({ ...pointer, type: shape })
+    if (r.ok) return r.body
+    if (r.infra === true && now() - start < READ_WAIT_MS) {
+      console.error(`${shape}: ${r.text}; asking again`)
+      await pause(READ_AGAIN_MS)
+      continue
+    }
     console.error(`${shape} answered ${r.status}: ${r.text}`)
     process.exit(1)
   }
-  return r.body
 }
 
 import { callProblem } from "./inputs"
