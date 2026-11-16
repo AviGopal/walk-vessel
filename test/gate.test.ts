@@ -33,9 +33,15 @@ describe("what a declaration takes", () => {
     const key = "sk" + "_live_" + "Q2W8E4R6T1Y3U5I7O9P0"
     expect(problem(words, { w: key })).toBe(`w is [value withheld, ${JSON.stringify(key).length} chars], which does not match its pattern ^[a-z]{0,3}$`)
     expect(problem(words, { w: "acts.tool" })).toContain('w is "acts.tool"')
-    // the boundary: a mixed run of 15 is shown, of 16 withheld
-    expect(problem(words, { w: "a1".repeat(7) + "a" })).toContain(`"${"a1".repeat(7)}a"`)
-    expect(problem(words, { w: "a1".repeat(8) })).toContain("[value withheld, 18 chars]")
+    // the boundaries: a run with upper case of 15 is shown, of 16 withheld; lower case and digits unbroken, 31 shown, 32
+    // withheld (a hex secret's shape)
+    expect(problem(words, { w: "A1".repeat(7) + "a" })).toContain(`"${"A1".repeat(7)}a"`)
+    expect(problem(words, { w: "A1".repeat(8) })).toContain("[value withheld, 18 chars]")
+    expect(problem(words, { w: "a1".repeat(15) + "a" })).toContain(`"${"a1".repeat(15)}a"`)
+    expect(problem(words, { w: "a1".repeat(16) })).toContain("[value withheld, 34 chars]")
+    // a long id in lower case, its parts joined by "-", is shown (a gap_id: the value a mismatch skip exists to show)
+    const gapId = "pull-sync-failing-test-local-tools-vessel-ff01f630-src-git-commit-ts"
+    expect(problem(words, { w: gapId })).toContain(JSON.stringify(gapId))
     // the common key forms (qa): an AWS-style secret with "/", a token whose run is letters of both cases, base64 with + and /
     const withheld = (v: string) => expect(problem(words, { w: v })).toContain("[value withheld,")
     withheld("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")

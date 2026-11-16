@@ -21,14 +21,17 @@ const typeOf = (v: unknown): string =>
   v === null ? "null" : Array.isArray(v) ? "array" : Number.isInteger(v) ? "integer" : typeof v
 
 // A value as a refusal or a skip shows it, so the next producer sees what it sent, but only when it is plainly not a
-// credential: a value holding a run of 16 or more of the characters keys and tokens are written in (letters, digits,
-// "+", "/", "=", "_", "-": base64 and its URL form, hex, the common token alphabets) that mixes at least two of upper
-// case, lower case and digits, or longer than the cap, is withheld with its length. A run in one case only is a name or
-// a path ("human-surface-vessel", "repos/human-surface-vessel/src/ui-views.ts"), not a key, and stays shown. Refusals
-// land in rows the surface shows, so nothing key-shaped is copied there (research, deployment, qa).
+// credential, and withheld with its length when it holds one:
+// - a run of 16 or more of the characters keys and tokens are written in (letters, digits, "+", "/", "=", "_", "-":
+//   base64 and its URL form, the common token alphabets) holding an upper-case letter and a lower-case letter or a
+//   digit (an AWS-style secret, a GitHub-style token, base64, a JWT); or
+// - lower case and digits only, one unbroken stretch of 32 or more with no separator in it (a hex secret, a full sha).
+// A name, a slug, a path or an id in lower case with its parts joined by "-", "_", ".", "/" or ":" is not a key, however
+// long ("human-surface-vessel"; a 68-character gap_id was withheld before, the one value a mismatch skip exists to show:
+// research, deployment). Refusals land in rows the surface shows, so nothing key-shaped is copied there (qa).
 const RUN = /[A-Za-z0-9+/=_-]{16,}/g
-const keyLike = (j: string): boolean => (j.match(RUN) ?? [])
-  .some((r) => [/[A-Z]/, /[a-z]/, /[0-9]/].filter((c) => c.test(r)).length >= 2)
+const keyLike = (j: string): boolean => (j.match(RUN) ?? []).some((r) =>
+  (/[A-Z]/.test(r) && /[a-z0-9]/.test(r)) || r.split(/[-_./:+=]/).some((p) => p.length >= 32 && /[a-z]/.test(p) && /[0-9]/.test(p)))
 // A plain value past the cap is cut, not withheld: a long gap_id is what a skip naming a mismatch exists to show (qa:
 // walk_trees_reclaim's 68-character id went unreadable). Whether it is key-shaped is read on the whole value first.
 export const shownValue = (v: unknown, cap: number): string => {
