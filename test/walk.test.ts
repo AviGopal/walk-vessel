@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
 import { draw } from "../src/draw"
 import { type Fake, exitsNaming, fake, freePort, healthy, run, until } from "./harness"
 
 const NODE_KEY = "node-key-for-test"
+
+// The declared vocabulary is read per pass and kept (calls.ts): forgotten after each test, so none leaks into the next
+// (calls.ts reads its environment when loaded, so only once a test has set it).
+afterEach(async () => { if (process.env.WALK_VESSEL_ID) (await import("../src/calls")).forgetDeclaredInputs() })
 
 describe("Thompson draw", () => {
   test("the same seed and posteriors give the same choice", () => {

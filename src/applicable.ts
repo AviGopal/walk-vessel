@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto"
 import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
-import { type Cand, ENDED, STARTED, type Inner, type Row, exists } from "./calls"
+import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists } from "./calls"
+import { callProblem } from "./inputs"
 import { VESSEL_ID } from "./config"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
@@ -297,7 +298,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
     const served = await exists(type)
-    const gate = unmet(type, r.pointer as Record<string, unknown> | undefined)
+    // a call is offered only when its callee declared what it takes and this request's pointer meets it (inputs.ts):
+    // checked here and again when it is forwarded; said in the skip, so the request is produced again with the reason
+    const vocab = declaredInputs()
+    const { writer: _w, role: _r, ...asked } = (r.pointer ?? {}) as Record<string, unknown>
+    const takes = vocab === undefined ? undefined : callProblem(vocab, type, asked)
+    const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : [])]
     if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request" })
     return [r].filter(() => served && !answered.has(r.id) && gate.length === 0).map((): Cand => ({
       ...base,
@@ -344,8 +350,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const served = await Promise.all(shapes.map(exists))
     const channelless = [...new Set(calls.filter((c) => produced.has(c.shape) && !(c.pointer as { via_ref?: unknown } | undefined)?.via_ref)
       .map((c) => `${c.shape} (no channel)`))]
-    // each call of the template is held to its own pointer
-    return [...shapes.filter((_, i) => !served[i]), ...channelless, ...new Set(calls.flatMap((c) => unmet(c.shape, c.pointer)))]
+    // each call of the template is held to its own pointer; a tool call (not a produce through a channel) only to a tool
+    // that declared its inputs (its pointer, once bound, is checked when forwarded)
+    const vocab = declaredInputs()
+    const undeclared = vocab === undefined ? [] : [...new Set(calls.filter((c) => !produced.has(c.shape))
+      .filter((c) => vocab === null || !(c.shape in vocab)).map((c) => vocab === null ? `${c.shape}: the declared inputs could not be read, so no call is made` : `${c.shape}: no declared inputs`))]
+    return [...shapes.filter((_, i) => !served[i]), ...channelless, ...new Set(calls.flatMap((c) => unmet(c.shape, c.pointer))), ...undeclared]
   }))
   // A template whose calls name a field of one of its inputs is run only where this request has that field: its
   // placeholders are filled from the request's own rows (bind.ts). One that cannot be filled here is not run, and the

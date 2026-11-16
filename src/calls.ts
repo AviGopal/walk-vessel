@@ -59,6 +59,7 @@ export const loopCall = async (shape: string, pointer: object): Promise<unknown>
   return r.body
 }
 
+import { callProblem } from "./inputs"
 export const writeRow = async (row: object): Promise<Row> =>
   (await loopCall(RECORD_WRITE, { row, writer: VESSEL_ID, role: WALK })) as Row
 
@@ -66,15 +67,26 @@ export const writeRow = async (row: object): Promise<Row> =>
 // skip can name the call that makes a shape a step still needs. It only adds to what a skip says, so it never stops the
 // walk: read with resolve (loopCall exits on a refusal, as it must for what the walk cannot go on without), and a
 // discovery that refuses, throws or declares none is no answers: the skip then says what it said before.
+// The same read keeps what each call takes (shape_inputs): the walk offers and forwards a tool call only when its callee
+// declared its inputs and the pointer meets them (inputs.ts). A read that fails, or declares no inputs at all, leaves
+// null: no tool call is made, and the pass files one gap saying so (fail closed, loudly). Not yet read: undefined (a
+// test that never reads applies no check; the loop reads it before every choice).
+let declared: Record<string, unknown> | null | undefined
+export const declaredInputs = (): Record<string, unknown> | null | undefined => declared
+/** Tests only: as if the vocabulary had not been read (each test reads its own, or none). */
+export const forgetDeclaredInputs = (): void => { declared = undefined }
 export const shapeAnswers = async (): Promise<Record<string, string>> => {
   try {
     const res = await resolve({ type: SHAPE_DESCRIPTIONS })
-    if (!res.ok) return {}
-    const r = res.body as { shape_answers?: unknown; content?: { shape_answers?: unknown } } | null
+    if (!res.ok) { declared = null; return {} }
+    const r = res.body as { shape_answers?: unknown; shape_inputs?: unknown; content?: { shape_answers?: unknown; shape_inputs?: unknown } } | null
+    const i = r?.shape_inputs ?? r?.content?.shape_inputs
+    declared = i && typeof i === "object" && !Array.isArray(i) && Object.keys(i).length > 0 ? i as Record<string, unknown> : null
     const a = r?.shape_answers ?? r?.content?.shape_answers
     if (!a || typeof a !== "object" || Array.isArray(a)) return {}
     return Object.fromEntries(Object.entries(a as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
   } catch {
+    declared = null
     return {}
   }
 }
@@ -196,6 +208,16 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
     // a detector or a grader (agf_g65ujxjbt2l5). A record_write forwarded this way is refused by records, which takes a
     // node-key write only with both stated; the walk's own rows go through writeRow.
     const { writer: _writer, role: _role, ...forwarded } = pointer
+    // A tool call is forwarded only when it meets its callee's declared inputs (the same check that offered it, now on
+    // the pointer as bound): a produce goes through a channel (via_ref) and is not a tool call. Refused here, it is a
+    // failure the request is blamed for (records: a 4xx other than 401/403/408/429), so its writer is debited.
+    const gate = (kind === CALL || kind === RUN) && forwarded.via_ref === undefined && declared !== undefined
+      ? callProblem(declared, String(forwarded.type), forwarded) : undefined
+    if (gate !== undefined) {
+      inFlight.delete(callId)
+      await writeRow({ shape: FAILURE, call_id: callId, selection_ref: sel.id, status: 422, body: gate, refused: "inputs", input_refs: refs })
+      return { ok: false }
+    }
     const r = await resolve(forwarded).finally(() => inFlight.delete(callId))
     if (stopping) return { ok: false }
     // A 200 can carry a failure: an error at the top level, or under content, the envelope a forwarded call comes back
