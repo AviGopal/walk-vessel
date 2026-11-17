@@ -5,7 +5,7 @@ import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists
 import { callProblem, shownValue } from "./inputs"
 import { VESSEL_ID } from "./config"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
@@ -288,15 +288,31 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // each news once). Otherwise a call that
   // keeps answering the same thing (a diff of an unchanged tree) makes every produce over it new, and the root loops at
   // that call's rate. By content alone: ids, seqs, times and the refs that tie a row to its call are left out.
+  // Within the root that made it: a pool can hold another root's calls (a gap opened again holds the rows of the root it
+  // continues), and that root's answer is not this root's. An edit this root made, answered as another root's edit of the
+  // same file once was, is news here (82ac: its edit read as a repeat of 52d7's, and the root stalled with no move). The
+  // root is the one its selection names; a row whose selection is not in the pool is counted with the others like it.
   const repeats = new Set<string>()
   {
     const typeOf = new Map(pool.filter((r) => r.shape === HOP && r.phase === STARTED).map((r) => [String(r.call_id), String(r.pointer_type)]))
+    const madeFor = (r: Row): string => String(byId.get(String(r.selection_ref ?? [r.input_refs].flat()[0]))?.root ?? "")
+    // What identifies a result, by its shape, as the owner names it (news_key {of, fields}, the newest row per shape; a
+    // retired one names none): only those fields are compared, a hop by its output's. A shape with no such row, or a
+    // result holding none of its fields (a diff that names no tree yet), is compared whole, as before: two such results
+    // keyed on nothing alone would read as the same.
+    const keyOf = new Map([...pool.filter((r) => r.shape === NEWS_KEY && r.role === OWNER && typeof r.of === "string")
+      .sort((a, b) => a.seq - b.seq).reduce((m, r) => m.set(String(r.of), r), new Map<string, Row>()).values()]
+      .filter((r) => r.retired !== true && Array.isArray(r.fields)).map((r) => [String(r.of), (r.fields as unknown[]).map(String)]))
+    const at = (o: unknown, path: string): unknown => path.split(".").reduce<unknown>((v, k) => (typeof v === "object" && v !== null ? (v as Record<string, unknown>)[k] : undefined), o)
     const had = new Map<string, Set<string>>()
     const LEFT_OUT = new Set(["id", "seq", "t", "call_id", "selection_ref", "input_refs", "writer"])
     for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
       if (r.role !== WALK || (BOOKKEEPING.has(r.shape) && !informs(r))) continue
-      const kind = r.shape === HOP ? `hop:${typeOf.get(String(r.call_id)) ?? ""}` : r.shape
-      const content = JSON.stringify(Object.keys(r).filter((k) => !LEFT_OUT.has(k)).sort().map((k) => [k, r[k]]))
+      const kind = `${madeFor(r)}|${r.shape === HOP ? `hop:${typeOf.get(String(r.call_id)) ?? ""}` : r.shape}`
+      const subject = (r.shape === HOP ? r.output : r) as Row | undefined
+      const keyed = keyOf.get(String(subject?.shape))?.map((f): [string, unknown] => [f, at(subject, f)])
+      const content = keyed !== undefined && keyed.some(([, v]) => v !== undefined) ? JSON.stringify(keyed)
+        : JSON.stringify(Object.keys(r).filter((k) => !LEFT_OUT.has(k)).sort().map((k) => [k, r[k]]))
       const seen = had.get(kind) ?? new Set<string>()
       if (seen.has(content)) repeats.add(r.id)
       seen.add(content)

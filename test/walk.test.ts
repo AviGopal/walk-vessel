@@ -687,6 +687,72 @@ describe("candidates", () => {
     expect(await offers(["X", "A", "N", "A", "X"])).toBe(1) // a row from outside that no producer reads tells nothing
   })
 
+  test("[MUST-FAIL] a result is news by the fields the owner names for its shape: a re-run diff of an unchanged tree is not (544972ef)", async () => {
+    for (const x of ["request", "git_diff"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const base: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure"] }, 3),
+    ]
+    const key = own({ shape: "news_key", id: "nk", of: "gitDiff", fields: ["tree", "check.ran", "check.passed", "typecheck.ran", "typecheck.passed"] }, 4)
+    const diff = (seq: number, tree: string, ms: number, typecheck: Record<string, unknown> = { ran: true, passed: true }) => {
+      const out = { shape: "gitDiff", tree, check: { ran: true, passed: false, out: `2 fail [${ms}ms]` }, typecheck }
+      return [
+        { shape: "selection", id: `sel${seq}`, seq, role: "walk", root: "g1", a: "call/git_diff" },
+        { shape: "hop", id: `hs${seq}`, seq: seq + 1, role: "walk", phase: "started", kind: "call", call_id: `c${seq}`, pointer_type: "git_diff", selection_ref: `sel${seq}` },
+        { shape: "hop", id: `he${seq}`, seq: seq + 2, role: "walk", phase: "ended", kind: "call", call_id: `c${seq}`, selection_ref: `sel${seq}`, output: out },
+        { shape: "gitDiff", id: `gd${seq}`, seq: seq + 3, role: "walk", call_id: `c${seq}`, selection_ref: `sel${seq}`, ...out, input_refs: ["g1"] },
+      ]
+    }
+    const asked = { shape: "request", id: "a0", seq: 30, role: "described", pointer: { type: "git_diff" }, input_refs: ["g1", "he10"] }
+    const go = async (pool: any[]) => (await (applicable as any)(pool, [], Date.now(), { root: "g1" })).map((c: { id: string }) => c.id).includes("produce/request/gap/ch1")
+    // with the owner's key: only the timings differ, so no news and no produce; a changed tree is news
+    expect(await go([...base, key, ...diff(10, "T1", 812), asked, ...diff(40, "T1", 907)])).toBe(false)
+    expect(await go([...base, key, ...diff(10, "T1", 812), asked, ...diff(40, "T2", 907)])).toBe(true)
+    // a check that did not run, then ran: news, though `passed` alone could read the same
+    expect(await go([...base, key, ...diff(10, "T1", 812, { ran: false }), asked, ...diff(40, "T1", 907, { ran: true, passed: true })])).toBe(true)
+    // with no key, every byte counts, as before: the timings make it news (the loop the key ends)
+    expect(await go([...base, ...diff(10, "T1", 812), asked, ...diff(40, "T1", 907)])).toBe(true)
+    // the owner retired the key: compared whole again
+    const retired = own({ shape: "news_key", id: "nk2", of: "gitDiff", fields: [], retired: true }, 5)
+    expect(await go([...base, key, retired, ...diff(10, "T1", 812), asked, ...diff(40, "T1", 907)])).toBe(true)
+    // a result holding none of the key's fields (a diff that names no tree yet) is compared whole: two different
+    // diffs are not read as one because both lack every keyed field
+    const bare = (seq: number, files: string) => {
+      const out = { shape: "gitDiff", files }
+      return [
+        { shape: "selection", id: `sel${seq}`, seq, role: "walk", root: "g1", a: "call/git_diff" },
+        { shape: "hop", id: `hs${seq}`, seq: seq + 1, role: "walk", phase: "started", kind: "call", call_id: `c${seq}`, pointer_type: "git_diff", selection_ref: `sel${seq}` },
+        { shape: "hop", id: `he${seq}`, seq: seq + 2, role: "walk", phase: "ended", kind: "call", call_id: `c${seq}`, selection_ref: `sel${seq}`, output: out },
+        { shape: "gitDiff", id: `gd${seq}`, seq: seq + 3, role: "walk", call_id: `c${seq}`, selection_ref: `sel${seq}`, ...out, input_refs: ["g1"] },
+      ]
+    }
+    expect(await go([...base, key, ...bare(10, "a.ts"), asked, ...bare(40, "b.ts")])).toBe(true)
+    expect(await go([...base, key, ...bare(10, "a.ts"), asked, ...bare(40, "a.ts")])).toBe(false)
+  })
+
+  test("[MUST-FAIL] a call's answer is news on its own root, however another root's call once answered the same (82ac)", async () => {
+    for (const x of ["request", "git_diff"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const base: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure"] }, 3),
+    ]
+    const call = (seq: number, root: string, out: string) => [
+      { shape: "selection", id: `sel${seq}`, seq, role: "walk", root, a: "call/git_diff" },
+      { shape: "hop", id: `hs${seq}`, seq: seq + 1, role: "walk", phase: "started", kind: "call", call_id: `c${seq}`, pointer_type: "git_diff", selection_ref: `sel${seq}` },
+      { shape: "hop", id: `he${seq}`, seq: seq + 2, role: "walk", phase: "ended", kind: "call", call_id: `c${seq}`, selection_ref: `sel${seq}`, output: { out } },
+    ]
+    const asked = { shape: "request", id: "a0", seq: 30, role: "described", pointer: { type: "git_diff" }, input_refs: ["g1", "he10"] }
+    const go = async (pool: any[]) => (await (applicable as any)(pool, [], Date.now(), { root: "g1" })).map((c: { id: string }) => c.id).includes("produce/request/gap/ch1")
+    // another root's call answered "same"; then this root's call answers the same: news here, so the request is offered
+    expect(await go([...base, ...call(10, "another-root", "same"), asked, ...call(40, "g1", "same")])).toBe(true)
+    // this root's own call answering what this root already had is still no news
+    expect(await go([...base, ...call(10, "g1", "same"), asked, ...call(40, "g1", "same")])).toBe(false)
+  })
+
   test("[MUST-FAIL] a produce whose producer showed only part of a long context is not asked again over the same pool: it was made over what the walk handed it", async () => {
     for (const x of ["request", "git_diff"]) served.add(x)
     const { createHash } = await import("node:crypto")

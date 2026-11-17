@@ -31,3 +31,6 @@ export const OWNER = "owner"
 export const DESCRIBED = "described"
 // The owner's schedule for a template the walk runs when due (records shares it with the template it names).
 export const RHYTHM = "rhythm"
+// The owner's word on what makes a result news: for a shape, the fields whose values identify it (a diff's tree and its
+// checks), so a result that differs only elsewhere (a test's timings) is not news. With none, all of it is compared.
+export const NEWS_KEY = "news_key"
