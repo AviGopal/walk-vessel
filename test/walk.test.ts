@@ -753,6 +753,50 @@ describe("candidates", () => {
     expect(await go([...base, key, ...bare(10, "a.ts"), asked, ...bare(40, "a.ts")])).toBe(false)
   })
 
+  test("an edit is news by the file and the bytes it left there (news_key fileEditResult [path, after]), on its hop and its answer (90b4)", async () => {
+    for (const x of ["request", "fs_edit"]) served.add(x)
+    const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const base: any[] = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" },
+      own({ shape: "channel", id: "ch1", calls: [] }, 2),
+      own({ shape: "shape_schema", id: "sr", target: "request", variant: "gap", inputs: ["gap"], context: ["hop", "failure"] }, 3),
+    ]
+    const key = own({ shape: "news_key", id: "nk", of: "fileEditResult", fields: ["path", "after"] }, 4)
+    // an ok edit of src/a.ts as local-tools answers it; `answer` false leaves out the answer row, so only the hop's output
+    // carries it
+    const edit = (seq: number, out: Record<string, unknown>, answer = true) => {
+      const o = { shape: "fileEditResult", path: "/c/src/a.ts", ok: true, ...out }
+      return [
+        { shape: "selection", id: `sel${seq}`, seq, role: "walk", root: "g1", a: "call/fs_edit" },
+        { shape: "hop", id: `hs${seq}`, seq: seq + 1, role: "walk", phase: "started", kind: "call", call_id: `c${seq}`, pointer_type: "fs_edit", selection_ref: `sel${seq}` },
+        { shape: "hop", id: `he${seq}`, seq: seq + 2, role: "walk", phase: "ended", kind: "call", call_id: `c${seq}`, selection_ref: `sel${seq}`, output: o },
+        ...(answer ? [{ shape: "fileEditResult", id: `fe${seq}`, seq: seq + 3, role: "walk", call_id: `c${seq}`, selection_ref: `sel${seq}`, ...o, input_refs: ["g1"] }] : []),
+      ]
+    }
+    const H0 = "0".repeat(64), H1 = "1".repeat(64)
+    // a request cites what it saw: the hops of the distinct edits before it (a repeat is never shown, so never cited)
+    const asked = (seq: number, saw = ["he10"]) => ({ shape: "request", id: `a${seq}`, seq, role: "described", pointer: { type: "fs_edit" }, input_refs: ["g1", ...saw] })
+    const go = async (pool: any[]) => (await (applicable as any)(pool, [], Date.now(), { root: "g1" })).map((c: { id: string }) => c.id).includes("produce/request/gap/ch1")
+    const already = { applied: false, why: "this edit is already in the file: its new_string is there and its old_string is not" }
+    // a revert leaves other bytes: news, with the key and without it
+    expect(await go([...base, key, ...edit(10, { after: H1 }), asked(30), ...edit(40, { after: H0 })])).toBe(true)
+    expect(await go([...base, ...edit(10, { after: H1 }), asked(30), ...edit(40, { after: H0 })])).toBe(true)
+    // the same bytes again: no news, with the key and without it
+    expect(await go([...base, key, ...edit(10, { after: H1 }), asked(30), ...edit(40, { after: H1 })])).toBe(false)
+    expect(await go([...base, ...edit(10, { after: H1 }), asked(30), ...edit(40, { after: H1 })])).toBe(false)
+    // an edit already made leaves the bytes the first did: with the key, no news; compared whole, its answer reads as news
+    expect(await go([...base, key, ...edit(10, { after: H1 }), asked(30), ...edit(40, { after: H1, ...already })])).toBe(false)
+    expect(await go([...base, ...edit(10, { after: H1 }), asked(30), ...edit(40, { after: H1, ...already })])).toBe(true)
+    // the key reaches the hop's output: with no answer row at all, the hop alone is compared by path and after
+    expect(await go([...base, key, ...edit(10, { after: H1 }, false), asked(30), ...edit(40, { after: H1, ...already }, false)])).toBe(false)
+    expect(await go([...base, key, ...edit(10, { after: H1 }, false), asked(30), ...edit(40, { after: H0 }, false)])).toBe(true)
+    // A to B to A to B: the third and fourth leave the bytes the first and second did, so to a request that saw A, B and
+    // A (it cites the two distinct edits; the third is a repeat, never shown), the fourth is no news
+    expect(await go([...base, key, ...edit(10, { after: H1 }), ...edit(20, { after: H0 }), ...edit(30, { after: H1 }), asked(38, ["he10", "he20"]), ...edit(40, { after: H0 })])).toBe(false)
+    // before live answers carry after (90b4's two edits): both answer {path, ok} alike, and read as one
+    expect(await go([...base, ...edit(10, {}), asked(30), ...edit(40, {})])).toBe(false)
+  })
+
   test("[MUST-FAIL] a call's answer is news on its own root, however another root's call once answered the same (82ac)", async () => {
     for (const x of ["request", "git_diff"]) served.add(x)
     const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
