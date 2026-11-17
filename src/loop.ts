@@ -4,7 +4,7 @@ import { type Seen, type Skipped, applicable } from "./applicable"
 import { type Cand, READ_AGAIN_MS, READ_WAIT_MS, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
-import { ARM, DESCRIBED, DUE, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, WAIT_FOR } from "./shapes"
+import { ARM, DESCRIBED, DUE, FAILURE, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, STALL, STALL_RULE, WAIT_FOR } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]> }
@@ -163,6 +163,28 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
   }
 }
 
+// A ROOT WITH NO MOVE IS SAID (law 6: the class 82ac fell into, an open root offering nothing, silently, for hours).
+// When the owner's stall_rule names after_rows N, a root that offers no move this tick (not even a wait: a root waiting
+// on a person offers its wait), whose newest row is N or more store rows behind this tick's selection, gets one failure
+// row of kind stall, naming the root, N and the seq it counted from. Records keeps that row among the root's rows (it
+// cites the root), so it is then the root's newest row, and its producers are shown it: while the root sits, it is said
+// again once every N rows, a heartbeat that stops when the root moves or closes. It blames no one and closes nothing: a
+// kind (the walk's own word, as a skip is), no status, never a grade or a lapse. Counted in store rows, the unit a
+// detector's quiet window is counted in, from seqs the walk already holds: no read is made. Derived from rows alone, so
+// it replays over any past window. With no stall_rule, nothing is written.
+export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, options: Array<{ root: string }>, at: number): Array<Record<string, unknown>> => {
+  const rule = shared.filter((r) => r.shape === STALL_RULE && r.role === OWNER).sort((a, b) => a.seq - b.seq).at(-1)
+  const n = Number(rule?.after_rows)
+  if (rule === undefined || rule.retired === true || !Number.isInteger(n) || n < 1 || !Number.isFinite(at)) return []
+  const moving = new Set(options.map((o) => o.root))
+  const out: Array<Record<string, unknown>> = []
+  for (const { root, rows } of roots.filter(({ root }) => !moving.has(root.id))) {
+    const newest = Math.max(root.seq, ...rows.map((r) => r.seq))
+    if (at - newest >= n) out.push({ shape: FAILURE, kind: STALL, root: root.id, rows: n, since_seq: newest, input_refs: [root.id] })
+  }
+  return out
+}
+
 export const chain = async (): Promise<void> => {
   const armRow = (await readUntil(() => loopCall(RECORD_WAIT_EXACT, { shapes: [ARM], after_seq: 0, where: { vessel_id: VESSEL_ID } }), isArm, "arm row")) as Row | undefined
   if (armRow === undefined) return
@@ -199,6 +221,9 @@ export const chain = async (): Promise<void> => {
       posterior_reads: posteriorReads, draw_ms: ms(t3), cands: options.length, cells: new Set(cells).size,
     }))
     await recordSkipped(pool, skipped, sel)
+    // No selection_ref on a stall row: the tick's selection is another root's move, and records reads a walk failure's
+    // selection_ref as that move having failed.
+    for (const row of stalls(shared, roots, options, Number(sel.seq))) await writeRow(row)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
     const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
