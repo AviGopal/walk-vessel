@@ -23,7 +23,11 @@ const ageBucket = (root: Row, now: number): number => {
  * by the earliest deadline ahead across every root, and not offered once any root's deadline has passed, so one root's
  * wait never lets another's deadline pass unseen.
  */
-export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row, head?: number): Promise<Option[]> => {
+// What a tick learns of every root besides the options it offers: which roots had any move, a wait included (a root
+// waiting on a person has one, though the wait is offered only when no root has another move), and, for each root with
+// none at all, what it held back and why (its skipped requests and templates), so the tick can say so.
+export type Held = { moving: Set<string>; still: Array<{ root: string; pool: Row[]; skipped: Skipped[] }> }
+export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row, head?: number, held?: Held): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
   let overdue = false
@@ -33,6 +37,8 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const skipped: Skipped[] = []
     const seen: Seen = { awaits, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)), root: root.id, head }
     const cands = await applicable(pool, skipped, now, seen, answers)
+    if (cands.length > 0) held?.moving.add(root.id)
+    else if (skipped.length > 0) held?.still.push({ root: root.id, pool, skipped })
     overdue = overdue || seen.overdue === true
     const gated = seen.gated
     // A move's cell is the move in what it reads: the shapes of rows the walk did not write itself that the move consumes
@@ -203,7 +209,8 @@ export const chain = async (): Promise<void> => {
     const episodesMs = ms(t0)
     const { shared, roots } = asEpisodes(read)
     const t1 = performance.now()
-    const options = await choices(shared, roots, Date.now(), await shapeAnswers(), armRow, head)
+    const held: Held = { moving: new Set(), still: [] }
+    const options = await choices(shared, roots, Date.now(), await shapeAnswers(), armRow, head, held)
     const choicesMs = ms(t1)
     const cells = options.map((o) => o.cell)
     const t2 = performance.now()
@@ -221,9 +228,13 @@ export const chain = async (): Promise<void> => {
       posterior_reads: posteriorReads, draw_ms: ms(t3), cands: options.length, cells: new Set(cells).size,
     }))
     await recordSkipped(pool, skipped, sel)
+    // A root with no move at all still says what it holds back and why, once per reason (recordSkipped keeps to that): a
+    // request held by a gate or as a repeat is otherwise never written, so its producer, never shown why, is never offered
+    // again, and the root sits with no move. No selection: the tick's selection is another root's.
+    for (const h of held.still) await recordSkipped(h.pool, h.skipped, undefined, h.root)
     // No selection_ref on a stall row: the tick's selection is another root's move, and records reads a walk failure's
-    // selection_ref as that move having failed.
-    for (const row of stalls(shared, roots, options, Number(sel.seq))) await writeRow(row)
+    // selection_ref as that move having failed. A root with any move, a wait included, is not stalled.
+    for (const row of stalls(shared, roots, [...options, ...[...held.moving].map((root) => ({ root }))], Number(sel.seq))) await writeRow(row)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
     const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])

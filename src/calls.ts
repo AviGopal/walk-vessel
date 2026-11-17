@@ -391,7 +391,10 @@ const RUNNERS = new Map<string, Runner>([
 // one whose reason changed (it named a shape nothing served; now a call with no channel) writes the new reason, so the
 // latest skip row never says something no longer true.
 const why = (unserved: unknown): string => JSON.stringify([unserved].flat().map(String).sort())
-export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): Promise<void> => {
+// With no selection (a root that offered no move this tick, so none of the tick's selection is about it), the row names no
+// selection and cites the root and the held row, as a stall row does: records keeps it among that root's rows, and the
+// tick's selection, another root's move, is never read as having failed.
+export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row | undefined, root?: string): Promise<void> => {
   const latest = new Map<string, Row>()
   for (const r of pool.filter((x) => x.shape === FAILURE && x.kind === "skip").sort((a, b) => a.seq - b.seq)) {
     latest.set(String(r.template_ref ?? r.request_ref), r)
@@ -405,8 +408,9 @@ export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row): 
     // unbound: the template's placeholders this request cannot fill, which records counts against the template's
     // writer (once per request, template and placeholder), since the plan, not the run, is what failed.
     // against_refs: the rows the skip's reasons compared, named so a producer shown this skip can be shown them
-    await writeRow({ shape: FAILURE, kind: "skip", selection_ref: sel.id, unserved: t.unserved, ...which, ...(t.unbound ? { unbound: t.unbound } : {}),
-      ...(t.against_refs ? { against_refs: t.against_refs } : {}), input_refs: [sel.id, t.id] })
+    const about = sel !== undefined ? { selection_ref: sel.id, input_refs: [sel.id, t.id] } : { input_refs: [String(root), t.id] }
+    await writeRow({ shape: FAILURE, kind: "skip", unserved: t.unserved, ...which, ...(t.unbound ? { unbound: t.unbound } : {}),
+      ...(t.against_refs ? { against_refs: t.against_refs } : {}), ...about })
   }
 }
 
