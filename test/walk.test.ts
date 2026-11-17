@@ -735,7 +735,8 @@ describe("candidates", () => {
     // with no key, every byte counts, as before: the timings make it news (the loop the key ends)
     expect(await go([...base, ...diff(10, "T1", 812), asked, ...diff(40, "T1", 907)])).toBe(true)
     // the owner retired the key: compared whole again
-    const retired = own({ shape: "news_key", id: "nk2", of: "gitDiff", fields: [], retired: true }, 5)
+    // (the retiring row names the same fields: only its retired mark tells it from the key it replaces)
+    const retired = own({ ...key, id: "nk2", retired: true }, 5)
     expect(await go([...base, key, retired, ...diff(10, "T1", 812), asked, ...diff(40, "T1", 907)])).toBe(true)
     // a result holding none of the key's fields (a diff that names no tree yet) is compared whole: two different
     // diffs are not read as one because both lack every keyed field
