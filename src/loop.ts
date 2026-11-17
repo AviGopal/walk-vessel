@@ -4,7 +4,7 @@ import { type Seen, type Skipped, applicable } from "./applicable"
 import { type Cand, READ_AGAIN_MS, READ_WAIT_MS, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
-import { ARM, DESCRIBED, DUE, FAILURE, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, STALL, STALL_RULE, WAIT_FOR } from "./shapes"
+import { ARM, DESCRIBED, DUE, FAILURE, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]> }
@@ -173,8 +173,11 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
 // When the owner's stall_rule names after_rows N, a root that offers no move this tick (not even a wait: a root waiting
 // on a person offers its wait), whose newest row is N or more store rows behind this tick's selection, gets one failure
 // row of kind stall, naming the root, N and the seq it counted from. Records keeps that row among the root's rows (it
-// cites the root), so it is then the root's newest row, and its producers are shown it: while the root sits, it is said
-// again once every N rows, a heartbeat that stops when the root moves or closes. It blames no one and closes nothing: a
+// cites the root), and its producers are shown it once. It is said ONCE PER CHANGE: the count runs from the root's
+// newest row that is not one of the walk's own stall rows, and a root whose stall row is already newer than that row
+// is not said again. Restating a root nothing has changed in re-offers its producers the same rows, which make the
+// same refusal. A new row in the root (a person's, a deadline, a held reason, a call) is news to its producers by the
+// rules that offer news, and once it too sits N rows the root is said again. It blames no one and closes nothing: a
 // kind (the walk's own word, as a skip is), no status, never a grade or a lapse. Counted in store rows, the unit a
 // detector's quiet window is counted in, from seqs the walk already holds: no read is made. Derived from rows alone, so
 // it replays over any past window. With no stall_rule, nothing is written.
@@ -183,9 +186,11 @@ export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, 
   const n = Number(rule?.after_rows)
   if (rule === undefined || rule.retired === true || !Number.isInteger(n) || n < 1 || !Number.isFinite(at)) return []
   const moving = new Set(options.map((o) => o.root))
+  const said = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === STALL && r.selection_ref === undefined
   const out: Array<Record<string, unknown>> = []
   for (const { root, rows } of roots.filter(({ root }) => !moving.has(root.id))) {
-    const newest = Math.max(root.seq, ...rows.map((r) => r.seq))
+    const newest = Math.max(root.seq, ...rows.filter((r) => !said(r)).map((r) => r.seq))
+    if (rows.some((r) => said(r) && r.seq > newest)) continue
     if (at - newest >= n) out.push({ shape: FAILURE, kind: STALL, root: root.id, rows: n, since_seq: newest, input_refs: [root.id] })
   }
   return out
