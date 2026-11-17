@@ -459,6 +459,26 @@ describe("candidates", () => {
     expect((await applicable(newer)).some((c) => c.id === "produce/answer/ch1")).toBe(true) // a newer diff: asked again
   })
 
+  test("[MUST-FAIL] a root said to have sat with no move offers its producer again, once per stall row, if its schema reads failures", async () => {
+    const pool = (context: unknown[]) => [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "x", status: "open" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["gap"], context },
+      { shape: "answer", id: "v1", seq: 4, role: "described", r: 0, input_refs: ["g1"] },
+    ]
+    const stall = { shape: "failure", id: "st1", seq: 5, role: "walk", kind: "stall", root: "g1", selections: 60, since_seq: 4, input_refs: ["g1"] }
+    const offered = async (rows: any[]) => (await applicable(rows)).some((c) => c.id === "produce/answer/ch1")
+    expect(await offered(pool(["failure"]))).toBe(false) // it saw what it would see now
+    expect(await offered([...pool(["failure"]), stall])).toBe(true) // said to have sat: offered, and shown it
+    // once: a produce that saw the stall row is not offered again over it
+    expect(await offered([...pool(["failure"]), stall, { shape: "answer", id: "v2", seq: 6, role: "described", r: 0, input_refs: ["g1", "st1"] }])).toBe(false)
+    // a schema that reads no failures, or only those a where it does not meet names, is not offered over it
+    expect(await offered([...pool(["hop"]), stall])).toBe(false)
+    expect(await offered([...pool([{ shape: "failure", where: { refused: "schema" } }]), stall])).toBe(false)
+    // nor is any other failure the walk wrote on its own account
+    expect(await offered([...pool(["failure"]), { ...stall, kind: "skip" }])).toBe(false)
+  })
+
   test("[MUST-FAIL] an input named as {shape, …} is met by a row of its shape: the produce is offered", async () => {
     const pool = [
       { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "x", status: "open" },

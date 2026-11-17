@@ -5,7 +5,7 @@ import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists
 import { callProblem, shownValue } from "./inputs"
 import { VESSEL_ID } from "./config"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, WAIT_FOR,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
@@ -370,9 +370,16 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
         newest.set(k, r)
       }
     }
+    // A root the walk said sat with no move (its stall row, citing the root) is news, once, to a schema that reads such
+    // a row (an entry of its shape whose where it meets): the producer is offered again and shown that it sat, at the
+    // next choice (law 8). Once that produce has seen it, it is old; the next is said only after N more store rows.
+    const takes = (r: Row): boolean => entries.some((e) => shapeOf(e) === r.shape &&
+      Object.entries(((typeof e === "object" && e !== null ? (e as { where?: unknown }).where : undefined) ?? {}) as Record<string, unknown>)
+        .every(([k, v]) => JSON.stringify(r[k]) === JSON.stringify(v)))
+    const stalled = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === STALL && r.selection_ref === undefined && takes(r)
     return (r: Row | undefined): boolean =>
       r !== undefined && shapes.has(r.shape) && !older.has(r.id) && !repeats.has(r.id) &&
-      !(r.role === WALK && BOOKKEEPING.has(r.shape) && !brought(r) && !spoke(r) && !held(r))
+      !(r.role === WALK && BOOKKEEPING.has(r.shape) && !brought(r) && !spoke(r) && !held(r) && !stalled(r))
   }
   // A produce the producer refused as not fitting the schema is not held: it is offered again like any produce, with the
   // refusal in its context to read, and each refusal debits the cell that chose it (records blames a refusal on the
