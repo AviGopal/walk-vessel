@@ -124,3 +124,22 @@ describe("roots with no move at all say what they hold back, once per reason, na
     for (const r of st.written.filter((x) => x.shape === "failure" && x.kind === "stall")) expect("selection_ref" in r).toBe(false)
   })
 })
+
+describe("a root whose only move is a wait bounded by its first deadline, still ahead, beside a root with a move", () => {
+  const shared = [
+    { shape: "channel", id: "ch1", seq: 4, writer: "owner", role: "owner", calls: [] },
+    { shape: "shape_schema", id: "s1", seq: 5, writer: "owner", role: "owner", target: "answer", inputs: ["world_changed"] },
+    { shape: "stall_rule", id: "sr", seq: 6, writer: "owner", role: "owner", after_rows: 5 },
+  ]
+  // a person's row no schema takes, so nothing is produced for it; its producer's deadline, an hour ahead, is its wait
+  const waiting = { shape: "note", id: "n1", seq: 50, writer: "kid-person", role: "person", what: "x" }
+  const due = { shape: "due", id: "d1", seq: 51, writer: "described", role: "described", within_ms: 3_600_000, at: Date.now() + 3_600_000, input_refs: ["n1"] }
+  const none = { shape: "note", id: "z1", seq: 40, writer: "detector", role: "detector" }
+  const move = ask("w1", 60)
+  const st = tick(shared, [{ root: move, rows: [move] }, { root: waiting, rows: [waiting, due] }, { root: none, rows: [none] }], 1000)
+
+  test("[MUST-FAIL] the waiting root is not drawn and gets no stall row; the root with no move does", () => {
+    expect(st.written.find((r) => r.shape === "selection")?.root).toBe("w1")
+    expect(st.written.filter((r) => r.shape === "failure" && r.kind === "stall").map((r) => r.root)).toEqual(["z1"])
+  })
+})
