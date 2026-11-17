@@ -196,7 +196,21 @@ export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, 
   const said = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === STALL && r.selection_ref === undefined
   const out: Array<Record<string, unknown>> = []
   for (const { root, rows } of roots.filter(({ root }) => !moving.has(root.id))) {
-    const newest = Math.max(root.seq, ...rows.filter((r) => !said(r)).map((r) => r.seq))
+    // WHAT THE WALK'S OWN PRODUCERS SAY IN ANSWER TO BEING SAID IS NOT A CHANGE. A stall row is news to the root's
+    // producers once, so one is offered again; with nothing to do it declines, and counted as a change that decline
+    // restarted the count, and the root was said again every N rows. A row made under a produce selection newer than
+    // the root's newest stall row (the selection, its hops and facts, the row it produced) is that answer. What follows
+    // from it still is a change: a call it asked for runs under a call selection, and rows from outside the walk carry
+    // no selection of a produce. A tick writes its selection before its stall rows, so a produce answering a stall is
+    // always under a newer selection; one already in flight when the root was said is under an older one, and counts.
+    // A root never said has no answer to give: every row of it counts, as before.
+    const last = Math.max(-Infinity, ...rows.filter(said).map((r) => r.seq))
+    const sels = new Map(rows.filter((r) => r.shape === SELECTION).map((r) => [r.id, r]))
+    const answer = (r: Row): boolean => {
+      const s = r.shape === SELECTION ? r : sels.get(String(r.selection_ref))
+      return Number.isFinite(last) && s !== undefined && s.seq > last && String(s.a).startsWith(`${PRODUCE}/`)
+    }
+    const newest = Math.max(root.seq, ...rows.filter((r) => !said(r) && !answer(r)).map((r) => r.seq))
     if (rows.some((r) => said(r) && r.seq > newest)) continue
     if (at - newest >= n) out.push({ shape: FAILURE, kind: STALL, root: root.id, rows: n, since_seq: newest, input_refs: [root.id] })
   }
