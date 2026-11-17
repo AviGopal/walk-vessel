@@ -2117,6 +2117,40 @@ describe("choosing among open requests", () => {
     expect(produce("wb")).toHaveLength(1)
   })
 
+  test("[GUARD] the walk hands a deadline's producer its own root's rows (answer, grade, acts), never another root's", async () => {
+    // The owner's due schema shows the request's answer, outcome and request_acts as context (the due producer set a
+    // two-minute deadline on a request already answered and graded, seeing neither): those rows come from the root's own
+    // pool, so a second root's answer and grade never reach the first root's deadline.
+    const { choices } = await import("../src/loop")
+    const now = Date.parse("2026-01-01T12:00:00Z")
+    const shared = [
+      { shape: "channel", id: "ch1", seq: 1, role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s2", seq: 2, role: "owner", target: "due", inputs: ["world_changed"],
+        context: ["answer", "outcome", { shape: "request_acts", latest_by: "shape" }] },
+    ]
+    const ra = { shape: "world_changed", id: "wa", seq: 3, role: "person", t: "2026-01-01T11:59:00Z" }
+    const rb = { shape: "world_changed", id: "wb", seq: 4, role: "person", t: "2026-01-01T11:59:00Z" }
+    const own = [
+      { shape: "answer", id: "aa", seq: 5, role: "described", input_refs: ["wa"] },
+      { shape: "outcome", id: "oa", seq: 6, role: "described", r: 1, input_refs: ["wa", "aa"], evidence_refs: ["aa"] },
+      { shape: "request_acts", id: "ka", seq: 7, role: "walk", writer: "walk-test", input_refs: ["wa"] },
+    ]
+    const other = [
+      { shape: "answer", id: "ab", seq: 8, role: "described", input_refs: ["wb"] },
+      { shape: "outcome", id: "ob", seq: 9, role: "described", r: 1, input_refs: ["wb", "ab"], evidence_refs: ["ab"] },
+      { shape: "request_acts", id: "kb", seq: 10, role: "walk", writer: "walk-test", input_refs: ["wb"] },
+    ]
+    const got = await choices(shared as any, [
+      { root: ra as any, rows: [ra, ...own] as any },
+      { root: rb as any, rows: [rb, ...other] as any },
+    ], now)
+    const due = got.filter((o) => o.root === "wa" && o.cand.id === "produce/due/ch1")
+    expect(due).toHaveLength(1)
+    const pool = new Set(due[0].pool.map((r) => r.id))
+    expect(["aa", "oa", "ka"].every((id) => pool.has(id))).toBe(true)
+    expect(["wb", "ab", "ob", "kb"].filter((id) => pool.has(id))).toEqual([])
+  })
+
   test("[MUST-FAIL] one root's long first deadline does not park the walk while another root has a move", async () => {
     globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
     const { choices } = await import("../src/loop")
