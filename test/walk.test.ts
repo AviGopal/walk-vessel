@@ -1452,6 +1452,60 @@ describe("a records that answers a non-row while it restarts", () => {
   })
 })
 
+describe("a root with moves that was not drawn is not stalled (the chain hands the check every root's options)", () => {
+  let discovery: Fake
+  let vessel: ReturnType<typeof run>
+  const written: Array<Record<string, any>> = []
+
+  beforeAll(async () => {
+    // Two open asks, each with a move (an answer to produce), both far more than the rule's rows behind the tick.
+    const roots = [2, 3].map((seq) => ({ shape: "world_changed", id: `w${seq}`, seq, writer: "kid-person", role: "person", what: "x", t: new Date().toISOString() }))
+    // A third open root no schema takes and no call needs: no move at all, the control that the check runs
+    const idle = { shape: "gap", id: "g1", seq: 1, writer: "detector", role: "detector", gap_id: "x", status: "open" }
+    const shared = [
+      { shape: "channel", id: "ch1", seq: 4, writer: "owner", role: "owner", calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 5, writer: "owner", role: "owner", target: "answer", inputs: ["world_changed"] },
+      { shape: "stall_rule", id: "sr", seq: 6, writer: "owner", role: "owner", after_rows: 5 },
+    ]
+    discovery = fake((path, body) => {
+      if (path !== "/resolve") return Response.json(path === "/heartbeat" ? { nextHeartbeatMs: 600000 } : { ok: true })
+      const p = body.pointer
+      if (p.type === "record_wait_exact") return Response.json({ shape: "arm", id: "arm1", seq: 1, arm: "treated", as_of_seq: 99 })
+      if (p.type === "record_read" && p.roots === "all") return Response.json({ shared, roots: [...roots, idle].map((r) => ({ root: r, rows: [r] })) })
+      if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+      if (p.type === "shapeDescriptions") return Response.json({ shape_answers: {} })
+      if (p.type === "posterior") return Response.json({ at_seq: 6, posts: p.cells.map(() => ({ alpha: 2, beta: 1, from: "move" })) })
+      if (p.type === "record_write") {
+        written.push(p.row)
+        return Response.json({ ...p.row, id: `r${written.length}`, seq: p.row?.shape === "selection" ? 100 : 100 + written.length })
+      }
+      return new Promise<Response>(() => {})
+    })
+    const port = freePort()
+    vessel = run("src/index.ts", {
+      WALK_VESSEL_ID: "walk-test", WALK_PORT: String(port), DISCOVERY_URL: discovery.url,
+      WALK_ENDPOINT: `http://127.0.0.1:${port}`, METABOB_API_KEY: NODE_KEY,
+    })
+    await healthy(port)
+    // the drawn move's started hop is written after the tick's stall rows, so once it is here they are too
+    for (let i = 0; i < 600 && !written.some((r) => r.shape === "hop"); i++) await Bun.sleep(25)
+  }, 30_000)
+
+  afterAll(() => {
+    vessel?.kill()
+    discovery?.stop()
+  })
+
+  test("[MUST-FAIL] two roots with moves, one drawn, both past the rule's rows: no stall row for either; the root with none gets one", () => {
+    expect(written.filter((r) => r.shape === "selection")).toHaveLength(1)
+    expect(written.some((r) => r.shape === "hop")).toBe(true)
+    const stalled = written.filter((r) => r.shape === "failure" && r.kind === "stall")
+    expect(stalled.map((r) => r.root)).toEqual(["g1"])
+    expect(stalled[0]).toMatchObject({ input_refs: ["g1"], rows: 5 })
+    expect("selection_ref" in stalled[0]).toBe(false)
+  })
+})
+
 describe("a tick's request_acts carries what is gated on its root (deployment G3: the tick passing gated on)", () => {
   let discovery: Fake
   let vessel: ReturnType<typeof run>
