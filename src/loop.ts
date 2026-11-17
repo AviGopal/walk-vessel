@@ -169,6 +169,13 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
   }
 }
 
+// What the walk writes on its selection for other readers (the fold's replay of a draw, the page, a retrospective, any
+// reader by id) and never reads back from its episodes: every candidate of the draw, their posteriors, and the tick's
+// timing. They grow with the options a tick has and were most of each tick's episodes answer, so the walk names them on
+// that read and records leaves them out of the selections it wrote itself, marking each row (fields_omitted). The
+// stored row keeps them. A field read from an episode row must never be named here (test/omit.test.ts).
+export const UNREAD: Record<string, string[]> = { [SELECTION]: ["cands", "posts", "timing"] }
+
 // A ROOT WITH NO MOVE IS SAID (law 6: the class 82ac fell into, an open root offering nothing, silently, for hours).
 // When the owner's stall_rule names after_rows N, a root that offers no move this tick (not even a wait: a root waiting
 // on a person offers its wait), whose newest row is N or more store rows behind this tick's selection, gets one failure
@@ -209,7 +216,7 @@ export const chain = async (): Promise<void> => {
     let episodesReads = 0
     let posteriorReads = 0
     const t0 = performance.now()
-    const read = await readUntil(() => { episodesReads++; return loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all" }) }, isEpisodes, "episodes")
+    const read = await readUntil(() => { episodesReads++; return loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all", omit: UNREAD }) }, isEpisodes, "episodes")
     if (read === undefined) return
     const episodesMs = ms(t0)
     const { shared, roots } = asEpisodes(read)
