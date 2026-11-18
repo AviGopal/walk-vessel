@@ -195,9 +195,29 @@ describe("the same-gap reading holds only for a gap's own detector rows", () => 
     expect(ids(grade, "wB")).not.toContain("produce/outcome/ch1")
     expect(stalls([rule as any], [{ root: askB as any, rows: [askB, askA2, a] as any }], [], 60).length).toBe(1)
   })
+  test("[MUST-FAIL] two roots whose gap_id is null, or empty, are not one gap: a row made on the other is not this root's work", async () => {
+    for (const none of [null, ""]) {
+      const nB = { ...askB, gap_id: none }
+      const nA = { shape: "world_changed", id: "nA", seq: 12, t, role: "person", writer: "hsv", input_refs: ["wB"], gap_id: none }
+      const q = made("request", "qnA", 21, "nA", "snA", ["nA", "wB"], { pointer: { type: "git_diff", cwd: "/trees/a" } })
+      const a = made("answer", "anA", 50, "nA", "snA", ["nA", "wB"], { text: "done on A" })
+      const calls = await choices(shared as any, [{ root: nB as any, rows: [nB, nA, q] as any, awaits: true }], now)
+      expect([none, ids(calls, "wB").filter((id) => id.startsWith("call/"))]).toEqual([none, []])
+      const grade = await choices(shared as any, [{ root: nB as any, rows: [nB, nA, a] as any, awaits: true }], now)
+      expect([none, ids(grade, "wB").includes("produce/outcome/ch1")]).toEqual([none, false])
+      expect([none, stalls([rule as any], [{ root: nB as any, rows: [nB, nA, a] as any }], [], 60).length]).toEqual([none, 1])
+    }
+  })
   const gap = (id: string, seq: number, extra: Record<string, unknown> = {}) =>
     ({ shape: "gap", id, seq, t, role: "detector", writer: "pull-sync", gap_id: "failing-test-x", status: "open", repo: "super", input_refs: [], ...extra })
   const g3 = gap("g3", 45)
+  test("[GUARD] a gap whose gap_id is a number is one gap as a string id is: work under its earlier row stays its work", async () => {
+    const n2 = gap("gn2", 25, { gap_id: 7 }), n3 = gap("gn3", 45, { gap_id: 7 })
+    const sg = sel("sgn", 26, "gn2", "produce/request/gap/ch1")
+    const q = made("request", "qgn", 27, "gn2", "sgn", ["gn2"], { pointer: { type: "git_diff", cwd: "/trees/super" } })
+    const got = await choices(shared as any, [{ root: n3 as any, rows: [n2, sg, q, n3] as any, awaits: true }], now)
+    expect(ids(got, "gn3")).toContain("call/git_diff")
+  })
   test("[MUST-FAIL] on a gap, a row naming a row of ANOTHER SHAPE that carries the same gap_id is not this gap's work", async () => {
     const x = { shape: "failure", id: "fx", seq: 20, t, role: "detector", writer: "pull-sync", gap_id: "failing-test-x", input_refs: [] }
     const q = made("request", "qx", 27, "fx", "sx", ["fx", "g3"], { pointer: { type: "git_diff", cwd: "/trees/super" } })
