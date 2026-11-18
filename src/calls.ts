@@ -289,9 +289,19 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       // How a produce's model answer ended (stop_reason, output_tokens), as described-shape put them on the failure it built
       // itself: read from a non-200 envelope only, so a model's own text never sets them. Kept on the row, so a reader
       // tells an answer cut at the output limit from a complete one that was wrong.
-      const env = (sent.failure ?? {}) as { stop_reason?: unknown; output_tokens?: unknown; context_gap?: unknown; seq_resolved?: unknown }
+      const env = (sent.failure ?? {}) as { stop_reason?: unknown; output_tokens?: unknown; context_gap?: unknown; seq_resolved?: unknown; spend?: unknown }
       const ending = { ...(str(env.stop_reason) !== undefined ? { stop_reason: env.stop_reason as string } : {}),
         ...(typeof env.output_tokens === "number" ? { output_tokens: env.output_tokens } : {}) }
+      // What a produce cost and who answered it (described's spend: model, fallback_from, prompt_bytes, output_tokens,
+      // stop_reason), lifted the same way and only for a produce, so the spend of a refused produce can be counted from the
+      // failure rows as a kept one's can from its row. Each field kept only with its type (a non-empty string, a
+      // number); with none kept, no spend.
+      const sp = (kind === PRODUCE && typeof env.spend === "object" && env.spend !== null ? env.spend : {}) as Record<string, unknown>
+      const num = (v: unknown): number | undefined => typeof v === "number" ? v : undefined
+      const spend = Object.fromEntries([
+        ["model", str(sp.model)], ["fallback_from", str(sp.fallback_from)], ["prompt_bytes", num(sp.prompt_bytes)],
+        ["output_tokens", num(sp.output_tokens)], ["stop_reason", str(sp.stop_reason)],
+      ].filter(([, v]) => v !== undefined))
       // A refusal for citing only values the producer was shown (described's context_gap: each value and the shown row it
       // was seen in), lifted the same way: from described's own non-200 envelope, never a model's 200, and only for a
       // produce: a tool's answer (a call, or a template's call in a run) must not be able to escape its own debit by saying
@@ -317,6 +327,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
         ...ending,
         ...(gap.length > 0 ? { context_gap: gap } : {}),
         ...(resolved.length > 0 ? { seq_resolved: resolved } : {}),
+        ...(Object.keys(spend).length > 0 ? { spend } : {}),
       })
       // A clone the tool moved before it failed was moved all the same: the move is recorded, as on success, or the
       // clone's rows would name a base it is no longer on.
