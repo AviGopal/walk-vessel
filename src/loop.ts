@@ -35,11 +35,14 @@ export type Held = { moving: Set<string>; still: Array<{ root: string; pool: Row
 // one, or, on a gap, names a row of the same gap (a detector writing the gap again moves its root, and the work done
 // under the earlier row is the same gap's). Read from the row's own field, never from whether it is among the root's
 // rows: a person's follow-up that cites this root is among them, names no root, and is worked here as before.
+// A gap is one gap only by a real id: an absent, null or empty gap_id names no gap, so two roots carrying one are never
+// the same gap however alike their shape and role.
+const isGapId = (v: unknown): boolean => v !== undefined && v !== null && v !== ""
 export const worksOn = (root: Row, rows: Row[]): ((r: Row) => boolean) => {
   const byId = new Map(rows.map((r) => [r.id, r]))
   const sameGap = (id: string): boolean => {
     const x = byId.get(id)
-    return root.gap_id !== undefined && x !== undefined && x.shape === root.shape && x.role === root.role &&
+    return isGapId(root.gap_id) && x !== undefined && x.shape === root.shape && x.role === root.role &&
       JSON.stringify(x.gap_id) === JSON.stringify(root.gap_id)
   }
   return (r: Row): boolean => r.root === undefined || r.root === root.id || sameGap(String(r.root))
