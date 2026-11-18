@@ -218,6 +218,17 @@ describe("the same-gap reading holds only for a gap's own detector rows", () => 
     const got = await choices(shared as any, [{ root: n3 as any, rows: [n2, sg, q, n3] as any, awaits: true }], now)
     expect(ids(got, "gn3")).toContain("call/git_diff")
   })
+  // gap_ids are compared by value and type: two distinct object ids are two gaps, and 7 and "7" are two gaps, since one
+  // writer's id never changes type and a coerced match would join another writer's gap
+  test("[GUARD] two gaps whose gap_ids are distinct non-strings, or 7 and \"7\", are not one gap", async () => {
+    for (const [a, b] of [[{ a: 1 }, { b: 2 }], [[1], "1"], [7, "7"]] as unknown[][]) {
+      const o2 = gap("go2", 25, { gap_id: a }), o3 = gap("go3", 45, { gap_id: b })
+      const sg = sel("sgo", 26, "go2", "produce/request/gap/ch1")
+      const q = made("request", "qgo", 27, "go2", "sgo", ["go2"], { pointer: { type: "git_diff", cwd: "/trees/super" } })
+      const got = await choices(shared as any, [{ root: o3 as any, rows: [o2, sg, q, o3] as any, awaits: true }], now)
+      expect([JSON.stringify([a, b]), ids(got, "go3").filter((id) => id.startsWith("call/"))]).toEqual([JSON.stringify([a, b]), []])
+    }
+  })
   test("[MUST-FAIL] on a gap, a row naming a row of ANOTHER SHAPE that carries the same gap_id is not this gap's work", async () => {
     const x = { shape: "failure", id: "fx", seq: 20, t, role: "detector", writer: "pull-sync", gap_id: "failing-test-x", input_refs: [] }
     const q = made("request", "qx", 27, "fx", "sx", ["fx", "g3"], { pointer: { type: "git_diff", cwd: "/trees/super" } })
