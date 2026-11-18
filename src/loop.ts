@@ -27,16 +27,39 @@ const ageBucket = (root: Row, now: number): number => {
 // waiting on a person has one, though the wait is offered only when no root has another move), and, for each root with
 // none at all, what it held back and why (its skipped requests and templates), so the tick can say so.
 export type Held = { moving: Set<string>; still: Array<{ root: string; pool: Row[]; skipped: Skipped[] }> }
+
+// A ROW MADE ON ANOTHER ROOT IS SHOWN, NEVER WORKED. A root's rows may hold a row whose `root` (the request it was made
+// for, as its producer or the walk wrote it) names another root. Its producers are shown it, but it is never this root's
+// work: not a call to make here, not this root's decline, not an answer this root's grade may judge, not an input a
+// template binds here, not news that restarts its stall count. A row is the root's work when it names no root, names this
+// one, or, on a gap, names a row of the same gap (a detector writing the gap again moves its root, and the work done
+// under the earlier row is the same gap's). Read from the row's own field, never from whether it is among the root's
+// rows: a person's follow-up that cites this root is among them, names no root, and is worked here as before.
+export const worksOn = (root: Row, rows: Row[]): ((r: Row) => boolean) => {
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  const sameGap = (id: string): boolean => {
+    const x = byId.get(id)
+    return root.gap_id !== undefined && x !== undefined && x.shape === root.shape && x.role === root.role &&
+      JSON.stringify(x.gap_id) === JSON.stringify(root.gap_id)
+  }
+  return (r: Row): boolean => r.root === undefined || r.root === root.id || sameGap(String(r.root))
+}
+
 export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row, head?: number, held?: Held): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
   let overdue = false
+  const everyRoot = new Set(shared.map((r) => r.id))
   for (const { root, rows, awaits } of roots) {
     const ids = new Set(rows.map((r) => r.id))
+    // The pool is what the root's producers are handed; its moves are worked out over the part that is its work. What
+    // every root shares (the owner's configuration, earned templates) is about no one root, so it stays in both.
     const pool = [...shared.filter((r) => !ids.has(r.id)), ...rows].sort((x, y) => x.seq - y.seq)
+    const mine = worksOn(root, rows)
+    const work = pool.filter((r) => everyRoot.has(r.id) || mine(r))
     const skipped: Skipped[] = []
     const seen: Seen = { awaits, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)), root: root.id, head }
-    const cands = await applicable(pool, skipped, now, seen, answers)
+    const cands = await applicable(work, skipped, now, seen, answers)
     if (cands.length > 0) held?.moving.add(root.id)
     else if (skipped.length > 0) held?.still.push({ root: root.id, pool, skipped })
     overdue = overdue || seen.overdue === true
@@ -44,7 +67,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     // A move's cell is the move in what it reads: the shapes of rows the walk did not write itself that the move consumes
     // (cand.reads), then the root's asker and age. Keyed on every shape in the pool, as it was, any new shape anywhere (an
     // owner's new row kind, a grade nothing here reads) made every cell of every root new and its learning start over.
-    const present = new Set(pool.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))
+    const present = new Set(work.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))
     const tail = [`asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
     for (const cand of cands) {
       const context = [...[...new Set(cand.reads ?? [])].filter((s) => present.has(s)).sort(), ...tail]
@@ -68,7 +91,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
   // a root's id, its selection (and any failure ending it) was read back as that root's row, and its cell learned as if
   // waiting were that root's move. With no arm to name it by, there is no idle move.
   if (arm === undefined) return []
-  const ahead = roots.flatMap(({ rows }) => rows).filter((r) => r.shape === DUE && r.role === DESCRIBED && typeof r.at === "number" && r.at > now)
+  const ahead = roots.flatMap(({ root, rows }) => rows.filter(worksOn(root, rows))).filter((r) => r.shape === DUE && r.role === DESCRIBED && typeof r.at === "number" && r.at > now)
     .map((r) => Number(r.at))
   const pool = [...shared, arm].sort((x, y) => x.seq - y.seq)
   const cand: Cand = { pointer: { shapes: [], ...(ahead.length > 0 ? { until: Math.min(...ahead) } : {}) }, calls: [], t: "", id: WAIT_FOR, kind: WAIT_FOR }
@@ -195,7 +218,9 @@ export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, 
   const moving = new Set(options.map((o) => o.root))
   const said = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === STALL && r.selection_ref === undefined
   const out: Array<Record<string, unknown>> = []
-  for (const { root, rows } of roots.filter(({ root }) => !moving.has(root.id))) {
+  for (const { root, rows: all } of roots.filter(({ root }) => !moving.has(root.id))) {
+    // Only the root's work counts: a row made on another root is shown to its producers, never news here (worksOn).
+    const rows = all.filter(worksOn(root, all))
     // WHAT THE WALK'S OWN PRODUCERS SAY IN ANSWER TO BEING SAID IS NOT A CHANGE. A stall row is news to the root's
     // producers once, so one is offered again; with nothing to do it declines, and counted as a change that decline
     // restarted the count, and the root was said again every N rows. A row made under a produce selection newer than
