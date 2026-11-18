@@ -180,3 +180,34 @@ describe("the walk's idle wait is bounded by the roots' own deadlines", () => {
     expect(got.map((o) => [o.root, o.cand.kind, o.cand.pointer.until])).toEqual([["arm1", "wait-for", undefined]])
   })
 })
+
+describe("the same-gap reading holds only for a gap's own detector rows", () => {
+  const rule = { shape: "stall_rule", id: "sr", seq: 1, role: "owner", after_rows: 20 }
+  test("[MUST-FAIL] two asks that are not gaps: a row made on the other ask, joined here, is not this ask's work", async () => {
+    // A's ask is a follow-up citing B's (joined into B's rows under the person rule, no root of its own); the work done on
+    // A names A. Neither ask has a gap_id, so they are never one gap.
+    const askA2 = { shape: "world_changed", id: "wA2", seq: 12, t, role: "person", writer: "hsv", input_refs: ["wB"] }
+    const q = made("request", "qA2", 21, "wA2", "sA2", ["wA2", "wB"], { pointer: { type: "git_diff", cwd: "/trees/a" } })
+    const a = made("answer", "aA2", 50, "wA2", "sA2", ["wA2", "wB"], { text: "done on A" })
+    const calls = await choices(shared as any, [{ root: askB as any, rows: [askB, askA2, q] as any, awaits: true }], now)
+    expect(ids(calls, "wB").filter((id) => id.startsWith("call/"))).toEqual([])
+    const grade = await choices(shared as any, [{ root: askB as any, rows: [askB, askA2, a] as any, awaits: true }], now)
+    expect(ids(grade, "wB")).not.toContain("produce/outcome/ch1")
+    expect(stalls([rule as any], [{ root: askB as any, rows: [askB, askA2, a] as any }], [], 60).length).toBe(1)
+  })
+  const gap = (id: string, seq: number, extra: Record<string, unknown> = {}) =>
+    ({ shape: "gap", id, seq, t, role: "detector", writer: "pull-sync", gap_id: "failing-test-x", status: "open", repo: "super", input_refs: [], ...extra })
+  const g3 = gap("g3", 45)
+  test("[MUST-FAIL] on a gap, a row naming a row of ANOTHER SHAPE that carries the same gap_id is not this gap's work", async () => {
+    const x = { shape: "failure", id: "fx", seq: 20, t, role: "detector", writer: "pull-sync", gap_id: "failing-test-x", input_refs: [] }
+    const q = made("request", "qx", 27, "fx", "sx", ["fx", "g3"], { pointer: { type: "git_diff", cwd: "/trees/super" } })
+    const got = await choices(shared as any, [{ root: g3 as any, rows: [x, q, g3] as any, awaits: true }], now)
+    expect(ids(got, "g3").filter((id) => id.startsWith("call/"))).toEqual([])
+  })
+  test("[MUST-FAIL] on a gap, a row naming a gap row of ANOTHER ROLE that carries the same gap_id is not this gap's work", async () => {
+    const x = gap("gx", 20, { role: "owner", writer: "owner" })
+    const q = made("request", "qx", 27, "gx", "sx", ["gx", "g3"], { pointer: { type: "git_diff", cwd: "/trees/super" } })
+    const got = await choices(shared as any, [{ root: g3 as any, rows: [x, q, g3] as any, awaits: true }], now)
+    expect(ids(got, "g3").filter((id) => id.startsWith("call/"))).toEqual([])
+  })
+})
