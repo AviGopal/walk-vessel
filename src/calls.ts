@@ -289,9 +289,16 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       // How a produce's model answer ended (stop_reason, output_tokens), as described-shape put them on the failure it built
       // itself: read from a non-200 envelope only, so a model's own text never sets them. Kept on the row, so a reader
       // tells an answer cut at the output limit from a complete one that was wrong.
-      const env = (sent.failure ?? {}) as { stop_reason?: unknown; output_tokens?: unknown }
+      const env = (sent.failure ?? {}) as { stop_reason?: unknown; output_tokens?: unknown; context_gap?: unknown }
       const ending = { ...(str(env.stop_reason) !== undefined ? { stop_reason: env.stop_reason as string } : {}),
         ...(typeof env.output_tokens === "number" ? { output_tokens: env.output_tokens } : {}) }
+      // A refusal for citing only values the producer was shown (described's context_gap: each value and the shown row it
+      // was seen in), lifted the same way: from described's own non-200 envelope, never a model's 200, and only for a
+      // produce: a tool's answer (a call, or a template's call in a run) must not be able to escape its own debit by saying
+      // it. records charges no one for such a refusal. Each entry kept only as a value and a row id, both strings, at most 20.
+      const gap = (kind === PRODUCE && Array.isArray(env.context_gap) ? env.context_gap : [])
+        .flatMap((g) => { const x = (g ?? {}) as { value?: unknown; seen_in?: unknown }; return str(x.value) !== undefined && str(x.seen_in) !== undefined ? [{ value: x.value as string, seen_in: x.seen_in as string }] : [] })
+        .slice(0, 20)
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
         body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
@@ -299,6 +306,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
         ...(waits ? { waits_for: "person" } : {}),
         ...(unserved !== undefined ? { unserved } : {}),
         ...ending,
+        ...(gap.length > 0 ? { context_gap: gap } : {}),
       })
       // A clone the tool moved before it failed was moved all the same: the move is recorded, as on success, or the
       // clone's rows would name a base it is no longer on.
