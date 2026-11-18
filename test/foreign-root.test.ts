@@ -150,7 +150,7 @@ describe("what stays this root's work", () => {
   const gap = (id: string, seq: number, extra: Record<string, unknown> = {}) =>
     ({ shape: "gap", id, seq, t, role: "detector", writer: "pull-sync", gap_id: "failing-test-x", status: "open", repo: "super", input_refs: [], ...extra })
   const g1 = gap("g1", 10), g2 = gap("g2", 25), g3 = gap("g3", 45)
-  test("[MUST-FAIL] on a gap, a request made under an earlier row of the same gap is still called", async () => {
+  test("[GUARD] on a gap, a request made under an earlier row of the same gap is still called", async () => {
     const s = sel("sg", 26, "g2", "produce/request/gap/ch1")
     const q = made("request", "qg", 27, "g2", "sg", ["g2"], { pointer: { type: "git_diff", cwd: "/trees/super" } })
     const got = await choices(shared as any, [{ root: g3 as any, rows: [g1, g2, s, q, g3] as any, awaits: true }], now)
@@ -163,7 +163,7 @@ describe("what stays this root's work", () => {
     const got = await choices(shared as any, [{ root: g3 as any, rows: [g1, g2, other, s, q, g3] as any, awaits: true }], now)
     expect(ids(got, "g3").filter((id) => id.startsWith("call/"))).toEqual([])
   })
-  test("[MUST-FAIL] on a gap, an answer made under an earlier row of the same gap holds its stall count", () => {
+  test("[GUARD] on a gap, an answer made under an earlier row of the same gap holds its stall count", () => {
     const rule = { shape: "stall_rule", id: "sr", seq: 1, role: "owner", after_rows: 20 }
     const a = made("answer", "ag", 50, "g2", "sg", ["g2"])
     expect(stalls([rule as any], [{ root: g3 as any, rows: [g1, g2, g3, a] as any }], [], 65)).toEqual([])
