@@ -34,6 +34,9 @@ export const RHYTHM = "rhythm"
 // The owner's word on what makes a result news: for a shape, the fields whose values identify it (a diff's tree and its
 // checks), so a result that differs only elsewhere (a test's timings) is not news. With none, all of it is compared.
 export const NEWS_KEY = "news_key"
+// The owner's word on which clone a root binds when it holds clones of more than one repo and a template names none: the
+// repo field of the root's own newest row of the shapes it lists, in order (an ask's change_wanted.repo).
+export const CLONE_BINDING = "clone_binding"
 // The owner's word on when a root that has no move is said to be stalled: after how many store rows since its newest.
 export const STALL_RULE = "stall_rule"
 // The walk's word (a failure's kind) for a root that sat with no move for the stall_rule's count: its own, as skip is.

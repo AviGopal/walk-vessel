@@ -5,7 +5,7 @@ import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists
 import { callProblem, shownValue } from "./inputs"
 import { VESSEL_ID } from "./config"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, DUE, FAILURE, HOP, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, CLONE_BINDING, DUE, FAILURE, HOP, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
@@ -613,7 +613,32 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // placeholders are filled from the request's own rows (bind.ts). One that cannot be filled here is not run, and the
   // skip says which placeholder and which field is missing, so its writer can see it. A placeholder naming an earlier
   // call's answer (calls.j) can only be filled during the run.
-  const inputs = templates.map((r) => note.root === undefined ? [] : inputsOf(pool, continued(continuesBy), (r.sig as { in: string[] }).in, VESSEL_ID, repoOf(r.calls as Inner[])))
+  // WHICH CLONE A ROOT HOLDING SEVERAL BINDS. The owner's clone_binding {of, by: [{shape, field}]}, the newest row for
+  // each `of` (a retired one names none for its `of`; one for another shape leaves it in force, as the seeder keys it):
+  // a template naming no repo takes the clone of `of` whose repo is the root's own statement of
+  // where the change belongs: its newest row of the first listed shape it has one of (an ask's change_wanted), by that
+  // row's field. The root's own: the root row itself or a row citing it or a root it continues; a statement on another
+  // root never steers this one. That newest row is the root's word whatever became of it since (graded, lapsed); when it
+  // names no repo (no change wanted), nothing binds, and an older statement is not taken in its place. A literal repo in
+  // the template wins. With no owner row, nothing binds where the template names none.
+  const bindings = new Map<string, Row>()
+  for (const r of pool.filter((x) => x.shape === CLONE_BINDING && x.role === OWNER && typeof x.of === "string").sort((a, b) => a.seq - b.seq)) bindings.set(String(r.of), r)
+  const targetOf = (binding: Row): { of: string; repo?: string; by: string } | undefined => {
+    if (binding.retired === true || note.root === undefined) return undefined
+    const own = continued(continuesBy)
+    for (const e of [binding.by ?? []].flat() as Array<{ shape?: unknown; field?: unknown } | null>) {
+      if (typeof e?.shape !== "string" || typeof e.field !== "string") continue
+      const field = e.field
+      const said = pool.filter((r) => r.shape === e.shape && (own.includes(r.id) || cites(r, own)))
+        .sort((a, b) => a.seq - b.seq).at(-1)
+      if (said !== undefined) return { of: String(binding.of), by: `${e.shape}.${field}`, ...(typeof said[field] === "string" ? { repo: String(said[field]) } : {}) }
+    }
+    return undefined
+  }
+  const targets = new Map([...bindings].map(([of, b]) => [of, targetOf(b)] as const).filter((e): e is readonly [string, { of: string; repo?: string; by: string }] => e[1] !== undefined))
+  const fallback = Object.fromEntries([...targets].filter(([, t]) => t.repo !== undefined).map(([of, t]) => [of, String(t.repo)]))
+  const inputs = templates.map((r) => note.root === undefined ? [] : inputsOf(pool, continued(continuesBy), (r.sig as { in: string[] }).in, VESSEL_ID, repoOf(r.calls as Inner[]),
+    fallback))
   const unbound = templates.map((r, i) => {
     const scope: Scope = { sig: { in: inputs[i] }, calls: [] }
     return [...new Set((r.calls as Inner[]).flatMap((c) => placeholders(c.pointer)))]
@@ -625,6 +650,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       const shape = (r.sig as { in: string[] }).in[Number(/^sig\.in\[(\d+)\]/.exec(p)?.[1] ?? -1)]
       const repos = new Set(pool.filter((x) => x.shape === shape && x.writer === VESSEL_ID && typeof x.call_id === "string"
         && [x.input_refs].flat().map(String).includes(String(note.root))).map((x) => x.repo).filter((x) => typeof x === "string"))
+      const target = targets.get(shape)
+      if (repos.size > 1 && target !== undefined) {
+        return target.repo === undefined
+          ? `more than one ${shape} (${[...repos].sort().join(", ")}); the template names no repo, and this request's newest ${target.by} names none`
+          : `more than one ${shape} (${[...repos].sort().join(", ")}); the template names no repo, and this request's ${target.by} names ${target.repo}, of which it holds no ${shape}`
+      }
       return repos.size > 1 ? `more than one ${shape} (${[...repos].sort().join(", ")}), and the template names no repo` : "this request has no such field"
     }
     const why = [...unserved[i], ...unbound[i].map((p) => `unbound {{ ${p} }}: ${which(p)}`)]

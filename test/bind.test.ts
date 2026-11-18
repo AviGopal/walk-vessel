@@ -94,6 +94,101 @@ describe("a template with placeholders", () => {
     expect(skipped.find((x) => x.id === "t-d")?.unserved).toEqual(["unbound {{ sig.in[0].cwd }}: more than one gitWorktree (human-surface-vessel, super), and the template names no repo"])
   })
 
+  describe("the owner's clone_binding: a template naming no repo binds the clone of the repo the root itself names", () => {
+    const two = [{ ...clone("g1", 4, "w1", "/trees/hsv"), repo: "human-surface-vessel" }, { ...clone("g2", 5, "w1", "/trees/super"), repo: "super" }]
+    const binding = (x: Record<string, unknown> = {}) => ({ shape: "clone_binding", id: "cb", seq: 3, role: "owner", of: "gitWorktree", by: [{ shape: "change_wanted", field: "repo" }], ...x })
+    // the root's own judgment of where the change belongs, as described answers the change_wanted schema
+    const wanted = (id: string, seq: number, repo: unknown, root = "w1") => ({ shape: "change_wanted", id, seq, role: "described", wanted: true, repo, input_refs: [root] })
+    const run = async (pool: any[], tmpl: any = t) => {
+      const skipped: any[] = []
+      const c = (await applicable([ask, tmpl, ...pool], skipped, Date.now(), { root: "w1" })).find((x) => x.id === `run/${tmpl.id}`)
+      return { bound: c?.inputs?.map((r: any) => r?.id), skip: skipped.find((x) => x.id === tmpl.id)?.unserved }
+    }
+    test("[MUST-FAIL] the root's change_wanted names super: the super clone is bound", async () => {
+      expect((await run([binding(), ...two, wanted("cw1", 6, "super")])).bound).toEqual(["g2"])
+    })
+    test("[MUST-FAIL] the root's NEWEST change_wanted decides, graded or not (an r 0 outcome on it does not unsay it)", async () => {
+      const pool = [binding(), ...two, wanted("cw1", 6, "super"), wanted("cw2", 7, "human-surface-vessel"),
+        { shape: "outcome", id: "o1", seq: 8, role: "described", r: 0, input_refs: ["w1", "cw2"] }]
+      expect((await run(pool)).bound).toEqual(["g1"])
+    })
+    test("[MUST-FAIL] a change_wanted naming a repo the root holds no clone of: not run, and the skip names it", async () => {
+      const r = await run([binding(), ...two, wanted("cw1", 6, "records-vessel")])
+      expect(r.bound).toBeUndefined()
+      expect(r.skip).toEqual(["unbound {{ sig.in[0].cwd }}: more than one gitWorktree (human-surface-vessel, super); the template names no repo, and this request's change_wanted.repo names records-vessel, of which it holds no gitWorktree"])
+    })
+    test("[MUST-FAIL] the root row itself may be the statement: a gap root binds the clone of its gap's repo", async () => {
+      const gap = { shape: "gap", id: "w1", seq: 1, role: "detector", gap_id: "G1", status: "open", repo: "super" }
+      const skipped: any[] = []
+      const c = (await applicable([gap, t, binding({ by: [{ shape: "change_wanted", field: "repo" }, { shape: "gap", field: "repo" }] }), ...two], skipped, Date.now(), { root: "w1" })).find((x) => x.id === "run/t-d")
+      expect(c?.inputs?.map((r: any) => r?.id)).toEqual(["g2"])
+    })
+    test("a literal repo in the template still wins over the root's statement (a guard)", async () => {
+      const named = { ...t, id: "t-n", calls: [{ shape: "git_diff", pointer: { cwd: "{{ sig.in[0].cwd }}", repo: "human-surface-vessel" } }] }
+      expect((await run([binding(), ...two, wanted("cw1", 6, "super")], named)).bound).toEqual(["g1"])
+    })
+    test("no owner row, a retired one, or one for another shape: nothing binds where the template names none, as before (guards)", async () => {
+      const today = ["unbound {{ sig.in[0].cwd }}: more than one gitWorktree (human-surface-vessel, super), and the template names no repo"]
+      for (const pool of [[...two, wanted("cw1", 6, "super")], [binding({ retired: true }), ...two, wanted("cw1", 6, "super")], [binding({ of: "gitCommitResult" }), ...two, wanted("cw1", 6, "super")]]) {
+        const r = await run(pool)
+        expect([r.bound, r.skip]).toEqual([undefined, today])
+      }
+    })
+    test("[GUARD] only the owner's word binds: the same row written by described binds nothing", async () => {
+      expect((await run([{ ...binding(), role: "described" }, ...two, wanted("cw1", 6, "super")])).bound).toBeUndefined()
+    })
+    test("[GUARD] another root's change_wanted never steers this root's clone", async () => {
+      const r = await run([binding(), ...two, wanted("cw9", 8, "super", "w2")])
+      expect(r.bound).toBeUndefined()
+    })
+    test("[MUST-FAIL] the newest change_wanted naming no repo (no change wanted, as 489005d3's last): nothing binds, no older one is taken, and the skip says so", async () => {
+      const r = await run([binding(), ...two, wanted("cw1", 6, "super"), { ...wanted("cw2", 7, null), wanted: false }])
+      expect(r.bound).toBeUndefined()
+      expect(r.skip).toEqual(["unbound {{ sig.in[0].cwd }}: more than one gitWorktree (human-surface-vessel, super); the template names no repo, and this request's newest change_wanted.repo names none"])
+    })
+    test("[MUST-FAIL] a by entry with no shape or field is passed over, and the next one decides", async () => {
+      const pool = [binding({ by: [null, { shape: "change_wanted" }, { field: "repo" }, { shape: "change_wanted", field: "repo" }] }), ...two, wanted("cw1", 6, "super")]
+      expect((await run(pool)).bound).toEqual(["g2"])
+    })
+    test("[MUST-FAIL] each shape's newest binding decides, as the seeder keys it: a newer one for another shape leaves this one in force", async () => {
+      expect((await run([binding(), { ...binding({ of: "gitCommitResult" }), id: "cb2", seq: 4 }, ...two, wanted("cw1", 6, "super")])).bound).toEqual(["g2"])
+    })
+    test("[GUARD] the newest binding for this shape decides: a newer retired one for gitWorktree binds nothing", async () => {
+      expect((await run([binding(), { ...binding({ retired: true }), id: "cb2", seq: 4 }, ...two, wanted("cw1", 6, "super")])).bound).toBeUndefined()
+    })
+    test("[MUST-FAIL] a newer owner row of another shape leaves the binding in force, even one naming the same `of` (a news_key for gitWorktree)", async () => {
+      for (const of of ["gitDiff", "gitWorktree"]) {
+        const key = { shape: "news_key", id: "nk", seq: 9, role: "owner", of, fields: ["tree"] }
+        expect([of, (await run([binding(), ...two, wanted("cw1", 6, "super"), key])).bound]).toEqual([of, ["g2"]])
+      }
+    })
+    test("[MUST-FAIL] the first listed shape the root has a row of decides, though a later one has a row too", async () => {
+      const gap = { shape: "gap", id: "w1", seq: 1, role: "detector", gap_id: "G1", status: "open", repo: "human-surface-vessel" }
+      const skipped: any[] = []
+      const pool = [gap, t, binding({ by: [{ shape: "change_wanted", field: "repo" }, { shape: "gap", field: "repo" }] }), ...two, wanted("cw1", 6, "super")]
+      const c = (await applicable(pool, skipped, Date.now(), { root: "w1" })).find((x) => x.id === "run/t-d")
+      expect(c?.inputs?.map((r: any) => r?.id)).toEqual(["g2"])
+    })
+    test("[MUST-FAIL] a repo that is not a string (a number) names no repo: nothing binds, and the skip says it names none", async () => {
+      const r = await run([binding(), ...two, wanted("cw1", 6, "super"), wanted("cw2", 7, 42)])
+      expect(r.bound).toBeUndefined()
+      expect(r.skip).toEqual(["unbound {{ sig.in[0].cwd }}: more than one gitWorktree (human-surface-vessel, super); the template names no repo, and this request's newest change_wanted.repo names none"])
+    })
+    test("[GUARD] a root holding no clone at all keeps today's skip, binding or not", async () => {
+      const r = await run([binding(), clone("g9", 3, "w2", "/other"), wanted("cw1", 6, "super")]) // another request's clone: the shape is there
+      expect(r.skip).toEqual(["unbound {{ sig.in[0].cwd }}: this request has no such field"])
+    })
+    test("[MUST-FAIL] a root continuing an earlier one (the owner's x-latest continues gap_id) reads the earlier root's statement", async () => {
+      const latest = { shape: "shape_schema", id: "sx", seq: 2, role: "owner", target: "x", inputs: [{ shape: "gitDiff", where: { tree: { "x-latest": { shapes: ["gitWorktree"], moves: ["gitWorktree"], same: "cwd", field: "tree", continues: "gap_id" } } } }] }
+      const old = { shape: "gap", id: "w0", seq: 1, role: "detector", gap_id: "G1", status: "open" }
+      const now = { shape: "gap", id: "w1", seq: 9, role: "detector", gap_id: "G1", status: "open" }
+      const clones = [{ ...clone("g1", 4, "w0", "/trees/hsv"), repo: "human-surface-vessel" }, { ...clone("g2", 5, "w0", "/trees/super"), repo: "super" }]
+      const skipped: any[] = []
+      const c = (await applicable([old, latest, binding(), ...clones, wanted("cw1", 6, "super", "w0"), now, t], skipped, Date.now(), { root: "w1" })).find((x) => x.id === "run/t-d")
+      expect(c?.inputs?.map((r: any) => r?.id)).toEqual(["g2"])
+    })
+  })
+
   test("[MUST-FAIL] a template whose edit carries a Go template is offered, with no skip", async () => {
     const go = { ...t, id: "t-go", sig: { in: ["world_changed"], out: ["fileEditResult"] },
       calls: [{ shape: "fs_read", pointer: { path: "a.go", note: "{{ .MaxFailingTestGaps }}" } }] }
