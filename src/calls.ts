@@ -289,7 +289,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       // How a produce's model answer ended (stop_reason, output_tokens), as described-shape put them on the failure it built
       // itself: read from a non-200 envelope only, so a model's own text never sets them. Kept on the row, so a reader
       // tells an answer cut at the output limit from a complete one that was wrong.
-      const env = (sent.failure ?? {}) as { stop_reason?: unknown; output_tokens?: unknown; context_gap?: unknown }
+      const env = (sent.failure ?? {}) as { stop_reason?: unknown; output_tokens?: unknown; context_gap?: unknown; seq_resolved?: unknown }
       const ending = { ...(str(env.stop_reason) !== undefined ? { stop_reason: env.stop_reason as string } : {}),
         ...(typeof env.output_tokens === "number" ? { output_tokens: env.output_tokens } : {}) }
       // A refusal for citing only values the producer was shown (described's context_gap: each value and the shown row it
@@ -299,6 +299,15 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       const gap = (kind === PRODUCE && Array.isArray(env.context_gap) ? env.context_gap : [])
         .flatMap((g) => { const x = (g ?? {}) as { value?: unknown; seen_in?: unknown }; return str(x.value) !== undefined && str(x.seen_in) !== undefined ? [{ value: x.value as string, seen_in: x.seen_in as string }] : [] })
         .slice(0, 20)
+      // The citations described resolved from a seq to a row's id before it refused (seq_resolved), lifted the same way and
+      // only for a produce, so a reader can count the refusals of answers that went through it. Each entry kept only as a
+      // place, a seq and an id, all strings, at most 20.
+      const resolved = (kind === PRODUCE && Array.isArray(env.seq_resolved) ? env.seq_resolved : [])
+        .flatMap((q) => {
+          const x = (q ?? {}) as { at?: unknown; seq?: unknown; id?: unknown }
+          return str(x.at) !== undefined && str(x.seq) !== undefined && str(x.id) !== undefined ? [{ at: x.at as string, seq: x.seq as string, id: x.id as string }] : []
+        })
+        .slice(0, 20)
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
         body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
@@ -307,6 +316,7 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
         ...(unserved !== undefined ? { unserved } : {}),
         ...ending,
         ...(gap.length > 0 ? { context_gap: gap } : {}),
+        ...(resolved.length > 0 ? { seq_resolved: resolved } : {}),
       })
       // A clone the tool moved before it failed was moved all the same: the move is recorded, as on success, or the
       // clone's rows would name a base it is no longer on.
