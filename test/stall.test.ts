@@ -170,6 +170,47 @@ describe("what the walk's own producers say in answer to a stall is not a change
   test("[GUARD] before the root is ever said, a produce's rows are changes like any other (the first stall counts from them)", () => {
     expect(run(produce(25, decline), 31, 29 + 2 * N).map((r) => [r.seq, r.since_seq])).toEqual([[29 + N, 29]])
   })
+  // A reason the walk held a request back for, on a root with no move (df65: request 82969 under produce 82967, then
+  // skip 82972 with request_ref 82969 and no selection), as calls.ts recordSkipped writes it.
+  const held = (seq: number, request: string, extra: Record<string, unknown> = {}) => ({ shape: "failure", id: `hk${seq}`, seq, role: "walk", kind: "skip", request_ref: request,
+    unserved: ["git_worktree (requires change_wanted …)"], input_refs: ["g1", request], ...extra })
+  const asks = { pointer: { type: "git_worktree", repo: "super" } }
+  test("[MUST-FAIL] said, then a request in answer the walk holds back (df65's rows): the held reason is part of the answer, never said again", () => {
+    const got = run([], 11, 10 + 4 * N, (seq, st) => (seq < 40 ? [...produce(seq, asks, [st]), held(seq + 6, `rq${seq}`)] : []))
+    expect(got.map((r) => r.seq)).toEqual([10 + N])
+  })
+  test("[GUARD] a request in answer, held, then called after all: its call is the change, and the root is said once more", () => {
+    const got = run([], 11, 10 + 5 * N, (seq, st) => (seq < 40 ? [...produce(seq, asks, [st]), held(seq + 6, `rq${seq}`), ...call(seq + 12)] : []))
+    // said at 30; the answer at 35-39 and its held reason at 41 are not changes; its call at 47-49 is: said at 49 + N, once
+    expect(got.map((r) => [r.seq, r.since_seq])).toEqual([[30, 10], [49 + N, 49]])
+  })
+  test("[GUARD] a reason held on a request made before the root was said is a change: said again N rows after it", () => {
+    const [sel, fact, started, made, ended] = produce(15, asks)
+    const got = run([sel, fact, started, made, ended], 20, 45 + 3 * N, undefined, 5, [[45, [held(45, String(made.id))]]])
+    expect(got.map((r) => [r.seq, r.since_seq])).toEqual([[19 + N, 19], [45 + N, 45]])
+  })
+  test("[GUARD] a person's row citing the request in answer is a change, though the request is not", () => {
+    const first = run([], 11, 10 + N)
+    const pool = [...first, ...produce(35, asks, [String(first[0].id)]), { shape: "note", id: "p1", seq: 45, role: "person", input_refs: ["g1", "rq35"] }]
+    expect(run(pool, 31, 45 + 3 * N).map((r) => [r.seq, r.since_seq])).toEqual([[45 + N, 45]])
+  })
+  test("[GUARD] one step only: a walk row naming the held reason (not a request under the produce) is a change", () => {
+    const first = run([], 11, 10 + N)
+    const pool = [...first, ...produce(35, asks, [String(first[0].id)]), held(41, "rq35"), held(45, "hk41", { unserved: ["another"] })]
+    expect(run(pool, 31, 45 + 3 * N).map((r) => [r.seq, r.since_seq])).toEqual([[45 + N, 45]])
+  })
+  test("[GUARD] a held reason naming a request the root does not hold, or another writer's skip on the answer, is a change", () => {
+    for (const extra of [{ request_ref: "nowhere" }, { role: "described" }]) {
+      const first = run([], 11, 10 + N)
+      const pool = [...first, ...produce(35, asks, [String(first[0].id)]), held(45, "rq35", extra)]
+      expect([extra, run(pool, 31, 45 + 3 * N).map((r) => r.since_seq)]).toEqual([extra, [45]])
+    }
+  })
+  test("[GUARD] a held reason under a selection (the drawn root's own) is judged by that selection, as before", () => {
+    const first = run([], 11, 10 + N)
+    const pool = [...first, ...produce(35, asks, [String(first[0].id)]), ...call(41), held(45, "rq35", { selection_ref: "cs41" })]
+    expect(run(pool, 31, 45 + 3 * N).map((r) => r.since_seq)).toEqual([45])
+  })
   test("a fresh root is still said the first time; a root no longer open (closed by an outcome) is not passed and is not said (guards)", () => {
     expect(run([], 11, 10 + N).map((r) => r.seq)).toEqual([10 + N])
     expect(stalls([rule], [], [], 10 + 3 * N)).toEqual([])

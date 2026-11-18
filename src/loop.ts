@@ -203,13 +203,20 @@ export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, 
     // from it still is a change: a call it asked for runs under a call selection, and rows from outside the walk carry
     // no selection of a produce. A tick writes its selection before its stall rows, so a produce answering a stall is
     // always under a newer selection; one already in flight when the root was said is under an older one, and counts.
+    // What the walk itself held back from that answer is the answer too (below).
     // A root never said has no answer to give: every row of it counts, as before.
     const last = Math.max(-Infinity, ...rows.filter(said).map((r) => r.seq))
     const sels = new Map(rows.filter((r) => r.shape === SELECTION).map((r) => [r.id, r]))
-    const answer = (r: Row): boolean => {
-      const s = r.shape === SELECTION ? r : sels.get(String(r.selection_ref))
+    const produced = (r: Row | undefined): boolean => {
+      const s = r === undefined ? undefined : r.shape === SELECTION ? r : sels.get(String(r.selection_ref))
       return Number.isFinite(last) && s !== undefined && s.seq > last && String(s.a).startsWith(`${PRODUCE}/`)
     }
+    // A reason the walk held back that answer for (its own row, under no selection: a root with no move is not drawn)
+    // names the request it holds back (request_ref): when that request is the answer, so is the held reason. One step
+    // only: the request named must itself be under that produce, so no chain of the walk's own rows hides a change.
+    const byId = new Map(rows.map((r) => [r.id, r]))
+    const answer = (r: Row): boolean => produced(r) ||
+      (r.role === WALK && r.selection_ref === undefined && typeof r.request_ref === "string" && produced(byId.get(r.request_ref)))
     const newest = Math.max(root.seq, ...rows.filter((r) => !said(r) && !answer(r)).map((r) => r.seq))
     if (rows.some((r) => said(r) && r.seq > newest)) continue
     if (at - newest >= n) out.push({ shape: FAILURE, kind: STALL, root: root.id, rows: n, since_seq: newest, input_refs: [root.id] })
