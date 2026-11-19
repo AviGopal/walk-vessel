@@ -71,14 +71,19 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // newest earlier root of its shape with the same `continues` field (a gap the held-gap release opened again keeps its
   // gap_id), and inherits that root's clone. Every shape and field is the owner's; with no x-latest value in any owner
   // row, nothing here is read and the walk behaves as before.
-  type Latest = { shapes: string[]; moves: string[]; same: string; field: string; continues?: string }
+  // WHICH ROWS FIND THE CLONE, APART FROM WHICH MOVE IT. An optional `at` names the shapes whose rows locate the request's
+  // clone; with none, the `moves` shapes do, as before. A shape in `at` but not in `moves` finds the clone without
+  // making its value unknown: a row that says where the clone is but not what it holds (a clone handed out before its
+  // answers named a tree) is passed over, and the newest row that holds the field still gives it.
+  type Latest = { shapes: string[]; moves: string[]; at?: string[]; same: string; field: string; continues?: string }
   const latestSpec = (v: unknown): Latest | undefined => {
     const s = typeof v === "object" && v !== null ? (v as { "x-latest"?: unknown })["x-latest"] : undefined
     if (typeof s !== "object" || s === null) return undefined
     const o = s as Record<string, unknown>
     const list = (x: unknown): string[] => Array.isArray(x) ? x.filter((y): y is string => typeof y === "string") : []
     if (typeof o.same !== "string" || typeof o.field !== "string" || list(o.shapes).length === 0) return undefined
-    return { shapes: list(o.shapes), moves: list(o.moves), same: o.same, field: o.field, ...(typeof o.continues === "string" ? { continues: o.continues } : {}) }
+    return { shapes: list(o.shapes), moves: list(o.moves), ...(Array.isArray(o.at) ? { at: list(o.at) } : {}), same: o.same, field: o.field,
+      ...(typeof o.continues === "string" ? { continues: o.continues } : {}) }
   }
   const byTool = (r: Row): boolean => r.role === WALK && typeof r.call_id === "string"
   const cites = (r: Row, ids: string[]): boolean => [r.input_refs].flat().map(String).some((x) => ids.includes(x))
@@ -94,7 +99,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const cloneOf = (spec: Latest): unknown => {
     for (const id of continued(spec.continues)) {
-      const own = pool.filter((r) => spec.moves.includes(r.shape) && byTool(r) && r[spec.same] !== undefined && cites(r, [id])).sort((a, b) => a.seq - b.seq).at(-1)
+      const own = pool.filter((r) => (spec.at ?? spec.moves).includes(r.shape) && byTool(r) && r[spec.same] !== undefined && cites(r, [id])).sort((a, b) => a.seq - b.seq).at(-1)
       if (own !== undefined) return own[spec.same]
     }
     return undefined
