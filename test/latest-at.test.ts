@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Which rows find the clone, apart from which move it (x-latest `at`). A diff is called only on a tree some commit
-// names: an edit newer than every commit leaves the clone's tree unknown, so the step named is a commit, not a diff.
-// A clone handed out before its answers named a tree still finds its clone and takes its newest commit's tree. Read
-// from real rows (82ac's pool: its clone was handed out with no tree).
+// names (committed_tree: a commit's tree, or a clean clone's): an edit newer than every commit leaves it unknown, so
+// the step named is a commit, not a diff. A clone handed out before its answers named one still finds its clone and
+// takes its newest commit's. Rows written before commits named committed_tree say only `tree`, which this spec does not
+// read: such a clone waits for a commit, or a handout of the clean clone, that names it. Read from real rows (82ac's
+// pool: its clone was handed out with no tree).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -11,16 +13,16 @@ type Row = Record<string, any>
 const fx = (name: string) => JSON.parse(readFileSync(join(import.meta.dir, "fixtures", name), "utf8").replaceAll('"writer-3"', '"walk-test"')) as { root: Row; rows: Row[]; owner?: Row[] }
 const EDITS = ["fileEditResult", "fileWriteResult", "codeInsertResult", "codeReplaceResult", "codeAddImportResult"]
 const CB = (at = true) => ({ "x-latest": { shapes: ["gitCommitResult", "gitWorktree", ...EDITS], moves: ["gitCommitResult", ...EDITS],
-  ...(at ? { at: ["gitWorktree"] } : {}), same: "cwd", field: "tree", continues: "gap_id" } })
+  ...(at ? { at: ["gitWorktree"] } : {}), same: "cwd", field: "committed_tree", continues: "gap_id" } })
 // the two owner rows the seed writes, alternatives in one group, newer than every row in the fixture; each counts the
 // newest row per clone (latest_by cwd), so another clone's newer row never hides this one's
 const committedRows = (at = true): Row[] => [
-  { shape: "requires", id: "cb-k", seq: 90011, role: "owner", for: "git_diff", needs: "gitCommitResult", where: { tree: CB(at) }, latest_by: "cwd", group: "committed" },
-  { shape: "requires", id: "cb-w", seq: 90012, role: "owner", for: "git_diff", needs: "gitWorktree", where: { tree: CB(at) }, latest_by: "cwd", group: "committed" },
+  { shape: "requires", id: "cb-k", seq: 90011, role: "owner", for: "git_diff", needs: "gitCommitResult", where: { committed_tree: CB(at) }, latest_by: "cwd", group: "committed" },
+  { shape: "requires", id: "cb-w", seq: 90012, role: "owner", for: "git_diff", needs: "gitWorktree", where: { committed_tree: CB(at) }, latest_by: "cwd", group: "committed" },
 ]
 
 describe("a diff waits for a commit of the clone's newest edit", () => {
-  const served = new Set(["git_diff", "git_commit"])
+  const served = new Set(["git_diff", "git_commit", "git_worktree"])
   const realFetch = globalThis.fetch
   let applicable: (pool: Row[], skipped?: Row[], now?: number, note?: Row, answers?: Record<string, string>) => Promise<Array<{ id: string }>>
   beforeAll(async () => {
@@ -41,12 +43,14 @@ describe("a diff waits for a commit of the clone's newest edit", () => {
   const ask = { shape: "request", id: "rq-diff", seq: 69300, role: "described", pointer: { type: "git_diff", cwd }, input_refs: [root] }
   const T = (n: number) => String(n).repeat(40)
   const tool = (shape: string, seq: number, fields: Row) => ({ shape, id: `${shape}-${seq}`, seq, role: "walk", call_id: `c${seq}`, input_refs: [root], ...fields })
-  const commit = (seq: number, tree?: string, at = cwd) => tool("gitCommitResult", seq, { cwd: at, ...(tree ? { tree, sha: `s${seq}` } : {}) })
+  const commit = (seq: number, tree?: string, at = cwd) => tool("gitCommitResult", seq, { cwd: at, ...(tree ? { tree, committed_tree: tree, sha: `s${seq}` } : {}) })
+  // a commit answered before commits named committed_tree: its tree only
+  const preCommit = (seq: number, tree: string) => tool("gitCommitResult", seq, { cwd, tree, sha: `s${seq}` })
   const edit = (seq: number, shape = "fileEditResult", fields: Row = { cwd, ok: true }) => tool(shape, seq, { path: `${cwd}/src/x.ts`, ...fields })
   const run = async (extra: Row[], owner: Row[] = committedRows(), base: Row[] = rows) => {
     const skipped: Row[] = []
     const cands = await applicable([f.root, ...base, ...(f.owner ?? []), ask, ...owner, ...extra], skipped, Date.now(), { root },
-      { git_diff: "gitDiff", git_commit: "gitCommitResult" })
+      { git_diff: "gitDiff", git_commit: "gitCommitResult", git_worktree: "gitWorktree" })
     const why = skipped.find((s) => s.id === "rq-diff")
     return { diff: cands.some((c) => c.id === "call/git_diff"), why: why === undefined ? undefined : String(why.unserved) }
   }
@@ -57,7 +61,7 @@ describe("a diff waits for a commit of the clone's newest edit", () => {
   })
 
   test("[MUST-FAIL] a clone handed out with its tree and nothing edited is diffed as before", async () => {
-    const fresh = { ...clone, id: "wt-fresh", seq: 69100, call_id: "cw-fresh", tree: T(2) }
+    const fresh = { ...clone, id: "wt-fresh", seq: 69100, call_id: "cw-fresh", committed_tree: T(2) }
     expect((await run([fresh])).diff).toBe(true)
   })
 
@@ -105,15 +109,36 @@ describe("a diff waits for a commit of the clone's newest edit", () => {
   })
 
   test("[MUST-FAIL] with no `at`, the clone is found only through `moves`: a handout with its tree and nothing committed finds no clone", async () => {
-    const fresh = { ...clone, id: "wt-fresh", seq: 69100, call_id: "cw-fresh", tree: T(2) }
+    const fresh = { ...clone, id: "wt-fresh", seq: 69100, call_id: "cw-fresh", committed_tree: T(2) }
     expect((await run([fresh], committedRows(false))).diff).toBe(false)
     expect((await run([fresh], committedRows(true))).diff).toBe(true)
   })
 
   test("an `at` that is not a list reads as no `at`: the clone is found through `moves`, as before", async () => {
-    const wrong = committedRows(false).map((r) => ({ ...r, where: { tree: { "x-latest": { ...CB(false)["x-latest"], at: "gitWorktree" } } } }))
+    const wrong = committedRows(false).map((r) => ({ ...r, where: { committed_tree: { "x-latest": { ...CB(false)["x-latest"], at: "gitWorktree" } } } }))
     const r = await run([commit(68200, T(1)), edit(68400), commit(68500, T(3))], wrong)
     expect(r.diff).toBe(true)
+  })
+
+  test("[MUST-FAIL] an `at` that is a list naming no shape finds no clone: no diff, even with a commit", async () => {
+    const none = committedRows(false).map((r) => ({ ...r, where: { committed_tree: { "x-latest": { ...CB(false)["x-latest"], at: [] } } } }))
+    expect((await run([commit(68200, T(1))], none)).diff).toBe(false)
+  })
+
+  test("a waiting diff names both ways out: a commit, or a handout of the clone", async () => {
+    const r = await run([commit(68200, T(1)), edit(68400)])
+    expect(r.diff).toBe(false)
+    expect(r.why).toContain("gitCommitResult comes from a git_commit call")
+    expect(r.why).toContain("gitWorktree comes from a git_worktree call")
+  })
+
+  test("a clone whose newest commit was answered before commits named committed_tree waits: no diff", async () => {
+    expect((await run([preCommit(68200, T(1))])).diff).toBe(false)
+  })
+
+  test("such a clone, clean, is diffed once a handout of it names its committed tree", async () => {
+    const handout = { ...clone, id: "wt-again", seq: 68600, call_id: "cw-again", committed_tree: T(1) }
+    expect((await run([preCommit(68200, T(1)), handout])).diff).toBe(true)
   })
 
   test("with no requires row for git_diff, a diff is offered as today, edits or not", async () => {

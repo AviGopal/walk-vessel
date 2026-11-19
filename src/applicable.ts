@@ -72,7 +72,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // gap_id), and inherits that root's clone. Every shape and field is the owner's; with no x-latest value in any owner
   // row, nothing here is read and the walk behaves as before.
   // WHICH ROWS FIND THE CLONE, APART FROM WHICH MOVE IT. An optional `at` names the shapes whose rows locate the request's
-  // clone; with none, the `moves` shapes do, as before. A shape in `at` but not in `moves` finds the clone without
+  // clone; with none (absent, or not a list), the `moves` shapes do, as before. A list naming no shape finds no clone, so
+  // the value is unknown and nothing meets it: fail closed. A shape in `at` but not in `moves` finds the clone without
   // making its value unknown: a row that says where the clone is but not what it holds (a clone handed out before its
   // answers named a tree) is passed over, and the newest row that holds the field still gives it.
   type Latest = { shapes: string[]; moves: string[]; at?: string[]; same: string; field: string; continues?: string }
