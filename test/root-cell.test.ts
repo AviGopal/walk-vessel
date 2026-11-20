@@ -2,7 +2,7 @@
 // A selection names its root's own cell (root_cell): the root's kind and asker, then the root, so records can count a
 // root's progress per draw by the cell the walk wrote, never by a key format of its own. A wait spends nothing and names
 // none. The draw itself is not changed by it.
-import { beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 
 const NODE_KEY = "node-key-for-test"
 const now = Date.parse("2026-01-01T12:00:00Z")
@@ -15,6 +15,15 @@ const tpl = { shape: "activity_template", id: "t-ok", seq: 5, role: "described",
 const ROOT_CELL = "root:world_changed|asker:person,id:w1"
 
 describe("a selection names its root's cell", () => {
+  // The stub and the env are this file's own: restored after it, or a later file in the same process (the vessel's
+  // own /health fetch) is answered by the stub.
+  const realFetch = globalThis.fetch
+  const keys = ["WALK_VESSEL_ID", "WALK_PORT", "DISCOVERY_URL", "WALK_ENDPOINT", "METABOB_API_KEY"] as const
+  const was = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
+  afterAll(() => {
+    globalThis.fetch = realFetch
+    for (const k of keys) if (was[k] === undefined) delete process.env[k]; else process.env[k] = was[k]
+  })
   beforeAll(() => {
     Object.assign(process.env, {
       WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test",
