@@ -36,14 +36,15 @@ const base = { pointer: {}, calls: [] as Inner[], t: "" }
 // a producer shown the skip can be shown them too (described fits a shown skip's rows ahead of the walk's hops).
 export type Skipped = { id: string; unserved: string[]; of?: "request"; unbound?: string[]; against_refs?: string[] }
 
-/** What a root's moves leave out that choices() must know across roots: a first deadline that has already passed. And
- * what records says of the root (awaits: false when no one awaits an answer on it), passed in. */
+/** What a root's moves leave out that choices() must know across roots: a deadline that has already passed. And
+ * what records says of the root (awaits: false when no one awaits an answer on it; dues: the at of each of its
+ * deadlines), passed in. */
 // shared: the ids of the rows every root is given (records' shared rows: the owner's configuration, earned templates),
 // as against the root's own; what is shared is about no one root.
 // root: the request the pool is for, which a template run binds its inputs from (bind.ts inputsOf).
 // head: the store's latest seq as records last said it (the posterior's at_seq), which a rhythm counts rows against.
 // gated (out): each call the owner's requires rows gate, with what it still needs here (see where it is set).
-export type Seen = { overdue?: boolean; awaits?: boolean; shared?: ReadonlySet<string>; root?: string; head?: number; gated?: Record<string, string[]> }
+export type Seen = { overdue?: boolean; awaits?: boolean; dues?: number[]; shared?: ReadonlySet<string>; root?: string; head?: number; gated?: Record<string, string[]> }
 
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
@@ -741,17 +742,14 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // wait there would hold every root until an unrelated row came. A records that does not say is read as before: idle
   // only on the walk's arm.
   const idle = note.awaits === false || (note.awaits === undefined && pool.some((x) => x.shape === ARM))
-  // The request's deadline is its FIRST deadline row, read as records reads it (lapsed()): written by the producer
-  // (role described) with a within_ms records turned into at, citing the request. A later one does not move it, and a
-  // due-shaped row anyone else wrote is not a deadline. Once it has passed, waiting is not offered; grading the lapse is
-  // the move.
-  const asks = new Set(pool.filter((x) => x.role === PERSON || x.role === OWNER).map((x) => x.id))
-  const first = pool
-    .filter((x) => DUES.has(x.shape) && x.role === DESCRIBED && typeof x.within_ms === "number" && typeof x.at === "number")
-    .filter((x) => [x.input_refs].flat().some((id) => asks.has(String(id))))
-    .sort((a, b) => a.seq - b.seq)[0]
-  const ahead = first !== undefined && Number(first.at) > now ? [Number(first.at)] : []
-  // A passed first deadline holds every wait back only while grading its lapse is on offer this turn. Once that grade is
+  // The request's deadlines are records' (its episode's dues, the at of each): which rows are deadlines, and that every
+  // one counts ("Later deadlines close it"), is the rule records judges lapses by, read from its answer rather than kept
+  // here as a copy (a copy of "the first deadline only" outlived the rule it copied). A wait is bounded by the next one
+  // still ahead. One passed with none ahead makes grading the lapse the move. A records that answers no dues has none.
+  const dues = note.dues ?? []
+  const ahead = dues.filter((at) => at > now).sort((a, b) => a - b).slice(0, 1)
+  const passed = dues.some((at) => at <= now)
+  // A passed deadline holds every wait back only while grading its lapse is on offer this turn. Once that grade is
   // pending (the walk graded what it saw and nothing new came), waiting is the walk's move again: otherwise a request
   // graded but never closed would keep the walk from ever waiting.
   // A root whose call waits on a person is not overdue: its lapse is not graded (below), so it holds no other root's wait
@@ -759,7 +757,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const callWait = [...latest.keys()].some(waitsOnPerson)
   const personWait = rowWaits || callWait
   const lapse = produce.flat().filter((c) => c.pointer.type === OUTCOME)
-  const overdue = !callWait && first !== undefined && ahead.length === 0 && lapse.length > 0
+  const overdue = !callWait && passed && ahead.length === 0 && lapse.length > 0
   if (overdue) note.overdue = true
   const bound = ahead.length > 0 ? { until: ahead[0] } : {}
   // One wait: for the next row a person or the owner writes. The walk runs one move at a time, so while it waits none of

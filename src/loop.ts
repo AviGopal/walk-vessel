@@ -6,7 +6,7 @@ import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
 import { ARM, DESCRIBED, DUE, FAILURE, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
 
-type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
+type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean; dues?: number[] }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]>; rootCell?: string }
 
 // How long a root has waited, coarsely: 0 for its first minute, then one more per doubling of minutes. Context for
@@ -48,12 +48,12 @@ export const worksOn = (root: Row, rows: Row[]): ((r: Row) => boolean) => {
   return (r: Row): boolean => r.root === undefined || r.root === root.id || sameGap(String(r.root))
 }
 
-export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row, head?: number, held?: Held): Promise<Option[]> => {
+export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean; dues?: number[] }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row, head?: number, held?: Held): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
   let overdue = false
   const everyRoot = new Set(shared.map((r) => r.id))
-  for (const { root, rows, awaits } of roots) {
+  for (const { root, rows, awaits, dues } of roots) {
     const ids = new Set(rows.map((r) => r.id))
     // The pool is what the root's producers are handed; its moves are worked out over the part that is its work. What
     // every root shares (the owner's configuration, earned templates) is about no one root, so it stays in both.
@@ -61,7 +61,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const mine = worksOn(root, rows)
     const work = pool.filter((r) => everyRoot.has(r.id) || mine(r))
     const skipped: Skipped[] = []
-    const seen: Seen = { awaits, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)), root: root.id, head }
+    const seen: Seen = { awaits, dues, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)), root: root.id, head }
     const cands = await applicable(work, skipped, now, seen, answers)
     if (cands.length > 0) held?.moving.add(root.id)
     else if (skipped.length > 0) held?.still.push({ root: root.id, pool, skipped })

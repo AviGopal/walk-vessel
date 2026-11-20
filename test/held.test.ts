@@ -136,7 +136,7 @@ describe("a root whose only move is a wait bounded by its first deadline, still 
   const due = { shape: "due", id: "d1", seq: 51, writer: "described", role: "described", within_ms: 3_600_000, at: Date.now() + 3_600_000, input_refs: ["n1"] }
   const none = { shape: "note", id: "z1", seq: 40, writer: "detector", role: "detector" }
   const move = ask("w1", 60)
-  const st = tick(shared, [{ root: move, rows: [move] }, { root: waiting, rows: [waiting, due] }, { root: none, rows: [none] }], 1000)
+  const st = tick(shared, [{ root: move, rows: [move] }, { root: waiting, rows: [waiting, due], dues: [due.at] }, { root: none, rows: [none] }], 1000)
 
   test("[MUST-FAIL] the waiting root is not drawn and gets no stall row; the root with no move does", () => {
     expect(st.written.find((r) => r.shape === "selection")?.root).toBe("w1")

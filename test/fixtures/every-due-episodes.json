@@ -1,0 +1,258 @@
+{
+ "shared": [],
+ "roots": [
+  {
+   "root": {
+    "input_refs": [],
+    "shape": "world_changed",
+    "what": "a",
+    "seq": 1,
+    "t": "2026-01-01T11:59:59.998Z",
+    "writer": "kid-person",
+    "role": "person",
+    "id": "1f337807db0fe0a0fcd8f8c2442e913d013a09de1c1e7e8ab66d6949ae63dc2c"
+   },
+   "rows": [
+    {
+     "input_refs": [],
+     "shape": "world_changed",
+     "what": "a",
+     "seq": 1,
+     "t": "2026-01-01T11:59:59.998Z",
+     "writer": "kid-person",
+     "role": "person",
+     "id": "1f337807db0fe0a0fcd8f8c2442e913d013a09de1c1e7e8ab66d6949ae63dc2c"
+    },
+    {
+     "shape": "selection",
+     "arm": "treated",
+     "cell": "c",
+     "seq": 2,
+     "t": "2026-01-01T11:59:59.999Z",
+     "writer": "walk-test",
+     "role": "walk",
+     "id": "95eaa154b0e47a36e3f5576fa145e333e98ddd2e33d36bea58e0e01eff762227",
+     "input_refs": [],
+     "refs_omitted": 2
+    },
+    {
+     "input_refs": [
+      "1f337807db0fe0a0fcd8f8c2442e913d013a09de1c1e7e8ab66d6949ae63dc2c"
+     ],
+     "shape": "due",
+     "within_ms": 1,
+     "selection_ref": "95eaa154b0e47a36e3f5576fa145e333e98ddd2e33d36bea58e0e01eff762227",
+     "at": 1767268800000,
+     "seq": 3,
+     "t": "2026-01-01T11:59:59.999Z",
+     "writer": "described-test",
+     "role": "described",
+     "id": "18e32e3a85ebe93d59320bd079e3033334b5ea768af45c4c2fc4c82cf914e751",
+     "lapsed": {
+      "at": 1767268800000,
+      "standing": {
+       "counted": false,
+       "why": "person_later"
+      }
+     }
+    },
+    {
+     "input_refs": [
+      "1f337807db0fe0a0fcd8f8c2442e913d013a09de1c1e7e8ab66d6949ae63dc2c"
+     ],
+     "shape": "answer",
+     "text": "a",
+     "selection_ref": "95eaa154b0e47a36e3f5576fa145e333e98ddd2e33d36bea58e0e01eff762227",
+     "seq": 4,
+     "t": "2026-01-01T12:00:00.005Z",
+     "writer": "described-test",
+     "role": "described",
+     "id": "01d4683287e7af0728eb0e09b4471e3d6099823116c10bf576ecd642a733c9b0"
+    },
+    {
+     "input_refs": [
+      "01d4683287e7af0728eb0e09b4471e3d6099823116c10bf576ecd642a733c9b0"
+     ],
+     "shape": "outcome",
+     "r": 0,
+     "seq": 5,
+     "t": "2026-01-01T12:00:00.006Z",
+     "writer": "kid-person",
+     "role": "person",
+     "id": "a51ba2f4ce0bc7398e2efca93092899db96a3f6896bdc0cbfee3a4d447a4e19c",
+     "standing": {
+      "counted": true
+     }
+    },
+    {
+     "input_refs": [
+      "1f337807db0fe0a0fcd8f8c2442e913d013a09de1c1e7e8ab66d6949ae63dc2c"
+     ],
+     "shape": "due",
+     "within_ms": 3600000,
+     "selection_ref": "95eaa154b0e47a36e3f5576fa145e333e98ddd2e33d36bea58e0e01eff762227",
+     "at": 1767272400006,
+     "seq": 6,
+     "t": "2026-01-01T12:00:00.006Z",
+     "writer": "described-test",
+     "role": "described",
+     "id": "f0ada7e7e86df88db4e068388b86199e8b78c805b1c5da6f8733f7e188e8c7ff"
+    }
+   ],
+   "awaits": true,
+   "dues": [
+    1767268800000,
+    1767272400006
+   ]
+  },
+  {
+   "root": {
+    "input_refs": [],
+    "shape": "world_changed",
+    "what": "b",
+    "seq": 7,
+    "t": "2026-01-01T12:00:00.006Z",
+    "writer": "kid-person",
+    "role": "person",
+    "id": "24d715968989afad10ed52784a8def722ebabb74647fd68cf6167e7435f41a3b"
+   },
+   "rows": [
+    {
+     "input_refs": [],
+     "shape": "world_changed",
+     "what": "b",
+     "seq": 7,
+     "t": "2026-01-01T12:00:00.006Z",
+     "writer": "kid-person",
+     "role": "person",
+     "id": "24d715968989afad10ed52784a8def722ebabb74647fd68cf6167e7435f41a3b"
+    },
+    {
+     "shape": "selection",
+     "arm": "treated",
+     "cell": "c",
+     "seq": 8,
+     "t": "2026-01-01T12:00:00.006Z",
+     "writer": "walk-test",
+     "role": "walk",
+     "id": "5380e5e8a86df8f3d0f5d7feca18829ba33dfeae931854bc4242bb24a91082d4",
+     "input_refs": [],
+     "refs_omitted": 2
+    },
+    {
+     "input_refs": [
+      "24d715968989afad10ed52784a8def722ebabb74647fd68cf6167e7435f41a3b"
+     ],
+     "shape": "due",
+     "within_ms": 1,
+     "selection_ref": "5380e5e8a86df8f3d0f5d7feca18829ba33dfeae931854bc4242bb24a91082d4",
+     "at": 1767268800007,
+     "seq": 9,
+     "t": "2026-01-01T12:00:00.006Z",
+     "writer": "described-test",
+     "role": "described",
+     "id": "29b9b3cf5f3384139ac1706f242eb029236b0ca56f1d003ce0163ba9b224786f",
+     "lapsed": {
+      "at": 1767268800007,
+      "standing": {
+       "counted": false,
+       "why": "person_later"
+      }
+     }
+    },
+    {
+     "input_refs": [
+      "24d715968989afad10ed52784a8def722ebabb74647fd68cf6167e7435f41a3b"
+     ],
+     "shape": "answer",
+     "text": "b",
+     "selection_ref": "5380e5e8a86df8f3d0f5d7feca18829ba33dfeae931854bc4242bb24a91082d4",
+     "seq": 10,
+     "t": "2026-01-01T12:00:00.012Z",
+     "writer": "described-test",
+     "role": "described",
+     "id": "00d1cc3e9bce446d851047d2e17425b0ec18c4c66b2f7e6efe418695018a2f0c"
+    },
+    {
+     "input_refs": [
+      "00d1cc3e9bce446d851047d2e17425b0ec18c4c66b2f7e6efe418695018a2f0c"
+     ],
+     "shape": "outcome",
+     "r": 0,
+     "seq": 11,
+     "t": "2026-01-01T12:00:00.012Z",
+     "writer": "kid-person",
+     "role": "person",
+     "id": "8f7b85ff40f9512151acf614e70ea6477b05954b30759473cd6ee308b21e9da8",
+     "standing": {
+      "counted": true
+     }
+    },
+    {
+     "input_refs": [
+      "24d715968989afad10ed52784a8def722ebabb74647fd68cf6167e7435f41a3b"
+     ],
+     "shape": "due",
+     "within_ms": 1,
+     "selection_ref": "5380e5e8a86df8f3d0f5d7feca18829ba33dfeae931854bc4242bb24a91082d4",
+     "at": 1767268800013,
+     "seq": 12,
+     "t": "2026-01-01T12:00:00.012Z",
+     "writer": "described-test",
+     "role": "described",
+     "id": "76ab9372677faf09c294b1694d642bb06658a6ebdf896ae9ffc20b8d7dd8d5ed",
+     "lapsed": {
+      "at": 1767268800013,
+      "standing": {
+       "counted": false,
+       "why": "person_later"
+      }
+     }
+    },
+    {
+     "input_refs": [
+      "24d715968989afad10ed52784a8def722ebabb74647fd68cf6167e7435f41a3b"
+     ],
+     "shape": "answer",
+     "text": "b2",
+     "selection_ref": "5380e5e8a86df8f3d0f5d7feca18829ba33dfeae931854bc4242bb24a91082d4",
+     "seq": 13,
+     "t": "2026-01-01T12:00:00.018Z",
+     "writer": "described-test",
+     "role": "described",
+     "id": "e8569ad5bce1f206b19ddb52eb8533ede1d01d5df3a6b979196da96c78931bf8"
+    },
+    {
+     "input_refs": [
+      "e8569ad5bce1f206b19ddb52eb8533ede1d01d5df3a6b979196da96c78931bf8"
+     ],
+     "shape": "outcome",
+     "r": 0,
+     "seq": 14,
+     "t": "2026-01-01T12:00:00.018Z",
+     "writer": "kid-person",
+     "role": "person",
+     "id": "e078749e5a9445ab86fc9096bec3e199db6a493bf8b6f0d8b69d4c72a8b9ab21",
+     "standing": {
+      "counted": true
+     }
+    }
+   ],
+   "awaits": true,
+   "dues": [
+    1767268800007,
+    1767268800013
+   ]
+  }
+ ],
+ "cost": {
+  "ms": 4,
+  "refolded": [
+   {
+    "fold": "gradesOf",
+    "rows": 14,
+    "ms": 2
+   }
+  ]
+ }
+}

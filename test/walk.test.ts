@@ -182,28 +182,28 @@ describe("candidates", () => {
     expect(skipped).toEqual([{ id: "t-hop", unserved: ["hop"] }])
   })
 
-  test("[MUST-FAIL] while a request is open, a wait ends by its FIRST deadline; once that has passed, none is offered", async () => {
-    const waits = async (rows: any[]) => (await applicable(rows)).filter((c) => c.kind === "wait-for")
+  test("[MUST-FAIL] while a request is open, a wait ends by the next of its deadlines records answers still ahead; with all passed, none is offered", async () => {
+    const waits = async (rows: any[], dues?: number[]) => (await applicable(rows, [], Date.now(), dues === undefined ? {} : { dues })).filter((c) => c.kind === "wait-for")
     const soon = Date.now() + 600_000
     const later = Date.now() + 1_200_000
     const passed = Date.now() - 60_000
     const asked = [...pool, { shape: "world_changed", id: "w9", seq: 6, role: "person" }]
-    const due = (id: string, seq: number, at: number, extra: Record<string, unknown> = {}) =>
-      ({ shape: "due", id, seq, at, within_ms: 60_000, role: "described", input_refs: ["w9"], ...extra })
-    expect(await waits(asked)).toEqual([])
-    expect(await waits([...asked, due("d0", 7, passed)])).toEqual([])
-    // a later deadline ahead does not reopen waiting once the first has passed
-    expect(await waits([...asked, due("d0", 7, passed), due("d2", 9, soon)])).toEqual([])
-    // nor does a sooner later one shorten it: the first deadline bounds the wait
-    const bounded = await waits([...asked, due("d1", 8, later), due("d2", 9, soon)])
+    const due = (id: string, seq: number, at: number) =>
+      ({ shape: "due", id, seq, at, within_ms: 60_000, role: "described", input_refs: ["w9"] })
+    expect(await waits(asked, [])).toEqual([])
+    expect(await waits([...asked, due("d0", 7, passed)], [passed])).toEqual([])
+    // the root is still open after a passed deadline only when its lapse was refused (records judges every deadline):
+    // the next one ahead bounds the wait
+    const reopened = await waits([...asked, due("d0", 7, passed), due("d2", 9, soon)], [passed, soon])
+    expect(reopened.length).toBeGreaterThan(0)
+    for (const c of reopened) expect(c.pointer.until).toBe(soon)
+    // every deadline counts, so the soonest ahead bounds it, whatever order records lists them in
+    const bounded = await waits([...asked, due("d1", 8, later), due("d2", 9, soon)], [later, soon])
     expect(bounded.length).toBeGreaterThan(0)
-    for (const c of bounded) expect(c.pointer.until).toBe(later)
-    // a due-shaped row a person wrote, or one without within_ms, is not a deadline, as records does not read it as one
-    for (const odd of [due("p0", 7, passed, { role: "person" }), due("n0", 7, passed, { within_ms: undefined })]) {
-      const w = await waits([...asked, odd, due("d1", 8, later)])
-      expect(w.length).toBeGreaterThan(0)
-      for (const c of w) expect(c.pointer.until).toBe(later)
-    }
+    for (const c of bounded) expect(c.pointer.until).toBe(soon)
+    // which rows are deadlines is records' word, not the pool's: a due row records does not answer bounds nothing
+    expect(await waits([...asked, due("d1", 8, later)], [])).toEqual([])
+    expect(await waits([...asked, due("d1", 8, later)])).toEqual([])
     const idle = await waits([...pool, { shape: "arm", id: "arm1", seq: 7, arm: "treated" }])
     expect(idle.length).toBeGreaterThan(0)
     for (const c of idle) expect("until" in c.pointer).toBe(false)
@@ -219,7 +219,7 @@ describe("candidates", () => {
     const soon = Date.now() + 600_000
     const asker = { shape: "world_changed", id: "w9", seq: 6, role: "person" }
     const due = { shape: "due", id: "d2", seq: 9, at: soon, within_ms: 60_000, role: "described", input_refs: ["w9"] }
-    const kinds = (await applicable([...pool, asker, due])).map((c) => c.kind)
+    const kinds = (await applicable([...pool, asker, due], [], Date.now(), { dues: [soon] })).map((c) => c.kind)
     expect(kinds).toContain("wait-for")
     expect(kinds).not.toContain("wait-until")
   })
@@ -2208,7 +2208,7 @@ describe("choosing among open requests", () => {
     const xDue = { shape: "due", id: "dx", seq: 4, role: "described", within_ms: 4 * 3_600_000, at: now + 3 * 3_600_000, input_refs: ["wx"] }
     // Y: a gap a detector opened, whose move is to ask for the next call toward closing it
     const y = { shape: "gap", id: "gy", seq: 5, role: "detector", gap_id: "y", status: "open", t: "2026-01-01T11:30:00Z" }
-    const roots = [{ root: x as any, rows: [x, xDue] as any }, { root: y as any, rows: [y] as any }]
+    const roots = [{ root: x as any, rows: [x, xDue] as any, dues: [xDue.at] }, { root: y as any, rows: [y] as any }]
     const got = await choices(shared as any, roots, now)
     expect(got.filter((o) => o.cand.kind === "wait-for")).toHaveLength(0)
     expect(got.some((o) => o.root === "gy" && o.cand.id.startsWith("produce/request"))).toBe(true)
@@ -2235,8 +2235,8 @@ describe("choosing among open requests", () => {
     const due = (id: string, of: string, at: number) => ({ shape: "due", id, seq: 7, role: "described", within_ms: 60_000, at, input_refs: [of] })
     const waitsWith = async (at: number) => (await choices(shared as any, [
       { root: gap as any, rows: [gap] as any, awaits: false },
-      { root: ask as any, rows: [ask, due("d1", "w1", at)] as any },
-      { root: other as any, rows: [other, due("d2", "w2", now + 600_000)] as any },
+      { root: ask as any, rows: [ask, due("d1", "w1", at)] as any, dues: [at] },
+      { root: other as any, rows: [other, due("d2", "w2", now + 600_000)] as any, dues: [now + 600_000] },
     ], now)).filter((o) => o.cand.kind === "wait-for")
     expect(await waitsWith(now - 1)).toHaveLength(0)
     // with every deadline still ahead, the wait is offered, bounded by the earliest
@@ -2261,8 +2261,8 @@ describe("choosing among open requests", () => {
     const other = { shape: "world_changed", id: "w2", seq: 7, role: "person", t: "2026-01-01T11:00:00Z" }
     const due2 = { shape: "due", id: "d2", seq: 8, role: "described", within_ms: 600_000, at: now + 600_000, input_refs: ["w2"] }
     const got = await choices(shared as any, [
-      { root: ask as any, rows: [ask, due, answer, graded] as any },
-      { root: other as any, rows: [other, due2] as any },
+      { root: ask as any, rows: [ask, due, answer, graded] as any, dues: [due.at] },
+      { root: other as any, rows: [other, due2] as any, dues: [due2.at] },
     ], now)
     const waits = got.filter((o) => o.cand.kind === "wait-for")
     expect(waits).toHaveLength(1)
