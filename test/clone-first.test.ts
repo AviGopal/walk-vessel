@@ -79,6 +79,24 @@ describe("an answer's clone is written before the tool's own row", () => {
     return new Set(cands.map((c) => c.id))
   }
   const order = (rows: Row[]) => rows.map((r) => r.shape === "hop" ? `hop:${r.phase}` : r.shape)
+  // a template's run of one call, answered with `body`; the rows it writes, in the order written
+  const run = async (type: string, status: number, body: unknown): Promise<string[]> => {
+    written = []
+    answer = { status, body }
+    await execute({ t: "", id: "run/t-1", kind: "run", pointer: {}, calls: [{ shape: type, pointer: { cwd: CWD } }] },
+      { shape: "selection", id: "sel-run", seq: 20, root: ROOT.id })
+    return order(written)
+  }
+
+  test("[MUST-FAIL] a template run's call that refreshed first: the hop ends, then the clone, then the edit", async () => {
+    expect(await run("file_edit", 200, { clone: moved(T(2)), shape: "fileEditResult", cwd: CWD, path: `${CWD}/README.md`, ok: true }))
+      .toEqual(["hop:started", "hop:ended", "gitWorktree", "fileEditResult"])
+  })
+
+  test("[MUST-FAIL] a template run's call that fails after its refresh: the clone, then the failure", async () => {
+    expect(await run("git_diff", 200, { clone: moved(T(2)), error: "the typecheck failed" }))
+      .toEqual(["hop:started", "gitWorktree", "failure"])
+  })
 
   test("[MUST-FAIL] an edit made right after a refresh: the hop ends, then the clone, then the edit", async () => {
     const rows = await call("file_edit", 200, { clone: moved(T(2)), shape: "fileEditResult", cwd: CWD, path: `${CWD}/README.md`, ok: true }, 20)
