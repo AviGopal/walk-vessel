@@ -135,10 +135,32 @@ describe("a call's failure that waits for a person is read as before", () => {
     const got = (await applicable([ask, req, ...tried(3, false), ...tried(10, true)], [], Date.now(), { root: "w1", awaits: true })).map((c) => c.id)
     expect(got).toEqual(["wait-for"])
   })
+  test("[MUST-FAIL] a row's wait still holds the root's other moves when it is overdue: only the lapse grade is offered beside the wait", async () => {
+    const owner = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const shared = [owner({ shape: "channel", id: "ch", calls: [] }, -5),
+      ...["outcome", "request"].map((target, i) => owner({ shape: "shape_schema", id: `s-${target}`, target, inputs: ["world_changed"], context: ["answer", "due"] }, -4 + i * 0.1))]
+    const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person", what: "x" }
+    const answer = { shape: "answer", id: "a1", seq: 1.2, role: "described", text: "done", input_refs: ["w1"] }
+    const due = { shape: "due", id: "d1", seq: 1.3, role: "described", within_ms: 1, at: 100, input_refs: ["w1"] }
+    const waits = { shape: "failure", id: "f2", seq: 2, role: "walk", waits_for: "person", input_refs: ["w1"] }
+    const ids = (await applicable([...shared, ask, answer, due, waits], [], 1_000, { root: "w1", awaits: true })).map((c) => c.id)
+    expect(ids.sort()).toEqual(["produce/outcome/ch", "wait-for"])
+  })
+  test("[MUST-FAIL] before its deadline a root whose row waits offers only the wait: no lapse is graded early", async () => {
+    const owner = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
+    const shared = [owner({ shape: "channel", id: "ch", calls: [] }, -5),
+      ...["outcome", "request"].map((target, i) => owner({ shape: "shape_schema", id: `s-${target}`, target, inputs: ["world_changed"], context: ["answer", "due"] }, -4 + i * 0.1))]
+    const ask = { shape: "world_changed", id: "w1", seq: 1, role: "person", what: "x" }
+    const answer = { shape: "answer", id: "a1", seq: 1.2, role: "described", text: "done", input_refs: ["w1"] }
+    const due = { shape: "due", id: "d1", seq: 1.3, role: "described", within_ms: 1, at: 100_000, input_refs: ["w1"] }
+    const waits = { shape: "failure", id: "f2", seq: 2, role: "walk", waits_for: "person", input_refs: ["w1"] }
+    const ids = (await applicable([...shared, ask, answer, due, waits], [], 1_000, { root: "w1", awaits: true })).map((c) => c.id)
+    expect(ids).toEqual(["wait-for"])
+  })
 })
 
 describe("a row's wait changes no grading", () => {
-  test("[GUARD] a past deadline is overdue as before when the root's wait is a row's, not a call's (red on 2064fd26)", async () => {
+  test("[GUARD] a past deadline is overdue and its lapse graded as before when the root's wait is a row's, not a call's (red on 2064fd26 and 5fba8889)", async () => {
     const owner = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
     const shared = [owner({ shape: "channel", id: "ch", calls: [] }, -5),
       owner({ shape: "shape_schema", id: "s-outcome", target: "outcome", inputs: ["world_changed"], context: ["answer", "due"] }, -4)]
@@ -146,9 +168,10 @@ describe("a row's wait changes no grading", () => {
     const answer = { shape: "answer", id: "a1", seq: 1.2, role: "described", text: "done", input_refs: ["w1"] }
     const due = { shape: "due", id: "d1", seq: 1.3, role: "described", within_ms: 1, at: 100, input_refs: ["w1"] }
     const waits = { shape: "failure", id: "f2", seq: 2, role: "walk", waits_for: "person", input_refs: ["w1"] }
-    const overdue = async (pool: any[]) => { const note: any = { root: "w1", awaits: true }; await applicable(pool, [], 1_000, note); return note.overdue === true }
-    const without = await overdue([...shared, ask, answer, due])
-    expect(without).toBe(true)
-    expect(await overdue([...shared, ask, answer, due, waits])).toBe(without)
+    const seen = async (pool: any[]) => { const note: any = { root: "w1", awaits: true }; const ids = (await applicable(pool, [], 1_000, note)).map((c) => c.id); return { overdue: note.overdue === true, lapse: ids.includes("produce/outcome/ch") } }
+    const without = await seen([...shared, ask, answer, due])
+    expect(without).toEqual({ overdue: true, lapse: true })
+    // the lapse grade is still offered (beside the wait), and the root is overdue as before
+    expect(await seen([...shared, ask, answer, due, waits])).toEqual(without)
   })
 })

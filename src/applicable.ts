@@ -740,10 +740,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // pending (the walk graded what it saw and nothing new came), waiting is the walk's move again: otherwise a request
   // graded but never closed would keep the walk from ever waiting.
   // A root whose call waits on a person is not overdue: its lapse is not graded (below), so it holds no other root's wait
-  // back. Only a call's wait is read here: a row's wait holds the root's moves (waitFor) and changes no grading.
+  // back. Only a call's wait is read here: a row's wait holds the root's other moves and changes no grading (below).
   const callWait = [...latest.keys()].some(waitsOnPerson)
   const personWait = rowWaits || callWait
-  if (!callWait && first !== undefined && ahead.length === 0 && produce.flat().some((c) => c.pointer.type === OUTCOME)) note.overdue = true
+  const lapse = produce.flat().filter((c) => c.pointer.type === OUTCOME)
+  const overdue = !callWait && first !== undefined && ahead.length === 0 && lapse.length > 0
+  if (overdue) note.overdue = true
   const bound = ahead.length > 0 ? { until: ahead[0] } : {}
   // One wait: for the next row a person or the owner writes. The walk runs one move at a time, so while it waits none of
   // its own produces or calls is in flight, and nothing else writes the shapes they make: a wait for one of those (an
@@ -766,6 +768,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // else. Its lapse is not graded either, once its first deadline has passed (the USER, 11-16: "No lapse while
   // waiting"): the deadline measured the makers' work, and the time is the person's. The person's row is what ends the
   // wait; until then the root shows as waiting on them.
-  if (personWait) return waitFor
+  if (callWait) return waitFor
+  // A row of the root's own that waits on a person holds its other moves the same way, but the ruling names a call's
+  // wait, not a row's: a passed deadline's lapse is still graded beside the wait, as on a root with no wait.
+  if (rowWaits) return [...(overdue ? lapse : []), ...waitFor]
   return [...produce.flat(), ...call.flat(), ...run, ...waitFor]
 }
