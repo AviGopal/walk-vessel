@@ -520,9 +520,16 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   // Any other row of the root's own that says it waits for a person (a detector's gap whose claim a person must judge
   // first) holds the whole root the same way, lifted by the same person's row: the field means one thing whoever wrote
-  // it. A call's failure is read above instead, where a later failure of the same call says whether it still waits.
+  // it. As with a call, the newest row says whether it still waits: the newest of the root's own rows of each shape by
+  // each writer, so a writer ends its wait by writing the row again without the field (a gap whose check is runnable
+  // again), not only by a person, and another writer's row of the same shape (the walk's own skip or stall) ends
+  // nothing. A call's failure is read above instead, per call.
   const callFailure = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && typeof r.call_id === "string"
-  const rowWaits = pool.some((r) => ownRows.has(r.id) && !callFailure(r) && r.waits_for === "person" && !spokeAfter(r.seq))
+  const newestOwn = new Map<string, Row>()
+  for (const r of pool.filter((x) => ownRows.has(x.id) && !callFailure(x)).sort((a, b) => a.seq - b.seq)) {
+    newestOwn.set(JSON.stringify([r.shape, r.role, r.writer]), r)
+  }
+  const rowWaits = [...newestOwn.values()].some((r) => r.waits_for === "person" && !spokeAfter(r.seq))
   // A call refused for the request's state (its failure blames the request, as records stamps it) settles that call on
   // this root, one rule for a request's call and a template's run: over the same inputs the same call gets the same
   // answer, so neither is made again until something new comes. The call is its shape and its arguments as sent (a run's,
@@ -732,9 +739,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A passed first deadline holds every wait back only while grading its lapse is on offer this turn. Once that grade is
   // pending (the walk graded what it saw and nothing new came), waiting is the walk's move again: otherwise a request
   // graded but never closed would keep the walk from ever waiting.
-  // A root waiting on a person is not overdue: its lapse is not graded (below), so it holds no other root's wait back.
-  const personWait = rowWaits || [...latest.keys()].some(waitsOnPerson)
-  if (!personWait && first !== undefined && ahead.length === 0 && produce.flat().some((c) => c.pointer.type === OUTCOME)) note.overdue = true
+  // A root whose call waits on a person is not overdue: its lapse is not graded (below), so it holds no other root's wait
+  // back. Only a call's wait is read here: a row's wait holds the root's moves (waitFor) and changes no grading.
+  const callWait = [...latest.keys()].some(waitsOnPerson)
+  const personWait = rowWaits || callWait
+  if (!callWait && first !== undefined && ahead.length === 0 && produce.flat().some((c) => c.pointer.type === OUTCOME)) note.overdue = true
   const bound = ahead.length > 0 ? { until: ahead[0] } : {}
   // One wait: for the next row a person or the owner writes. The walk runs one move at a time, so while it waits none of
   // its own produces or calls is in flight, and nothing else writes the shapes they make: a wait for one of those (an
