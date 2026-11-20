@@ -7,7 +7,7 @@ import { type Post, draw, pick } from "./draw"
 import { ARM, DESCRIBED, DUE, FAILURE, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean }> }
-type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]> }
+type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]>; rootCell?: string }
 
 // How long a root has waited, coarsely: 0 for its first minute, then one more per doubling of minutes. Context for
 // selection to learn from, never an order.
@@ -72,9 +72,13 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     // owner's new row kind, a grade nothing here reads) made every cell of every root new and its learning start over.
     const present = new Set(work.filter((r) => r.writer !== VESSEL_ID).map((r) => r.shape))
     const tail = [`asker:${String(root.role)}`, `age:${ageBucket(root, now)}`]
+    // The root's own cell: its kind and asker, then the root itself, so records' levels give root, then kind and asker,
+    // then kind. Records grades a root by the selections that carry it; a wait spends nothing, so it carries none.
+    const rootCell = `root:${String(root.shape)}|asker:${String(root.role)},id:${root.id}`
     for (const cand of cands) {
       const context = [...[...new Set(cand.reads ?? [])].filter((s) => present.has(s)).sort(), ...tail]
-      const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id, gated }
+      const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id, gated,
+        ...(cand.kind !== WAIT_FOR ? { rootCell } : {}) }
       if (cand.kind !== WAIT_FOR) { out.push(o); continue }
       const seen = waits.get(cand.id)
       const until = (c: Cand): number => Number(c.pointer.until ?? Number.POSITIVE_INFINITY)
@@ -186,6 +190,7 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
     // Which way the cell was keyed: "reads" (the move's own inputs). Before it, every shape in the root's pool.
     cell_scheme: "reads",
     root,
+    ...(options[i].rootCell !== undefined ? { root_cell: options[i].rootCell } : {}),
     // What the selection is about: its root. The rows the move had are handed to its call (a produce, a run) and not
     // kept here: kept, each selection carried every id of its root's episode, so rows grew with the episode and each
     // read with the rows. What a produce saw is kept as its key (seen_key), which is what a refusal is compared by.
