@@ -363,13 +363,16 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const shapes = new Set(entries.map(shapeOf))
     // An entry with latest_by shows the producer only the newest row per value of that field (described-shape reads it
     // so), so an older row of it is not something the producer saw: counted here, a produce that cited only the newest
-    // would never read as having seen what it would see now, and would be asked again forever.
+    // would never read as having seen what it would see now, and would be asked again forever. A repeat (a row saying
+    // again what an earlier one said) is not news and does not stand in for it: the newest row that is not a repeat
+    // stays the one shown, or a repeat would hide both itself and what it repeats, and the produce would wait on a
+    // news nothing can bring.
     const older = new Set<string>()
     for (const e of entries) {
       const by = typeof e === "object" && e !== null ? (e as { latest_by?: unknown }).latest_by : undefined
       if (typeof by !== "string") continue
       const newest = new Map<string, Row>()
-      for (const r of pool.filter((x) => x.shape === shapeOf(e)).sort((a, b) => a.seq - b.seq)) {
+      for (const r of pool.filter((x) => x.shape === shapeOf(e) && !repeats.has(x.id)).sort((a, b) => a.seq - b.seq)) {
         const k = JSON.stringify(r[by])
         const was = newest.get(k)
         if (was !== undefined) older.add(was.id)
