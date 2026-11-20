@@ -63,6 +63,26 @@ describe("a selection names its root's cell", () => {
     const posts = options.map((_, j) => ({ alpha: 1 + j, beta: 2 }))
     for (let seed = 1; seed <= 200; seed++) expect(choose(seed, options, posts)).toBe(choose(seed, bare, posts))
   })
+  test("[MUST-FAIL] with roots of different kind and asker in one tick, each selection row names its own chosen root's cell", async () => {
+    const { choices, choose, selectionRow } = await import("../src/loop")
+    const gap = { shape: "gap", id: "g9", seq: 6, role: "detector", gap_id: "x", status: "open", t: "2026-01-01T11:59:30Z" }
+    const sch2 = { ...sch, id: "s2", seq: 7, inputs: ["gap"], variant: "gap" }
+    const options = await choices([], [
+      { root: ask as any, rows: [ask, sch, ch, req, tpl] as any },
+      { root: gap as any, rows: [gap, sch2, ch] as any },
+    ], now)
+    const cellOf: Record<string, string> = { w1: ROOT_CELL, g9: "root:gap|asker:detector,id:g9" }
+    expect(new Set(options.map((o) => o.root))).toEqual(new Set(["w1", "g9"]))
+    const post = { at_seq: 7, posts: options.map((o, j) => ({ cell: o.cell, alpha: 1 + j, beta: 1 + ((j * 7) % 5) })) }
+    const named = new Set<string>()
+    for (let seed = 1; seed <= 300; seed++) {
+      const i = choose(seed, options, post.posts)
+      const row = selectionRow("treated", options, post, seed, i, {} as any) as any
+      expect(row.root_cell).toBe(cellOf[String(row.root)])
+      named.add(row.root_cell)
+    }
+    expect(named).toEqual(new Set(Object.values(cellOf)))
+  })
   test("[GUARD] the pick replays from the selection row alone: its seed, candidates (with their roots) and posts", async () => {
     const { choices, choose, selectionRow } = await import("../src/loop")
     const ask2 = { ...ask, id: "w2", seq: 6 }
