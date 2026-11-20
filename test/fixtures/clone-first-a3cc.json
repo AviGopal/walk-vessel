@@ -1,0 +1,364 @@
+[
+ {
+  "input_refs": [],
+  "shape": "world_changed",
+  "seq": 5300,
+  "role": "person",
+  "id": "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3",
+  "what": "a change to the code"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "tree": "2c950d89cfba6f34ea1059788a70636edb6deefd",
+  "cwd": "/trees/clone-a3cc",
+  "shape": "gitCommitResult",
+  "selection_ref": "6b5c5921ff128bdbc135e69ebc7aeafcc62f7c95d507be6c1d8eab37895373db",
+  "call_id": "518c92c0-3e80-4eed-b184-e719b6e25d03",
+  "seq": 84306,
+  "role": "walk",
+  "id": "e1affb292a102c4923fe9b32e949c93b06e891097a27363d5477623bfc694653"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "baae31d4b241852122ef0b02d549c11dfa03a7f9",
+  "carried": "uncommitted",
+  "tree": "cfc7910ea3c0adf9ac898bd05ade18b8ca0a995b",
+  "shape": "gitWorktree",
+  "selection_ref": "6b5c5921ff128bdbc135e69ebc7aeafcc62f7c95d507be6c1d8eab37895373db",
+  "call_id": "518c92c0-3e80-4eed-b184-e719b6e25d03",
+  "seq": 84307,
+  "role": "walk",
+  "id": "0c7296c13b359acb8fa3f80d1577019c5c591633b712ad9990496f6590316d53"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "e0bb61470d945381e1a91aef86dc05537e4d9dbe",
+  "carried": "commits",
+  "tree": "6109387ca5bb371b3861f91e7f1c3b17176001a8",
+  "shape": "gitWorktree",
+  "selection_ref": "c0d225a07ac6c4b7bcff518d01f626826e2fd45e56c2b232b6c2d885c7a4edc5",
+  "call_id": "d8b91ed6-d163-438c-a568-19391222c4d7",
+  "seq": 86355,
+  "role": "walk",
+  "id": "9964fcfb93cdd92a27ebc6bc188df26a5bcc048b869834a46d5cce6c890f640d"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "970d1ad3e29dffce30c7dd76b0bcf838e87f2efa",
+  "carried": "commits",
+  "tree": "d14b48551c8ab5fe25a2a71f37763cb9ab7a5163",
+  "shape": "gitWorktree",
+  "selection_ref": "80edcd05820dea14688d53c84cdd2ab28953887263ba59e9bc3177230eff98bb",
+  "call_id": "3c59b3ec-707c-4fdb-ac0d-f57048f6801c",
+  "seq": 88759,
+  "role": "walk",
+  "id": "8b59cdff9b04f4878baa3bc9fc6378eebdb7551e36a87f21fc50fec1ceadc237"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "4f3b6396a2f05858eca8355072ac8c7494fdeb09",
+  "carried": "commits",
+  "tree": "3fd502bc9e411f0b0029ea56e27b7303730978ed",
+  "shape": "gitWorktree",
+  "selection_ref": "4d869f615a4bdc5eaf41dd7ca4d4870775862e40259a9a13a7aaec9f39aaf20b",
+  "call_id": "24493d2d-5acd-40e3-b210-27db4973cf89",
+  "seq": 89184,
+  "role": "walk",
+  "id": "09c497e980ba9113b198cd994266f60f98a96c93e1dc84ebfbbc21907016558b"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "f0a67a34fa1be5749928cae3814a093b53e31de4",
+  "carried": "commits",
+  "tree": "610c1f21eaf433508a64e5b21e303dae9d1a4f9b",
+  "shape": "gitWorktree",
+  "selection_ref": "23d5255da52caea4613cd8cd234b466af01cd947ed7cc926748e6bffb083608e",
+  "call_id": "2247c4be-57b0-44fb-912f-0dc81b1fd1ec",
+  "seq": 89463,
+  "role": "walk",
+  "id": "2760a444773a4b1c5730bfac741e2c281c28b349aedc152672e352016e99695a"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "208208a3e57a249033b75feb6fc9a6e1d192aa3b",
+  "carried": "commits",
+  "tree": "0ef34908f2e85331a7ae82dd8258377cb36d8232",
+  "shape": "gitWorktree",
+  "selection_ref": "6ba8303f51b1adb8e7e231f3f2afdbd25773c5acb2ce5415896a49a4e3d5eb15",
+  "call_id": "865a04b5-041f-4170-914e-cb8c43ad7324",
+  "seq": 90322,
+  "role": "walk",
+  "id": "b59fba5116490b79e3ce54cc1e3c51cd3982e268ecb3e38acd71801702cf1d3a"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "1b370ffa808dd23a516c0725c2e6d54d0ae3b363",
+  "carried": "commits",
+  "tree": "0e1665b96f4da4aa4053621b83d0e6e4a7cc120e",
+  "shape": "gitWorktree",
+  "selection_ref": "326926471ad7cb2107322848514d22ab454e51c60ecf4b9b9154147e5f633c96",
+  "call_id": "0ee59356-dc75-4121-9017-e993c48b284a",
+  "seq": 92771,
+  "role": "walk",
+  "id": "794adb0da1b066f6fde36a53b96244c42cd64826057af84e5ff80bb245c934b4"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "8ab96d97a6a29212524def3cdbbe6ffa73ee607c",
+  "carried": "commits",
+  "tree": "a8c3b570e60f4bad1beb371ac2c32cc671828ca8",
+  "shape": "gitWorktree",
+  "selection_ref": "05f072e0b2e33116aeb6f77b5df161307a60913d9e2356e59b1253d80a234086",
+  "call_id": "d44bc7ca-520a-40be-a0de-52757d861a0d",
+  "seq": 96142,
+  "role": "walk",
+  "id": "3f350e2e09206678afca264f7f700f09b91274a6cbc9b7d2e15eecff019c7520"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "e165d8b1bac0b004f2ee6230cfdc327232790895",
+  "carried": "commits",
+  "tree": "e047d1e32fc84b92f43b1121e6a141f3b67836d9",
+  "shape": "gitWorktree",
+  "selection_ref": "5bb0f71f2e9d74e321eb47f8e7bf20c693db7fff8e6806fe3b56ada702fb7886",
+  "call_id": "aad956b9-ca0d-4cf7-9a0b-0fb62629486e",
+  "seq": 96787,
+  "role": "walk",
+  "id": "c7c302c422876ae92d4da135ac0b89b30b23582f4357c6b0a07c07e2829b0536"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "beed1c54ec2738826a68ac2a9564297331815245",
+  "carried": "commits",
+  "tree": "a0e3e18a11461d0114ccf2ef17dc4f46f508447c",
+  "shape": "gitWorktree",
+  "selection_ref": "349c2a2bb461d9c21123fd65100e06100c836fe49427a7d7d67d10e1a43a1673",
+  "call_id": "e304eb73-5398-4b72-95a6-45ddba10770a",
+  "seq": 99342,
+  "role": "walk",
+  "id": "3fdd63a305a356b064ff9fc6adefe6ec78af3c3c6c5232278eb2ed9bd7600f4a"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "8d228a4a67e053e654670ac399ea664ef74632c2",
+  "carried": "commits",
+  "tree": "229aacf1e4791d939319bde92d985c367f332d28",
+  "committed_tree": "229aacf1e4791d939319bde92d985c367f332d28",
+  "shape": "gitWorktree",
+  "selection_ref": "52aa4e0e2a4727c778194468b779ec06e8fa0e5d360d2a4b94431a6b53ae356c",
+  "call_id": "69f59d24-cd57-4e4f-af47-912f071aab5d",
+  "seq": 100097,
+  "role": "walk",
+  "id": "dd2328692932aa76fc3df20547cf9c63cded28e9bd6da010b6d59f67a2af164d"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "ec6910e645c11681c445c113ff8c373d49342a09",
+  "carried": "commits",
+  "tree": "e140fb6645218a0d15b7eac9b4faee97db7886a8",
+  "committed_tree": "e140fb6645218a0d15b7eac9b4faee97db7886a8",
+  "shape": "gitWorktree",
+  "selection_ref": "52cab61ebb5453ec4e2efe6cc82a4e1338d09a9194aff8836173e97af29c4b81",
+  "call_id": "2bb9a4db-2d41-4dbc-9a25-e46f239ddd6a",
+  "seq": 102554,
+  "role": "walk",
+  "id": "dff3f8d061036a649a48b31243509746f9d0c55354ef490369f4d52e9f8e6b89"
+ },
+ {
+  "input_refs": [],
+  "shape": "requires",
+  "for": "git_diff",
+  "needs": "gitCommitResult",
+  "where": {
+   "committed_tree": {
+    "x-latest": {
+     "shapes": [
+      "gitCommitResult",
+      "gitWorktree",
+      "fileEditResult",
+      "fileWriteResult",
+      "codeInsertResult",
+      "codeReplaceResult",
+      "codeAddImportResult"
+     ],
+     "moves": [
+      "gitCommitResult",
+      "fileEditResult",
+      "fileWriteResult",
+      "codeInsertResult",
+      "codeReplaceResult",
+      "codeAddImportResult"
+     ],
+     "at": [
+      "gitWorktree"
+     ],
+     "same": "cwd",
+     "field": "committed_tree",
+     "continues": "gap_id"
+    }
+   }
+  },
+  "latest_by": "cwd",
+  "group": "committed",
+  "seq": 103031,
+  "role": "owner",
+  "id": "8bb98852c778fced9528736a9ad66b50fd1a699b222d80ac4dbfb5ce3f75e70b"
+ },
+ {
+  "input_refs": [],
+  "shape": "requires",
+  "for": "git_diff",
+  "needs": "gitWorktree",
+  "where": {
+   "committed_tree": {
+    "x-latest": {
+     "shapes": [
+      "gitCommitResult",
+      "gitWorktree",
+      "fileEditResult",
+      "fileWriteResult",
+      "codeInsertResult",
+      "codeReplaceResult",
+      "codeAddImportResult"
+     ],
+     "moves": [
+      "gitCommitResult",
+      "fileEditResult",
+      "fileWriteResult",
+      "codeInsertResult",
+      "codeReplaceResult",
+      "codeAddImportResult"
+     ],
+     "at": [
+      "gitWorktree"
+     ],
+     "same": "cwd",
+     "field": "committed_tree",
+     "continues": "gap_id"
+    }
+   }
+  },
+  "latest_by": "cwd",
+  "group": "committed",
+  "seq": 103032,
+  "role": "owner",
+  "id": "7ff7b489037452693b8f69a35fc0530d57ce285589d58907e63dc958f8142a06"
+ },
+ {
+  "input_refs": [
+   "609ec910b722a31ef6d7c05d7ec8db854907724371daaff861cb8720acd36cc5"
+  ],
+  "shape": "hop",
+  "call_id": "2f4d00f1-7638-46cb-8b78-05c393f45b43",
+  "phase": "started",
+  "kind": "call",
+  "selection_ref": "609ec910b722a31ef6d7c05d7ec8db854907724371daaff861cb8720acd36cc5",
+  "pointer_type": "fs_edit",
+  "seq": 104117,
+  "role": "walk",
+  "id": "2dbc4c154400597be256075a16a9447e65efc53596b7e9ad263d29b3ba944174"
+ },
+ {
+  "input_refs": [
+   "609ec910b722a31ef6d7c05d7ec8db854907724371daaff861cb8720acd36cc5"
+  ],
+  "shape": "hop",
+  "call_id": "2f4d00f1-7638-46cb-8b78-05c393f45b43",
+  "phase": "ended",
+  "kind": "call",
+  "selection_ref": "609ec910b722a31ef6d7c05d7ec8db854907724371daaff861cb8720acd36cc5",
+  "seq": 104118,
+  "role": "walk",
+  "id": "6bbc1a8815f6fa4a06db300ff688d5a1de80c8346e43e2aae7e0762d133c6414"
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "ok": true,
+  "cwd": "/trees/clone-a3cc",
+  "shape": "fileEditResult",
+  "selection_ref": "609ec910b722a31ef6d7c05d7ec8db854907724371daaff861cb8720acd36cc5",
+  "call_id": "2f4d00f1-7638-46cb-8b78-05c393f45b43",
+  "seq": 104119,
+  "role": "walk",
+  "id": "0db4ab03343b7520cf44c3b6e6955a69240caae08af27cf1ee10c48acccf4bd1",
+  "path": "/trees/clone-a3cc/README.md",
+  "clone": {
+   "shape": "gitWorktree",
+   "repo": "super",
+   "refreshed_from": "1933b2d463801793cbb3c022638a1000b8c73f1d",
+   "carried": "commits",
+   "tree": "c3ea21c97fda504bcd041291a13f3c953321ce0f",
+   "committed_tree": "c3ea21c97fda504bcd041291a13f3c953321ce0f",
+   "cwd": "/trees/clone-a3cc"
+  }
+ },
+ {
+  "input_refs": [
+   "a3cccd154ab400c982a7957d986688a5bfc185efdb1f86f671b344a0be2dc8e3"
+  ],
+  "cwd": "/trees/clone-a3cc",
+  "repo": "super",
+  "refreshed_from": "1933b2d463801793cbb3c022638a1000b8c73f1d",
+  "carried": "commits",
+  "tree": "c3ea21c97fda504bcd041291a13f3c953321ce0f",
+  "committed_tree": "c3ea21c97fda504bcd041291a13f3c953321ce0f",
+  "shape": "gitWorktree",
+  "selection_ref": "609ec910b722a31ef6d7c05d7ec8db854907724371daaff861cb8720acd36cc5",
+  "call_id": "2f4d00f1-7638-46cb-8b78-05c393f45b43",
+  "seq": 104120,
+  "role": "walk",
+  "id": "7da9e201883c5f16f9b174c801607f2efa5a35942c9870c353d0b2efce6d1b41"
+ }
+]

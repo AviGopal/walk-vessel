@@ -182,8 +182,10 @@ const recordAnswer = async (sel: Row, s: Served | undefined, body: Record<string
 // template's call): a produce's answer is a model's and never carries a row the walk would record as its own. And only
 // a row of a shape a vessel serving the called shape also serves, the rule recordAnswer holds an answer to: any
 // capability is a tool, so a refreshed row naming a verdict, a gap or an owner row is written by no one.
-// `clone`: the clone's state now (cwd, head, tree), from any tool answer, success or failure: a refresh that carried
-// commits, or a land refused on a tree it read. Recorded the same way. Tracked debt: `refreshed` is read beside it until
+// `clone`: the clone's state before the tool's own work (cwd, head, tree), from any tool answer, success or failure: a
+// refresh that carried commits, made before the tool ran. Recorded the same way, and before the tool's own row (or its
+// failure row), so the clone's rows are in the order their facts happened: a reader taking the clone's newest row
+// reads the tool's work (an edit, a commit) as newer than the refresh, as it was. Tracked debt: `refreshed` is read beside it until
 // node1's installed local-tools answers with `clone` only, then a follow-up commit drops the `refreshed` read.
 const recordRefreshed = async (sel: Row, called: string, body: Record<string, unknown>, callId: string): Promise<void> => {
   const r = body.clone ?? body.refreshed
@@ -318,6 +320,9 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
           return str(x.at) !== undefined && str(x.seq) !== undefined && str(x.id) !== undefined ? [{ at: x.at as string, seq: x.seq as string, id: x.id as string }] : []
         })
         .slice(0, 20)
+      // A clone the tool moved before it failed was moved all the same: the move is recorded, as on success, or the
+      // clone's rows would name a base it is no longer on. Before the failure row: the move came first.
+      if (kind === CALL || kind === RUN) await recordRefreshed(sel, String(pointer.type), answer, callId)
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
         body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
@@ -329,9 +334,6 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
         ...(resolved.length > 0 ? { seq_resolved: resolved } : {}),
         ...(Object.keys(spend).length > 0 ? { spend } : {}),
       })
-      // A clone the tool moved before it failed was moved all the same: the move is recorded, as on success, or the
-      // clone's rows would name a base it is no longer on.
-      if (kind === CALL || kind === RUN) await recordRefreshed(sel, String(pointer.type), answer, callId)
       return { ok: false }
     }
     // The call has ended well: nothing in what follows may unsettle it. A lookup that throws (discovery restarting) means
@@ -339,8 +341,8 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
     const served = kind === CALL || kind === RUN
       ? await answerServed(String(pointer.type), body as Record<string, unknown>).catch(() => undefined) : undefined
     await writeRow({ shape: HOP, call_id: callId, phase: ENDED, kind, selection_ref: sel.id, output: bounded(r.body, HOP_OUTPUT_MAX), input_refs: refs, ...unservedNote(served) })
-    await recordAnswer(sel, served, body as Record<string, unknown>, callId)
     if (kind === CALL || kind === RUN) await recordRefreshed(sel, String(pointer.type), body as Record<string, unknown>, callId)
+    await recordAnswer(sel, served, body as Record<string, unknown>, callId)
     return { ok: true, body: r.body }
   } catch (e) {
     if (stopping) return { ok: false }
