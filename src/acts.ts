@@ -78,8 +78,19 @@ export const actsFactRow = async (pool: Row[], root: string, write: (row: object
 // share a key, and only their bodies tell them apart.
 const OUTCOME_MAX = 300
 const BOOK = new Set([SELECTION, HOP, FAILURE])
-const stable = (v: unknown): string => JSON.stringify(v, (_k, x) => x !== null && typeof x === "object" && !Array.isArray(x)
+export const stable = (v: unknown): string => JSON.stringify(v, (_k, x) => x !== null && typeof x === "object" && !Array.isArray(x)
   ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))) : x)
+// A produce judging the same thing the same way: which field names the thing judged (repeat_key) and which the way it
+// was judged (repeat_value) is the owner's word, on the produced shape's schema row (a land verdict: the tree, and r),
+// read for any target; a schema naming none has no such repeat. The newest owner row per target decides.
+export const repeatKeysOf = (pool: Row[]): Map<string, { key: string; value: string }> => {
+  const keyed = new Map<string, { key: string; value: string }>()
+  for (const sc of pool.filter((r) => r.shape === SHAPE_SCHEMA && r.role === OWNER && String(r.variant ?? "") === "").sort((a, b) => a.seq - b.seq)) {
+    if (typeof sc.repeat_key === "string" && sc.repeat_key !== "" && typeof sc.repeat_value === "string" && sc.repeat_value !== "") keyed.set(String(sc.target), { key: sc.repeat_key, value: sc.repeat_value })
+    else keyed.delete(String(sc.target))
+  }
+  return keyed
+}
 const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
   const byId = new Map(pool.map((r) => [r.id, r]))
   const started = new Map(pool.filter((r) => r.shape === HOP && r.role === WALK && r.phase === STARTED).map((h) => [String(h.call_id), h]))
@@ -169,15 +180,7 @@ const repeatsOf = (pool: Row[], mine: Set<string>): Repeat[] => {
     const run = streak(fs, () => true, () => new Set([target]))
     if (run.length >= 2) out.push({ produce: target, on: "refused", outcome: String(run.at(-1)!.body ?? "").slice(0, OUTCOME_MAX), n: run.length, since_seq: run[0].seq })
   }
-  // a produce judging the same thing the same way: which field names the thing judged (repeat_key) and which the way it
-  // was judged (repeat_value) is the owner's word, on the produced shape's schema row (a land verdict: the tree, and r),
-  // read for any target; a schema naming none has no such repeat
-  const keyed = new Map<string, { key: string; value: string }>()
-  for (const sc of pool.filter((r) => r.shape === SHAPE_SCHEMA && r.role === OWNER && String(r.variant ?? "") === "").sort((a, b) => a.seq - b.seq)) {
-    if (typeof sc.repeat_key === "string" && sc.repeat_key !== "" && typeof sc.repeat_value === "string" && sc.repeat_value !== "") keyed.set(String(sc.target), { key: sc.repeat_key, value: sc.repeat_value })
-    else keyed.delete(String(sc.target))
-  }
-  for (const [target, { key, value }] of keyed) {
+  for (const [target, { key, value }] of repeatKeysOf(pool)) {
     const made = pool.filter((r) => r.shape === target && mine.has(String(r.selection_ref)) && (typeof r[key] === "string" || typeof r[key] === "number")).sort((a, b) => a.seq - b.seq)
     const byKey = new Map<string, Row[]>()
     for (const v of made) byKey.set(String(v[key]), [...(byKey.get(String(v[key])) ?? []), v])

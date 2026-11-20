@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
 import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists } from "./calls"
 import { callProblem, shownValue } from "./inputs"
+import { repeatKeysOf, stable } from "./acts"
 import { VESSEL_ID } from "./config"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, CLONE_BINDING, DUE, FAILURE, HOP, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
@@ -323,6 +324,20 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       if (seen.has(content)) repeats.add(r.id)
       seen.add(content)
       had.set(kind, seen)
+    }
+    // A produced row that judges the same thing the same way as the one before it is a repeat too, by the owner's word on
+    // its schema row (repeat_key, repeat_value: a land verdict's tree and r, as request_acts reads them): a second r 0
+    // on a tree already refused says nothing new, yet it made every producer that reads verdicts due again, so a tree
+    // refused 40 times was explained, and drafted on, 40 times. Within one root, role and writer: a person's verdict is
+    // never absorbed by a grader's, another grader's is its own evidence with its own why, and a different r is news.
+    for (const [target, { key: k, value: v }] of repeatKeysOf(pool)) {
+      const last = new Map<string, string>()
+      for (const r of pool.filter((x) => x.shape === target && (typeof x[k] === "string" || typeof x[k] === "number")).sort((a, b) => a.seq - b.seq)) {
+        const at = JSON.stringify([String(r.root ?? madeFor(r)), String(r.role), String(r.writer), String(r[k])])
+        // the first row under a key repeats nothing, whatever its value, even one it lacks
+        if (last.has(at) && last.get(at) === stable(r[v])) repeats.add(r.id)
+        last.set(at, stable(r[v]))
+      }
     }
   }
   const brought = (r: Row): boolean => informs(r) && !repeats.has(r.id)
