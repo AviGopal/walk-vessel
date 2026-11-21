@@ -324,9 +324,15 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const at = (o: unknown, path: string): unknown => path.split(".").reduce<unknown>((v, k) => (typeof v === "object" && v !== null ? (v as Record<string, unknown>)[k] : undefined), o)
     const had = new Map<string, Set<string>>()
     const LEFT_OUT = new Set(["id", "seq", "t", "call_id", "selection_ref", "input_refs", "writer"])
+    // A row another writer made (a detector writing a gap again) is weighed so too when the owner names its shape's
+    // news_key: a gap restated with nothing the key names changed (its claim's wording, a stamp) tells no producer
+    // anything, and was judged again on every restatement (a tree already refused re-judged on three later roots). Such
+    // rows are compared by writer role and shape across roots, since each restatement is its own root; the key's fields
+    // (the gap's id among them) tell one thing from another.
     for (const r of [...pool].sort((a, b) => a.seq - b.seq)) {
-      if (r.role !== WALK || (BOOKKEEPING.has(r.shape) && !informs(r))) continue
-      const kind = `${madeFor(r)}|${r.shape === HOP ? `hop:${typeOf.get(String(r.call_id)) ?? ""}` : r.shape}`
+      const other = r.role !== WALK && keyOf.has(String(r.shape))
+      if ((r.role !== WALK && !other) || (BOOKKEEPING.has(r.shape) && !informs(r))) continue
+      const kind = other ? `${String(r.role)}|${r.shape}` : `${madeFor(r)}|${r.shape === HOP ? `hop:${typeOf.get(String(r.call_id)) ?? ""}` : r.shape}`
       const subject = (r.shape === HOP ? r.output : r) as Row | undefined
       const keyed = keyOf.get(String(subject?.shape))?.map((f): [string, unknown] => [f, at(subject, f)])
       const content = keyed !== undefined && keyed.some(([, v]) => v !== undefined) ? JSON.stringify(keyed)
