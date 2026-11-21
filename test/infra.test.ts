@@ -11,8 +11,8 @@ let refuse = false
 // record_write: "reset" appends the row and then loses the answer; "refused" never connects
 let writeFault: "reset" | "refused" | undefined
 // answered before any other answer, each taking one: discovery's gate saying identity could not decide ("gate"), or a
-// callee's own 503 ("callee"); the row is not stored by either
-let answers503: Array<"gate" | "callee"> = []
+// callee's own 503 ("callee"), or a 503 whose body is no JSON at all, as a proxy gives ("text"); the row is not stored
+let answers503: Array<"gate" | "callee" | "text"> = []
 const stored: Array<Record<string, any>> = []
 const sent: Array<Record<string, any>> = []
 let exited = 0
@@ -38,6 +38,7 @@ beforeEach(() => {
     const a503 = answers503.shift()
     if (a503 === "gate") return Response.json({ error: { code: "IDENTITY_UNAVAILABLE", reason: "identity_http_error" } }, { status: 503 })
     if (a503 === "callee") return Response.json({ error: { code: "UPSTREAM_DOWN" } }, { status: 503 })
+    if (a503 === "text") return new Response("upstream unavailable", { status: 503 })
     if (pointer.type === "record_write" && writeFault !== undefined) {
       const f = writeFault
       writeFault = undefined
@@ -123,6 +124,14 @@ describe("a call that gets no answer", () => {
     const { writeRow } = await import("../src/calls")
     exited = 0; stored.length = 0; answers503 = ["callee"]
     await writeRow({ shape: "hop", n: 4 }).catch(() => undefined)
+    expect([stored.length, exited]).toEqual([0, 1])
+    answers503 = []
+  })
+
+  test("[GUARD] a 503 whose body is no JSON is no gate hold: a write that may have landed stops the walk, not written again", async () => {
+    const { writeRow } = await import("../src/calls")
+    exited = 0; stored.length = 0; answers503 = ["text"]
+    await writeRow({ shape: "hop", n: 5 }).catch(() => undefined)
     expect([stored.length, exited]).toEqual([0, 1])
     answers503 = []
   })
