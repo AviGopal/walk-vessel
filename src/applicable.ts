@@ -138,11 +138,21 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     return typeof field === "string" ? pointer?.[field] : v
   }
   // an input entry {shape, where} is here only when a row of its shape meets its where (an older tree's diff is not a
-  // diff of the clone's newest tree); an entry naming no where is here when its shape is, as before
+  // diff of the clone's newest tree); an entry naming no where is here when its shape is, as before. With latest_by, only
+  // the latest row per value of that field is read, and where is met by it or not at all: what a thing stands at now, as
+  // records' reads and the owner's requires take it, so a gap whose latest row no longer says localized false is no
+  // longer one, though an older row of it did.
+  const latestPer = (rows: Row[], by: unknown): Row[] => {
+    if (typeof by !== "string") return rows
+    const latest = new Map<string, Row>()
+    for (const r of rows.filter((x) => x[by] !== undefined).sort((a, b) => a.seq - b.seq)) latest.set(JSON.stringify(r[by]), r)
+    return [...latest.values()]
+  }
   const entryHere = (e: unknown): boolean => {
     const where = typeof e === "object" && e !== null ? (e as { where?: unknown }).where : undefined
     if (typeof where !== "object" || where === null) return have.has(shapeOf(e))
-    return pool.some((r) => r.shape === shapeOf(e) && Object.entries(where as Record<string, unknown>).every(([k, v]) => {
+    const by = (e as { latest_by?: unknown }).latest_by
+    return latestPer(pool.filter((r) => r.shape === shapeOf(e)), by).some((r) => Object.entries(where as Record<string, unknown>).every(([k, v]) => {
       const want = boundValue(v, undefined)
       return want !== undefined && JSON.stringify(r[k]) === JSON.stringify(want)
     }))
@@ -376,7 +386,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const key = (ids: string[]): string => createHash("sha256").update([...new Set(ids)].sort().join(",")).digest("hex")
   const seen = (s: Row) => {
     const entries = [s.inputs, s.context ?? []].flat()
-    const shapes = new Set(entries.map(shapeOf))
+    // An {answers_a_call: true} entry names no shape: it reads a tool's answer, of whatever shape (described-shape admits
+    // a row so). Read by its shape it named none, and no call's answer was ever news to a producer asking for them.
+    const admits = (e: unknown, r: Row): boolean => typeof e === "object" && e !== null && (e as { answers_a_call?: unknown }).answers_a_call === true
+      ? r.role === WALK && r.shape !== HOP && typeof r.call_id === "string"
+      : r.shape === shapeOf(e)
+    const reads = (r: Row): boolean => entries.some((e) => admits(e, r))
     // An entry with latest_by shows the producer only the newest row per value of that field (described-shape reads it
     // so), so an older row of it is not something the producer saw: counted here, a produce that cited only the newest
     // would never read as having seen what it would see now, and would be asked again forever. A repeat (a row saying
@@ -388,7 +403,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       const by = typeof e === "object" && e !== null ? (e as { latest_by?: unknown }).latest_by : undefined
       if (typeof by !== "string") continue
       const newest = new Map<string, Row>()
-      for (const r of pool.filter((x) => x.shape === shapeOf(e) && !repeats.has(x.id)).sort((a, b) => a.seq - b.seq)) {
+      for (const r of pool.filter((x) => admits(e, x) && !repeats.has(x.id)).sort((a, b) => a.seq - b.seq)) {
         const k = JSON.stringify(r[by])
         const was = newest.get(k)
         if (was !== undefined) older.add(was.id)
@@ -398,12 +413,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     // A root the walk said sat with no move (its stall row, citing the root) is news, once, to a schema that reads such
     // a row (an entry of its shape whose where it meets): the producer is offered again and shown that it sat, at the
     // next choice (law 8). Once that produce has seen it, it is old; the next is said only after N more store rows.
-    const takes = (r: Row): boolean => entries.some((e) => shapeOf(e) === r.shape &&
+    const takes = (r: Row): boolean => entries.some((e) => admits(e, r) &&
       Object.entries(((typeof e === "object" && e !== null ? (e as { where?: unknown }).where : undefined) ?? {}) as Record<string, unknown>)
         .every(([k, v]) => JSON.stringify(r[k]) === JSON.stringify(v)))
     const stalled = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === STALL && r.selection_ref === undefined && takes(r)
     return (r: Row | undefined): boolean =>
-      r !== undefined && shapes.has(r.shape) && !older.has(r.id) && !repeats.has(r.id) &&
+      r !== undefined && reads(r) && !older.has(r.id) && !repeats.has(r.id) &&
       !(r.role === WALK && BOOKKEEPING.has(r.shape) && !brought(r) && !spoke(r) && !held(r) && !stalled(r))
   }
   // A produce the producer refused as not fitting the schema is not held: it is offered again like any produce, with the
