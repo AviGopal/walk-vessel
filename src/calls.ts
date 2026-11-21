@@ -39,9 +39,20 @@ export const ENDED = "ended"
 // blames it on the callee: no writer is debited, and the walk-failure detector files it as infra).
 // unsent: the connection was refused, so the call provably never reached its callee (a reset or a broken body may come
 // after the callee acted).
+// Discovery's auth gate answering that identity could not decide on the walk's key is both: the call was stopped before
+// it was forwarded, and nothing was said about the key, so it is asked again as an outage is, a write included.
 type Answer = { ok: boolean; status: number; body: unknown; text: string; infra?: true; unsent?: true }
 // The errors that say a connection was never made (Bun's and Node's names for it).
 const NEVER_CONNECTED = new Set(["ConnectionRefused", "ECONNREFUSED"])
+// Discovery's answer when identity could not decide on a key (a fault, a rate limit, a timeout): no verdict on it.
+export const gateUndecided = (status: number, text: string): boolean => {
+  if (status !== 503) return false
+  try {
+    return (JSON.parse(text) as { error?: { code?: unknown } } | null)?.error?.code === "IDENTITY_UNAVAILABLE"
+  } catch {
+    return false
+  }
+}
 
 // Every call the walk makes goes through here, and none throws (agf_v6jjy70pfiis: an ECONNRESET thrown out of a read the
 // walk needed killed the process, and every call then in flight was cut): an error on the way is an answer, infra.
@@ -55,7 +66,8 @@ const resolve = async (pointer: object): Promise<Answer> => {
   try {
     const r = await fetch(new URL(RESOLVE, DISCOVERY_URL).href, init)
     if (!r.ok) {
-      return { ok: false, status: r.status, body: null, text: await r.text() }
+      const text = await r.text()
+      return { ok: false, status: r.status, body: null, text, ...(gateUndecided(r.status, text) ? { infra: true as const, unsent: true as const } : {}) }
     }
     return { ok: true, status: r.status, body: (await r.json()) as unknown, text: "" }
   } catch (e) {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { DISCOVERY_URL, ENDPOINT, KEY, VESSEL_ID } from "./config"
-import { READ_AGAIN_MS, READ_WAIT_MS } from "./calls"
+import { gateUndecided, READ_AGAIN_MS, READ_WAIT_MS } from "./calls"
 import { AUTH_SCHEME, HEARTBEAT, REGISTER } from "./routes"
 
 type Answer = { nextHeartbeatMs: number }
@@ -15,13 +15,20 @@ const post = async (path: string, payload: object): Promise<Answer> => {
     timeout: false,
   }
   // As every call the walk makes (calls.ts resolve): an error on the way is an outage, asked again within READ_WAIT_MS,
-  // never a throw out of the heartbeat that ends the walk with its calls in flight. A refusal still stops it.
+  // never a throw out of the heartbeat that ends the walk with its calls in flight, and so is discovery saying identity could
+  // not decide on the key (calls.ts gateUndecided). A refusal still stops it.
   const start = Date.now()
   for (;;) {
     try {
       const r = await fetch(new URL(path, DISCOVERY_URL).href, init)
       if (!r.ok) {
-        console.error(`${path} answered ${r.status}: ${await r.text()}`)
+        const text = await r.text()
+        if (gateUndecided(r.status, text) && Date.now() - start < READ_WAIT_MS) {
+          console.error(`${path} answered ${r.status}: ${text}; asking again`)
+          await Bun.sleep(READ_AGAIN_MS)
+          continue
+        }
+        console.error(`${path} answered ${r.status}: ${text}`)
         process.exit(1)
       }
       return (await r.json()) as Answer
