@@ -164,6 +164,25 @@ describe("a call that gets no answer", () => {
     expect(exited).toBeGreaterThan(0)
   })
 
+  for (const [what, answer] of [
+    ["a 401", () => Response.json({ error: { code: "INVALID_API_KEY" } }, { status: 401 })],
+    ["a 503 that is no gate hold", () => Response.json({ error: { code: "UPSTREAM_DOWN" } }, { status: 503 })],
+  ] as const) {
+    test(`[GUARD] a register refused with ${what} is sent once and stops the walk: only a gate hold is asked again`, async () => {
+      const paths: string[] = []
+      globalThis.fetch = (async (url: unknown) => { paths.push(new URL(String(url)).pathname); return answer() }) as typeof fetch
+      // the stub exit throws inside post's try, where the catch would ask again as for an outage; a real exit ends the
+      // process there, so the stub also spends the wait, and the catch stops at once (a second, counted exit)
+      const { READ_WAIT_MS } = await import("../src/calls")
+      exited = 0
+      process.exit = ((() => { exited++; setSystemTime(new Date(Date.now() + READ_WAIT_MS + 1)); throw new Error("exited") }) as unknown) as typeof process.exit
+      const { register } = await import("../src/heartbeat")
+      await register(["x"]).catch(() => undefined)
+      setSystemTime()
+      expect([paths.length, exited > 0]).toEqual([1, true])
+    })
+  }
+
   test("[MUST-FAIL] a tool call that gets no answer is recorded as unanswered (status 0, blamed on no writer), never thrown", async () => {
     throwsLeft = 1; refuse = false; exited = 0; sent.length = 0
     const { execute } = await import("../src/calls")
