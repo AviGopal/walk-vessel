@@ -388,8 +388,10 @@ const produceRunner: Runner = async (c, sel, pool) => {
   await once(sel, PRODUCE, pointer, callId)
 }
 
+// The wait names the walk (episode), as its reads do: records ends it on a detector's row it shows one of this walk's
+// open roots (a shape served again where it went unserved), which it can tell only for a walk it knows.
 const waitForRunner: Runner = async (c, sel) => {
-  const pointer = { ...c.pointer, type: RECORD_WAIT, after_seq: sel.posts_seq }
+  const pointer = { ...c.pointer, type: RECORD_WAIT, after_seq: sel.posts_seq, episode: VESSEL_ID }
   await once(sel, WAIT_FOR, pointer, crypto.randomUUID())
 }
 

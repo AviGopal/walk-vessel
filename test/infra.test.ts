@@ -183,6 +183,14 @@ describe("a call that gets no answer", () => {
     })
   }
 
+  test("[MUST-FAIL] the walk's wait names the walk, so records can end it on a row it shows one of this walk's roots", async () => {
+    refuse = false; exited = 0; sent.length = 0
+    const { execute } = await import("../src/calls")
+    const sel = { shape: "selection", id: "sel-w", seq: 7, posts_seq: 7, pool_refs: [] }
+    await execute({ id: "wait-for", kind: "wait-for", pointer: { shapes: [] }, t: "", calls: [] } as any, sel as any)
+    expect(sent.find((p) => p.type === "record_wait")).toMatchObject({ shapes: [], after_seq: 7, episode: "walk-test" })
+  })
+
   test("[MUST-FAIL] a tool call that gets no answer is recorded as unanswered (status 0, blamed on no writer), never thrown", async () => {
     throwsLeft = 1; refuse = false; exited = 0; sent.length = 0
     const { execute } = await import("../src/calls")
