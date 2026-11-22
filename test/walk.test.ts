@@ -1329,6 +1329,12 @@ describe("candidates", () => {
       } finally {
         served.delete("fs_edit")
       }
+      // keyed by its own shape and its own holds: another shape's row newer than the request, and another row's hold
+      // newer than the install, are not the request's
+      expect(await onRoot([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), { shape: "gitWorktree", id: "x1", seq: 9, role: "walk" }]))
+        .toContain("produce/request/ch1")
+      expect(await onRoot([askR, ch, schema, { shape: "gitWorktree", id: "x1", seq: 4, role: "walk" }, q("q-old", 5), held("h1", 6, "q-old"),
+        install(8, [{ repo: "r-gap", commit: "c1" }]), held("hx", 9, "x1")])).toContain("produce/request/ch1")
       // once per install: made again after it, and held again, it waits for the next
       expect(await onRoot([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), q("q-new", 12), held("h2", 13, "q-new")])).not.toContain("produce/request/ch1")
       // the repo as a gap and pull-sync each spell it: the bare repo name
@@ -1441,6 +1447,13 @@ describe("candidates", () => {
       expect(await calls([...base, iw])).toBe(false)
       expect(await calls([...base, iw, req("q3", 10)])).toBe(true)
       expect(await calls([...base, install(8, [{ repo: "r-other", commit: "c1" }]), req("q3", 10)])).toBe(false)
+      // keyed by the call: another call's refusal, newer than the install, leaves this call's window open
+      const other = (n: number, seq: number) => [
+        { shape: "request", id: `qo${n}`, seq, role: "described", pointer: { type: "fs_read", path: "/x" }, input_refs: ["w1"] },
+        { shape: "selection", id: `so${n}`, seq: seq + 1, role: "walk", a: "call/fs_read", from: `qo${n}`, root: "w1" },
+        { shape: "hop", id: `ho${n}`, seq: seq + 2, role: "walk", phase: "started", kind: "call", call_id: `co${n}`, pointer_type: "fs_read", selection_ref: `so${n}` },
+        { shape: "failure", id: `fo${n}`, seq: seq + 3, role: "walk", call_id: `co${n}`, selection_ref: `so${n}`, status: 200, blames: "request", body: "no such file" }]
+      expect(await calls([askR, req("q1", 2), ...refusal(1, 3, "q1"), iw, ...other(1, 9), req("q3", 14)])).toBe(true)
       // the vessel serving the call, installed: the same one try; a vessel not serving it is no news
       expect(await calls([...base, install(8, [{ repo: "r-tool", commit: "c1", vessel: "producer-x" }]), req("q3", 10)])).toBe(true)
       expect(await calls([...base, install(8, [{ repo: "r-tool", commit: "c1", vessel: "v-other" }]), req("q3", 10)])).toBe(false)
