@@ -2034,6 +2034,64 @@ describe("a learned template's calls", () => {
     expect(skipped?.selection_ref).toBe("sel-big")
   })
 
+  test("[MUST-FAIL] a too-big answer's failure row says to the producer what follows: the same call cannot meet what requires its shape, read it in parts", async () => {
+    sent.length = 0
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      sent.push(pointer)
+      if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
+      if (pointer.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "tools" }] } })
+      return Response.json({ shape: "fileContent", path: "src/big.ts", content: "x".repeat(120_000) })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    await execute({ id: "run/t5", kind: "run", pointer: {}, t: "", calls: [{ shape: "fs_read", pointer: { path: "src/big.ts" } }] },
+      { shape: "selection", id: "sel-big2", seq: 14, pool_refs: ["w1"], from: "q1" })
+    const rows = sent.filter((p) => p.type === "record_write").map((p) => p.row)
+    const skipped = rows.find((r) => r.shape === "failure" && r.kind === "too_big")
+    const body = String(skipped?.body)
+    expect(body).toContain(`fileContent of ${skipped?.bytes} bytes`)
+    expect(body).toContain(`(${96 * 1024})`)
+    expect(body).toContain("what requires a fileContent row cannot be met from this call")
+    expect(body).toContain("in parts")
+
+    // ...and the request's producer is shown it: the row execute wrote, in the pool, offers the request's producer again
+    // (a schema whose context reads failures), once; a producer that saw it is not offered again over it
+    const { applicable } = await import("../src/applicable")
+    const pool = [
+      { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "x", status: "open" },
+      { shape: "channel", id: "ch1", seq: 2, calls: [] },
+      { shape: "shape_schema", id: "s1", seq: 3, target: "answer", inputs: ["gap"], context: ["failure"] },
+      { shape: "answer", id: "v1", seq: 4, role: "described", r: 0, input_refs: ["g1"] },
+    ]
+    const tb = { ...skipped, id: "tb1", seq: 5, role: "walk" }
+    const offered = async (rs: any[]) => (await applicable(rs)).some((c) => c.id === "produce/answer/ch1")
+    expect(await offered(pool)).toBe(false)
+    expect(await offered([...pool, tb])).toBe(true)
+    const saw = [...pool, tb, { shape: "answer", id: "v2", seq: 6, role: "described", r: 0, input_refs: ["g1", "tb1"] }]
+    expect(await offered(saw)).toBe(false)
+    // told once per reason: the same read again, too big the same way, is not news; one too big another way is
+    expect(await offered([...saw, { ...tb, id: "tb2", seq: 7 }])).toBe(false)
+    const other = String(skipped?.unserved?.[0]).replace(`of ${skipped?.bytes} bytes`, `of ${Number(skipped?.bytes) + 1} bytes`)
+    expect(await offered([...saw, { ...tb, id: "tb3", seq: 7, bytes: Number(skipped?.bytes) + 1, body: other, unserved: [other] }])).toBe(true)
+  })
+
+  test("[GUARD] a too-big answer to a call no request made (a template's run) names no request and is not shown as a reason", async () => {
+    sent.length = 0
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, any> }
+      sent.push(pointer)
+      if (pointer.type === "record_write") return Response.json({ ...pointer.row, id: "r", seq: 1 })
+      if (pointer.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "tools" }] } })
+      return Response.json({ shape: "fileContent", path: "src/big.ts", content: "x".repeat(120_000) })
+    }) as typeof fetch
+    const { execute } = await import("../src/calls")
+    await execute({ id: "run/t6", kind: "run", pointer: {}, t: "", calls: [{ shape: "fs_read", pointer: { path: "src/big.ts" } }] },
+      { shape: "selection", id: "sel-big3", seq: 15, pool_refs: ["w1"] })
+    const skipped = sent.filter((p) => p.type === "record_write").map((p) => p.row).find((r) => r.shape === "failure" && r.kind === "too_big")
+    expect(skipped?.request_ref).toBeUndefined()
+    expect(skipped?.unserved).toBeUndefined()
+  })
+
   test("[MUST-FAIL] an answer whose shape no vessel advertises is said on its hop, with no failure row; one advertised by the tool's vessel is a row citing the request", async () => {
     const run = async (servedBy: Record<string, string>) => {
       sent.length = 0

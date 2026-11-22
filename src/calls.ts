@@ -176,10 +176,17 @@ const recordAnswer = async (sel: Row, s: Served | undefined, body: Record<string
   if (!mine || !its || ![...its].some((v) => mine.has(v))) return
   const fields = Object.fromEntries(Object.entries(body).filter(([k]) => !OWN_FIELDS.has(k)))
   // An answer too big to read whole is not made a row: every prompt that took it as an input would carry it. The skip is
-  // a failure row, so a landing that waits for that row is not left waiting on silence.
+  // a failure row, so a landing that waits for that row is not left waiting on silence. Its body says what follows for
+  // the producer that reads it: whatever requires a row of that shape cannot be met by asking the same call again, and
+  // the way through is a call that answers a part. A call made for a request (the selection's from) names it as a held
+  // reason does (request_ref, the reason in unserved), so the request's producer is shown it once per reason, as it is
+  // shown why its call was held; the walk's other failures stay bookkeeping it is not shown.
   const bytes = JSON.stringify(fields).length
   if (bytes > RECORDED_MAX) {
-    await writeRow({ shape: FAILURE, kind: "too_big", call_id: callId, selection_ref: sel.id, unrecorded: shape, bytes, input_refs: [sel.id] })
+    const body = `${shape} of ${bytes} bytes is over what a row holds (${RECORDED_MAX}), so it is not kept: what requires a ` +
+      `${shape} row cannot be met from this call, and asking it again answers the same; read and change it in parts (a call answering a line range)`
+    const held = typeof sel.from === "string" ? { request_ref: sel.from, unserved: [body] } : {}
+    await writeRow({ shape: FAILURE, kind: "too_big", call_id: callId, selection_ref: sel.id, unrecorded: shape, bytes, body, ...held, input_refs: [sel.id] })
     return
   }
   // It cites the request it was made for (the selection's root): what a reader needs to tie it to that request, without

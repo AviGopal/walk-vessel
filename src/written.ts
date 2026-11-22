@@ -26,7 +26,9 @@ export const WRITTEN: Record<string, string> = {
     "template the walk did not run because a shape it calls (unserved) is served by nothing or not yet allowed " +
     "(template_ref), or a request whose call the owner's preconditions do not yet allow (request_ref, unserved naming " +
     "what it requires); or, with kind " +
-    "too_big, an answer not kept as a row of its shape (unrecorded) because it was bytes long; or, with kind " +
+    "too_big, an answer not kept as a row of its shape (unrecorded) because it was bytes long, its body saying what " +
+    "follows (what requires that shape is not met by this call; read it in parts), and, for a request's call, the " +
+    "request (request_ref) with that reason in unserved, so its producer is shown it; or, with kind " +
     "unrunnable, a move of a kind the walk cannot run; or, with status 0 and body saying so, a call the walk was " +
     "stopped in the middle of.",
 }
