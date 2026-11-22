@@ -8,20 +8,23 @@ import { FAILURE, HOP, SELECTION } from "./shapes"
 export const WRITTEN: Record<string, string> = {
   [REQUEST_ACTS]: "What a request has already done, from its own rows: acts (each call of a tool the owner gates on a " +
     "wanted change: tool, ok, at_seq, and path, repo or sha when its answer gave one) and not_called (those tools never " +
-    "called on it). It covers only those tools, the ones that change something: of them, only the calls listed in acts " +
-    "happened on that request (reads and other calls are not listed). A template (activity_template) is a plan for the " +
-    "request that wrote it, never an act on another. repeats: a step this request keeps repeating with the same result " +
-    "over the same inputs (a call failing the same way, or the same tree graded the same way), n times in a row with " +
-    "nothing new in between or since: nothing new is a person's or the owner's row, or a tool's answer saying something " +
-    "new that the repeating step takes in. gated: each gated call not yet allowed here and what it needs, as of " +
-    "this row (a need \"for the target the call names\" holds per target). Written by the walk when it changes.",
+    "called on it). Only those tools, the ones that change something: reads and other calls are not listed. A " +
+    "template (activity_template) is a plan for the request that wrote it, never an act on another. repeats: a step it " +
+    "keeps repeating with the same result over the same inputs (the same failure, or a tree graded the same), " +
+    "n times, nothing new since: a person's or the owner's row, or an answer the step takes in. gated: each gated " +
+    "call not yet allowed here and what it needs (a need \"for the target the call names\" holds per target). frontier: " +
+    "its newest made row {id, shape}; calls: the only calls a request over it may name, those whose requires take that " +
+    "shape (another is not called, and the skip says why); frontier_widened: none does, so every call is open. Written " +
+    "by the walk when it changes.",
   [HOP]: "The record of one call the walk made, not a shape to call. pointer_type is the shape it called; kind (produce, " +
     "call, run or wait-for; wait-until on older rows) is how the walk chose the call, never a shape to call. Also phase (started or " +
     "ended), selection_ref, until on a wait (the deadline it waited by) and, on ended, output: what came back, and " +
     "unrecorded {shape, why} when that answer's shape is one no vessel serves, so it was kept only here, not as a row of it.",
   [SELECTION]: "The walk's choice at one step: the candidates it had (cands) with their posteriors, the one it chose (a), " +
     "its cell and context, arm (treated or control, which decides whether a grade credits it), pool_refs, the rows " +
-    "it saw, and timing: how long the tick's parts took (ms) and how many tries each read needed. Timing is never a key.",
+    "it saw, and timing: how long the tick's parts took (ms) and how many tries each read needed. Timing is never a key. " +
+    "frontier, calls and frontier_widened: the chosen root's newest made row and the calls a request over it may name, " +
+    "as request_acts says them.",
   [FAILURE]: "A call that did not end well, with the status and body the producer answered; or, with kind skip, a " +
     "template the walk did not run because a shape it calls (unserved) is served by nothing or not yet allowed " +
     "(template_ref), or a request whose call the owner's preconditions do not yet allow (request_ref, unserved naming " +

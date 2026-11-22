@@ -4,6 +4,7 @@
 // edit, then asked for the same edit, blind), and one shown a plan's steps reads them as done (an answer said "landed"
 // on a request with no landing). The fact states only what happened here; what to do next is the producer's to infer.
 // It is a memo of the request's own rows: the same rows always give the same fact, and nothing else goes in it.
+import type { Frontier } from "./applicable"
 import { ENDED, type Row, STARTED } from "./calls"
 import { CALL, FAILURE, HOP, OWNER, PERSON, REQUIRES, RUN, SELECTION, SHAPE_SCHEMA, WALK } from "./shapes"
 
@@ -15,7 +16,13 @@ export type Act = { tool: string; at_seq: number; ok: boolean; status?: number; 
 // A step this request keeps repeating with the same result over the same inputs: a call failing the same way, or a
 // produce judging the same thing the same way. n is how many times in a row, with nothing new in between or since.
 export type Repeat = { call?: string; produce?: string; on: string; outcome: string; n: number; since_seq: number }
-export type Acts = { root: string; acts: Act[]; not_called: string[]; repeats: Repeat[]; gated?: Record<string, string[]> }
+export type Acts = { root: string; acts: Act[]; not_called: string[]; repeats: Repeat[]; gated?: Record<string, string[]>
+  frontier?: { id: string; shape: string }; calls?: string[]; frontier_widened?: true }
+// The frontier as a row says it: the row and the calls that take it, or, when none is named, that every call is open.
+export const frontierFields = (f: Frontier): Pick<Acts, "frontier" | "calls" | "frontier_widened"> => ({
+  ...(f.id !== undefined && f.shape !== undefined ? { frontier: { id: f.id, shape: f.shape } } : {}),
+  ...(f.widened ? { frontier_widened: true as const } : { calls: f.calls }),
+})
 
 const pick = (r: Row | undefined): Partial<Act> => {
   if (r === undefined) return {}
@@ -53,11 +60,12 @@ export const actsOf = (pool: Row[], root: string): Acts => {
 // produce.
 // gated: what each gated call still needs on this root, as of this row (the walk's own reading, applicable.ts); a change
 // in it is a change of state, so the newest row says what is gated now.
-export const actsFactRow = async (pool: Row[], root: string, write: (row: object) => Promise<Row>, sel?: string, gated: Record<string, string[]> = {}): Promise<string | undefined> => {
-  const now = { ...actsOf(pool, root), gated }
+export const actsFactRow = async (pool: Row[], root: string, write: (row: object) => Promise<Row>, sel?: string, gated: Record<string, string[]> = {}, frontier?: Frontier): Promise<string | undefined> => {
+  const now = { ...actsOf(pool, root), gated, ...(frontier !== undefined ? frontierFields(frontier) : {}) }
   const last = pool.filter((r) => r.shape === REQUEST_ACTS && r.role === WALK && String(r.root) === root).sort((a, b) => a.seq - b.seq).at(-1)
-  const same = last !== undefined && JSON.stringify({ acts: last.acts, not_called: last.not_called, repeats: last.repeats ?? [], gated: last.gated ?? {} }) ===
-    JSON.stringify({ acts: now.acts, not_called: now.not_called, repeats: now.repeats, gated: now.gated })
+  const scope = (x: Partial<Acts>) => ({ frontier: x.frontier ?? null, calls: x.calls ?? null, widened: x.frontier_widened ?? null })
+  const same = last !== undefined && JSON.stringify({ acts: last.acts, not_called: last.not_called, repeats: last.repeats ?? [], gated: last.gated ?? {}, ...scope(last as Partial<Acts>) }) ===
+    JSON.stringify({ acts: now.acts, not_called: now.not_called, repeats: now.repeats, gated: now.gated, ...scope(now) })
   if (same) return last.id
   // A write that fails leaves the produce without the fact; said in the journal, so a missing fact is seen, and tried
   // again at the next produce.

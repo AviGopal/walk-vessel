@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
-import { actsFactRow } from "./acts"
-import { type Seen, type Skipped, applicable } from "./applicable"
+import { actsFactRow, frontierFields } from "./acts"
+import { type Frontier, type Seen, type Skipped, applicable } from "./applicable"
 import { type Cand, READ_AGAIN_MS, READ_WAIT_MS, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
 import { ARM, DESCRIBED, DUE, FAILURE, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean; dues?: number[] }> }
-type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]>; rootCell?: string }
+type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]>; frontier?: Frontier; rootCell?: string }
 
 // How long a root has waited, coarsely: 0 for its first minute, then one more per doubling of minutes. Context for
 // selection to learn from, never an order.
@@ -67,6 +67,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     else if (skipped.length > 0) held?.still.push({ root: root.id, pool, skipped })
     overdue = overdue || seen.overdue === true
     const gated = seen.gated
+    const frontier = seen.frontier
     // A move's cell is the move in what it reads: the shapes of rows the walk did not write itself that the move consumes
     // (cand.reads), then the root's asker and age. Keyed on every shape in the pool, as it was, any new shape anywhere (an
     // owner's new row kind, a grade nothing here reads) made every cell of every root new and its learning start over.
@@ -77,7 +78,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const rootCell = `root:${String(root.shape)}|asker:${String(root.role)},id:${root.id}`
     for (const cand of cands) {
       const context = [...[...new Set(cand.reads ?? [])].filter((s) => present.has(s)).sort(), ...tail]
-      const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id, gated,
+      const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id, gated, frontier,
         ...(cand.kind !== WAIT_FOR ? { rootCell } : {}) }
       if (cand.kind !== WAIT_FOR) { out.push(o); continue }
       const seen = waits.get(cand.id)
@@ -191,6 +192,8 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
     cell_scheme: "reads",
     root,
     ...(options[i].rootCell !== undefined ? { root_cell: options[i].rootCell } : {}),
+    // The root's newest made row and the calls that take it (applicable.ts), so what a request was allowed is on the row.
+    ...(options[i].frontier !== undefined ? frontierFields(options[i].frontier!) : {}),
     // What the selection is about: its root. The rows the move had are handed to its call (a produce, a run) and not
     // kept here: kept, each selection carried every id of its root's episode, so rows grew with the episode and each
     // read with the rows. What a produce saw is kept as its key (seen_key), which is what a refusal is compared by.
@@ -311,7 +314,7 @@ export const chain = async (): Promise<void> => {
     // selection_ref as that move having failed. A root with any move, a wait included, is not stalled.
     for (const row of stalls(shared, roots, [...options, ...[...held.moving].map((root) => ({ root }))], Number(sel.seq))) await writeRow(row)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
-    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated) : undefined
+    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated, options[i].frontier) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
   }
 }
