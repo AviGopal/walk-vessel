@@ -264,6 +264,8 @@ export const chain = async (): Promise<void> => {
   const asOf = Number(armRow.as_of_seq)
   // The store's latest seq as records said it on the last tick (its posterior's at_seq): what a rhythm counts against.
   let head: number | undefined
+  // whether this tick's read follows one that wrote held reasons (below)
+  let reread = false
   while (!stopped()) {
     // Each part of the tick is timed and each read's tries counted, so where a tick's time goes is on its row.
     const ms = (t0: number) => Math.round(performance.now() - t0)
@@ -278,6 +280,17 @@ export const chain = async (): Promise<void> => {
     const held: Held = { moving: new Set(), still: [] }
     const options = await choices(shared, roots, Date.now(), await shapeAnswers(), armRow, head, held)
     const choicesMs = ms(t1)
+    // A root with no move at all still says what it holds back and why, once per reason (recordSkipped keeps to that): a
+    // request held by a gate or as a repeat is otherwise never written, so its producer, never shown why, is never offered
+    // again, and the root sits with no move. No selection: the tick's selection is another root's. Said BEFORE THE DRAW:
+    // a reason is news to its root's producer only once read, and written after a draw that had nothing else to do it sat
+    // unread until the idle wait's bound, since the walk's own rows end no wait (15 minutes on every told root). So a tick
+    // that wrote one reads again, once, and the draw sees them. The re-read writes none: what it would say is what was
+    // just written, or is said on the next tick, so no reason is written twice in a tick whatever the read shows.
+    let wrote = 0
+    if (!reread) for (const h of held.still) wrote += await recordSkipped(h.pool, h.skipped, undefined, h.root)
+    reread = wrote > 0
+    if (reread) continue
     const cells = options.map((o) => o.cell)
     const t2 = performance.now()
     const post = (await readUntil(() => { posteriorReads++; return loopCall(POSTERIOR, { cells, as_of_seq: asOf }) }, isPosterior(cells.length), "posterior")) as
@@ -294,10 +307,6 @@ export const chain = async (): Promise<void> => {
       posterior_reads: posteriorReads, draw_ms: ms(t3), cands: options.length, cells: new Set(cells).size,
     }))
     await recordSkipped(pool, skipped, sel)
-    // A root with no move at all still says what it holds back and why, once per reason (recordSkipped keeps to that): a
-    // request held by a gate or as a repeat is otherwise never written, so its producer, never shown why, is never offered
-    // again, and the root sits with no move. No selection: the tick's selection is another root's.
-    for (const h of held.still) await recordSkipped(h.pool, h.skipped, undefined, h.root)
     // No selection_ref on a stall row: the tick's selection is another root's move, and records reads a walk failure's
     // selection_ref as that move having failed. A root with any move, a wait included, is not stalled.
     for (const row of stalls(shared, roots, [...options, ...[...held.moving].map((root) => ({ root }))], Number(sel.seq))) await writeRow(row)

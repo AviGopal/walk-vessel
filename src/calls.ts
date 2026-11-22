@@ -439,12 +439,13 @@ const why = (unserved: unknown): string => JSON.stringify([unserved].flat().map(
 // With no selection (a root that offered no move this tick, so none of the tick's selection is about it), the row names no
 // selection and cites the root and the held row, as a stall row does: records keeps it among that root's rows, and the
 // tick's selection, another root's move, is never read as having failed.
-export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row | undefined, root?: string): Promise<void> => {
+export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row | undefined, root?: string): Promise<number> => {
   const latest = new Map<string, Row>()
   for (const r of pool.filter((x) => x.shape === FAILURE && x.kind === "skip").sort((a, b) => a.seq - b.seq)) {
     latest.set(String(r.template_ref ?? r.request_ref), r)
   }
-  for (const t of skipped.filter((x) => latest.get(x.id) === undefined || why(latest.get(x.id)?.unserved) !== why(x.unserved))) {
+  const told = skipped.filter((x) => latest.get(x.id) === undefined || why(latest.get(x.id)?.unserved) !== why(x.unserved))
+  for (const t of told) {
     const which = t.of === "request"
       // What is needed and how to make it come first: the walk keeps the start of a failure, so a long name or id never
       // pushes the reason out of what the producer is shown.
@@ -457,6 +458,7 @@ export const recordSkipped = async (pool: Row[], skipped: Skipped[], sel: Row | 
     await writeRow({ shape: FAILURE, kind: "skip", unserved: t.unserved, ...which, ...(t.unbound ? { unbound: t.unbound } : {}),
       ...(t.against_refs ? { against_refs: t.against_refs } : {}), ...about })
   }
+  return told.length
 }
 
 export const execute = async (c: Cand, sel: Row, pool: string[] = []): Promise<void> => {
