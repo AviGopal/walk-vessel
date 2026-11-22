@@ -15,8 +15,6 @@ const OWNER: Row[] = [
   { shape: "requires", id: "own-k", seq: 2, role: "owner", for: "git_diff", needs: "gitCommitResult", where: { committed_tree: COMMITTED_TREE }, latest_by: "cwd", group: "committed" },
   { shape: "requires", id: "own-w", seq: 3, role: "owner", for: "git_diff", needs: "gitWorktree", where: { committed_tree: COMMITTED_TREE }, latest_by: "cwd", group: "committed" },
   { shape: "requires", id: "own-v", seq: 4, role: "owner", for: "git_land", needs: "land_verdict", where: { r: 1, tree: NEWEST_TREE }, latest_by: "tree", group: "verdict" },
-  // a verdict is a produce, as the seed's schema makes it, whoever writes the row
-  { shape: "shape_schema", id: "own-s", seq: 5, role: "owner", target: "land_verdict", variant: "gap", inputs: ["gap", "gitDiff"] },
 ]
 // the tools local-tools serves, with the clone's own shape; records serves verdicts
 const LOCAL = new Set(["file_read", "fileContent", "file_edit", "fs_edit", "fileEditResult", "git_commit", "gitCommitResult", "git_diff", "gitDiff", "git_land", "gitWorktree"])

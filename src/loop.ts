@@ -186,6 +186,7 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
     seed,
     a: a.id,
     ...(a.from ? { from: a.from } : {}),
+    ...(a.out_of_scope ? { out_of_scope: true } : {}),
     cell: options[i].cell,
     context,
     // Which way the cell was keyed: "reads" (the move's own inputs). Before it, every shape in the root's pool.

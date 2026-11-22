@@ -13,9 +13,8 @@ export const WRITTEN: Record<string, string> = {
     "keeps repeating with the same result over the same inputs (the same failure, or a tree graded the same), " +
     "n times, nothing new since: a person's or the owner's row, or an answer the step takes in. gated: each gated " +
     "call not yet allowed here and what it needs (a need \"for the target the call names\" holds per target). frontier: " +
-    "its newest made row {id, shape}; calls: the only calls a request over it may name, those whose requires take that " +
-    "shape (another is not called, and the skip says why); frontier_widened: none does, so every call is open. Written " +
-    "by the walk when it changes.",
+    "its newest made row {id, shape}; calls: the calls whose requires take it, an offer (another stays callable, its " +
+    "selection marked out_of_scope); frontier_widened: none takes it. Written by the walk when it changes.",
   [HOP]: "The record of one call the walk made, not a shape to call. pointer_type is the shape it called; kind (produce, " +
     "call, run or wait-for; wait-until on older rows) is how the walk chose the call, never a shape to call. Also phase (started or " +
     "ended), selection_ref, until on a wait (the deadline it waited by) and, on ended, output: what came back, and " +
@@ -23,8 +22,8 @@ export const WRITTEN: Record<string, string> = {
   [SELECTION]: "The walk's choice at one step: the candidates it had (cands) with their posteriors, the one it chose (a), " +
     "its cell and context, arm (treated or control, which decides whether a grade credits it), pool_refs, the rows " +
     "it saw, and timing: how long the tick's parts took (ms) and how many tries each read needed. Timing is never a key. " +
-    "frontier, calls and frontier_widened: the chosen root's newest made row and the calls a request over it may name, " +
-    "as request_acts says them.",
+    "frontier, calls and frontier_widened: the chosen root's newest made row and the calls that take it, as " +
+    "request_acts says them; out_of_scope: the call chosen is not one of the calls its request's frontier is taken by.",
   [FAILURE]: "A call that did not end well, with the status and body the producer answered; or, with kind skip, a " +
     "template the walk did not run because a shape it calls (unserved) is served by nothing or not yet allowed " +
     "(template_ref), or a request whose call the owner's preconditions do not yet allow (request_ref, unserved naming " +

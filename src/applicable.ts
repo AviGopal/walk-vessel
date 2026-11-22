@@ -172,18 +172,24 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .filter((r) => r.retired !== true)
   // THE NEXT STEP TAKES WHAT THE ROOT LAST MADE (the activity lattice). The frontier is the root's newest made row: a
   // tool's answer (a shape some vessel declares a call answers with) or a produce (a shape the owner's schemas make,
-  // whoever wrote the row: a person's verdict is one); rows every root shares are no root's. The calls a request on the root may name are those whose owner requires rows
-  // need the frontier's shape (the latest per for and needs, retired dropped: reqs), so an edit is followed by what
-  // takes an edit and not by an unrelated call. The lattice decides only which calls are in; which one is made stays
-  // the draw's. A frontier no requires row names, or none at all, scopes nothing: every call stays open, and the row
-  // says it was widened. A request is an ask, not something made for a next step to take, so it is never the frontier:
-  // a refused request would otherwise widen the one made after it. A request is judged by the frontier it was made over
-  // (the newest made row before it), so a row made after it does not change what it was allowed.
+  // whoever wrote the row: a person's verdict is one); rows every root shares are no root's. The calls that take it are
+  // those with an owner requires row (the latest per for and needs, retired dropped: reqs) needing its shape whose where
+  // the row meets: a field bound to the call's own pointer cannot be judged before a call names one, so it counts as
+  // met; every other field is read as meets reads it. This is an offer, not a gate: the owner's requires rows are
+  // preconditions, so a call outside the scope stays callable and its candidate says it is outside (out_of_scope), for
+  // the producer and the grades to read. A frontier no requires row takes, or none at all, says it was widened. A
+  // request is an ask, not something made for a next step to take, so it is never the frontier. A request is judged by
+  // the frontier it was made over (the newest made row before it), so a row made after it does not change its scope.
   const made = new Set([...Object.values(answers), ...schemas.map((s) => String(s.target))].filter((x) => !REQUESTS.has(x)))
   const frontierBefore = (at: number): Row | undefined => pool
     .filter((r) => made.has(String(r.shape)) && note.shared?.has(r.id) !== true && r.seq < at).sort((a, b) => a.seq - b.seq).at(-1)
+  const takenBy = (q: Row, f: Row): boolean => Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => {
+    if (typeof v === "object" && v !== null && "x-pointer" in v) return true
+    const want = boundValue(v, undefined)
+    return want !== undefined && JSON.stringify(f[k]) === JSON.stringify(want)
+  })
   const takers = (f: Row | undefined): string[] =>
-    f === undefined ? [] : [...new Set(reqs.filter((q) => String(q.needs) === String(f.shape)).map((q) => String(q.for)))].sort()
+    f === undefined ? [] : [...new Set(reqs.filter((q) => String(q.needs) === String(f.shape) && takenBy(q, f)).map((q) => String(q.for)))].sort()
   const frontierOf = (f: Row | undefined): Frontier => {
     const calls = takers(f)
     return { ...(f !== undefined ? { id: f.id, shape: String(f.shape) } : {}), calls, widened: calls.length === 0 }
@@ -709,9 +715,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const reopened = lastRefusal !== undefined && await bearsOn(pool.filter((x) => x.seq > lastRefusal.seq && x.seq < r.seq), type)
     const prior = reopened ? undefined : settled(asKey)
     const over = frontierOf(frontierBefore(r.seq))
-    const outside = over.widened || over.calls.includes(type) ? [] :
-      [`${type}: not a call that takes the newest row this request was made over (${String(over.shape)} ${String(over.id)}); the calls that take it: ${over.calls.join(", ")}`]
-    const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []), ...outside,
+    const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
       ...(prior !== undefined ? [`${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
     const behind = refsOfReasons(gate)
     if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request", ...(behind.length > 0 ? { against_refs: behind } : {}) })
@@ -723,6 +727,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       from: r.id,
       // The request it answers decides it; the owner's requires rows only gate whether it exists, so they are not read.
       reads: [r.shape],
+      ...(over.widened || over.calls.includes(type) ? {} : { out_of_scope: true }),
     }))
   }))
 

@@ -1,0 +1,408 @@
+[
+ {
+  "id": "seed-rq-1",
+  "seq": 1,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_worktree",
+  "needs": "change_wanted",
+  "where": {
+   "wanted": true,
+   "repo": {
+    "x-pointer": "repo"
+   }
+  }
+ },
+ {
+  "id": "seed-rq-2",
+  "seq": 2,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_worktree",
+  "needs": "gap",
+  "where": {
+   "status": "open",
+   "repo": {
+    "x-pointer": "repo"
+   }
+  },
+  "latest_by": "gap_id"
+ },
+ {
+  "id": "seed-rq-3",
+  "seq": 3,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "fs_edit",
+  "needs": "change_wanted",
+  "where": {
+   "wanted": true
+  }
+ },
+ {
+  "id": "seed-rq-4",
+  "seq": 4,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "fs_edit",
+  "needs": "gap",
+  "where": {
+   "status": "open"
+  },
+  "latest_by": "gap_id"
+ },
+ {
+  "id": "seed-rq-5",
+  "seq": 5,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "fs_write",
+  "needs": "change_wanted",
+  "where": {
+   "wanted": true
+  }
+ },
+ {
+  "id": "seed-rq-6",
+  "seq": 6,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "fs_write",
+  "needs": "gap",
+  "where": {
+   "status": "open"
+  },
+  "latest_by": "gap_id"
+ },
+ {
+  "id": "seed-rq-7",
+  "seq": 7,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_replace_lines",
+  "needs": "change_wanted",
+  "where": {
+   "wanted": true
+  }
+ },
+ {
+  "id": "seed-rq-8",
+  "seq": 8,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_replace_lines",
+  "needs": "gap",
+  "where": {
+   "status": "open"
+  },
+  "latest_by": "gap_id"
+ },
+ {
+  "id": "seed-rq-9",
+  "seq": 9,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_insert_after_line",
+  "needs": "change_wanted",
+  "where": {
+   "wanted": true
+  }
+ },
+ {
+  "id": "seed-rq-10",
+  "seq": 10,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_insert_after_line",
+  "needs": "gap",
+  "where": {
+   "status": "open"
+  },
+  "latest_by": "gap_id"
+ },
+ {
+  "id": "seed-rq-11",
+  "seq": 11,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_add_import",
+  "needs": "change_wanted",
+  "where": {
+   "wanted": true
+  }
+ },
+ {
+  "id": "seed-rq-12",
+  "seq": 12,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_add_import",
+  "needs": "gap",
+  "where": {
+   "status": "open"
+  },
+  "latest_by": "gap_id"
+ },
+ {
+  "id": "seed-rq-13",
+  "seq": 13,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_commit",
+  "needs": "change_wanted",
+  "where": {
+   "wanted": true
+  }
+ },
+ {
+  "id": "seed-rq-14",
+  "seq": 14,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_commit",
+  "needs": "gap",
+  "where": {
+   "status": "open"
+  },
+  "latest_by": "gap_id"
+ },
+ {
+  "id": "seed-rq-15",
+  "seq": 15,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_land",
+  "needs": "change_wanted",
+  "where": {
+   "wanted": true
+  }
+ },
+ {
+  "id": "seed-rq-16",
+  "seq": 16,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_land",
+  "needs": "gap",
+  "where": {
+   "status": "open"
+  },
+  "latest_by": "gap_id"
+ },
+ {
+  "id": "seed-rq-17",
+  "seq": 17,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_land",
+  "needs": "land_verdict",
+  "where": {
+   "r": 1,
+   "tree": {
+    "x-latest": {
+     "shapes": [
+      "gitCommitResult",
+      "gitWorktree",
+      "gitDiff"
+     ],
+     "moves": [
+      "gitCommitResult",
+      "gitWorktree"
+     ],
+     "same": "cwd",
+     "field": "tree",
+     "continues": "gap_id"
+    }
+   }
+  },
+  "latest_by": "tree",
+  "group": "verdict"
+ },
+ {
+  "id": "seed-rq-18",
+  "seq": 18,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_diff",
+  "needs": "gitCommitResult",
+  "where": {
+   "committed_tree": {
+    "x-latest": {
+     "shapes": [
+      "gitCommitResult",
+      "gitWorktree",
+      "fileEditResult",
+      "fileWriteResult",
+      "codeInsertResult",
+      "codeReplaceResult",
+      "codeAddImportResult"
+     ],
+     "moves": [
+      "gitCommitResult",
+      "fileEditResult",
+      "fileWriteResult",
+      "codeInsertResult",
+      "codeReplaceResult",
+      "codeAddImportResult"
+     ],
+     "at": [
+      "gitWorktree"
+     ],
+     "same": "cwd",
+     "field": "committed_tree",
+     "continues": "gap_id"
+    }
+   }
+  },
+  "latest_by": "cwd",
+  "group": "committed"
+ },
+ {
+  "id": "seed-rq-19",
+  "seq": 19,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "git_diff",
+  "needs": "gitWorktree",
+  "where": {
+   "committed_tree": {
+    "x-latest": {
+     "shapes": [
+      "gitCommitResult",
+      "gitWorktree",
+      "fileEditResult",
+      "fileWriteResult",
+      "codeInsertResult",
+      "codeReplaceResult",
+      "codeAddImportResult"
+     ],
+     "moves": [
+      "gitCommitResult",
+      "fileEditResult",
+      "fileWriteResult",
+      "codeInsertResult",
+      "codeReplaceResult",
+      "codeAddImportResult"
+     ],
+     "at": [
+      "gitWorktree"
+     ],
+     "same": "cwd",
+     "field": "committed_tree",
+     "continues": "gap_id"
+    }
+   }
+  },
+  "latest_by": "cwd",
+  "group": "committed"
+ },
+ {
+  "id": "seed-rq-20",
+  "seq": 20,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "fs_edit",
+  "needs": "fileContent",
+  "where": {
+   "path": {
+    "x-pointer": "path"
+   }
+  },
+  "latest_by": "path",
+  "group": "read"
+ },
+ {
+  "id": "seed-rq-21",
+  "seq": 21,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "fs_edit",
+  "needs": "gitWorktree",
+  "where": {},
+  "latest_by": "cwd",
+  "group": "clone"
+ },
+ {
+  "id": "seed-rq-22",
+  "seq": 22,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "fs_write",
+  "needs": "gitWorktree",
+  "where": {},
+  "latest_by": "cwd",
+  "group": "clone"
+ },
+ {
+  "id": "seed-rq-23",
+  "seq": 23,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_replace_lines",
+  "needs": "gitWorktree",
+  "where": {},
+  "latest_by": "cwd",
+  "group": "clone"
+ },
+ {
+  "id": "seed-rq-24",
+  "seq": 24,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_insert_after_line",
+  "needs": "gitWorktree",
+  "where": {},
+  "latest_by": "cwd",
+  "group": "clone"
+ },
+ {
+  "id": "seed-rq-25",
+  "seq": 25,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "code_add_import",
+  "needs": "gitWorktree",
+  "where": {},
+  "latest_by": "cwd",
+  "group": "clone"
+ },
+ {
+  "id": "seed-rq-26",
+  "seq": 26,
+  "writer": "owner",
+  "role": "owner",
+  "shape": "requires",
+  "for": "walk_trees_reclaim",
+  "needs": "gap",
+  "where": {
+   "gap_id": "pull-sync-walk-trees-unreclaimed",
+   "status": "open"
+  },
+  "latest_by": "gap_id"
+ }
+]

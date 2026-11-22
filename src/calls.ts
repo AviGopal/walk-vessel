@@ -27,6 +27,8 @@ export type Cand = {
   reads?: string[]
   /** For a produce: the key of the rows it sees, kept on its selection so a refusal over the same rows is known again. */
   seen_key?: string
+  /** For a call: no call the request's frontier is taken by is this one (applicable.ts), kept on its selection. */
+  out_of_scope?: true
 }
 /** pool: the ids of every row the move had, handed to the call that needs them (a produce, a run) and never stored. */
 type Runner = (c: Cand, sel: Row, pool: string[]) => Promise<void>
