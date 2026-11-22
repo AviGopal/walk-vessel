@@ -396,9 +396,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const t = (q?.pointer as { type?: unknown } | undefined)?.type
     return typeof t === "string" ? t : undefined
   }
-  // Who serves each call the root's requests name is read only when the pool holds an install: a tick with none asks
-  // discovery nothing more. An unanswered read serves no one.
-  const installs = pool.some((x) => x.shape === INFRA_WINDOW && x.installed !== undefined)
+  // Who serves each call the root's requests name is read only while an install can still be news here: one newer than
+  // some request's latest hold. Every install stays in the pool, so with any install at all every tick would ask again.
+  // An unanswered read serves no one.
+  const lastHold = new Map<string, number>()
+  for (const f of pool.filter(isHeld)) lastHold.set(String(f.request_ref), Math.max(lastHold.get(String(f.request_ref)) ?? 0, f.seq))
+  const since = Math.min(...lastHold.values())
+  const installs = pool.some((x) => x.shape === INFRA_WINDOW && x.installed !== undefined && x.seq > since)
   const named = installs ? [...new Set(pool.filter((x) => REQUESTS.has(x.shape)).map(callOfReq).filter((t): t is string => t !== undefined))] : []
   const serving = new Map(await Promise.all(named.map(async (t): Promise<[string, Set<string>]> => [t, (await servers(t)) ?? new Set()])))
   const bears = (x: Row, call: string | undefined): boolean => x.shape === INFRA_WINDOW && x.role === OWNER &&
@@ -669,7 +673,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const vocab = declaredInputs()
     const { writer: _w, role: _r, ...asked } = (r.pointer ?? {}) as Record<string, unknown>
     const takes = vocab === undefined ? undefined : callProblem(vocab, type, asked)
-    const prior = settled(callKey(type, argsOf(asked)), (x) => bears(x, type))
+    // An install bearing on the call is news to a request made after it (the one try, made again over the install), never
+    // to the request it found held: that one is not called again, so an install is one try, not two.
+    const prior = settled(callKey(type, argsOf(asked)), (x) => x.seq < r.seq && bears(x, type))
     const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
       ...(prior !== undefined ? [`${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
     const behind = refsOfReasons(gate)

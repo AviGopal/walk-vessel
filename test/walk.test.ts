@@ -1331,6 +1331,9 @@ describe("candidates", () => {
       }
       // once per install: made again after it, and held again, it waits for the next
       expect(await onRoot([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), q("q-new", 12), held("h2", 13, "q-new")])).not.toContain("produce/request/ch1")
+      // the repo as a gap and pull-sync each spell it: the bare repo name
+      expect(await onRoot([{ ...ask, repo: "llm-resolver-vessel" }, ch, schema, q("q-old", 5), held("h1", 6, "q-old"),
+        install(8, [{ repo: "llm-resolver-vessel", commit: "c1", vessel: "llm-resolver" }])])).toContain("produce/request/ch1")
       // a later install is another try
       expect(await onRoot([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), q("q-new", 12), held("h2", 13, "q-new"), install(15, [{ repo: "r-gap", commit: "c2" }])]))
         .toContain("produce/request/ch1")
@@ -1368,6 +1371,30 @@ describe("candidates", () => {
     }
   })
 
+  test("[MUST-FAIL] discovery is asked who serves a request's call only while an install is newer than some request's latest hold", async () => {
+    served.add("request")
+    try {
+      const schema = { shape: "shape_schema", id: "s-q3", seq: 3, role: "owner", target: "request", inputs: ["world_changed"] }
+      const q = { shape: "request", id: "q-old", seq: 5, role: "described", input_refs: ["w1"], pointer: { type: "fs_edit" } }
+      const h = (id: string, seq: number) => ({ shape: "failure", kind: "skip", id, seq, role: "walk", request_ref: "q-old", unserved: ["fs_edit (requires fileContent)"] })
+      const reads = async (rows: any[]) => {
+        asked.length = 0
+        await onRoot(rows)
+        return asked.filter((p) => p.type === "vesselCapability" && p.shape === "fs_edit").length
+      }
+      const none = await reads([ask, ch, schema, q, h("h1", 6)])
+      // an install older than the request's latest hold: news to no one, so nothing more is asked
+      expect(await reads([ask, ch, schema, q, install(4, [{ repo: "r-x", commit: "c1" }]), h("h1", 6)])).toBe(none)
+      expect(await reads([ask, ch, schema, q, h("h1", 6), install(8, [{ repo: "r-x", commit: "c1" }]), h("h2", 9)])).toBe(none)
+      // its latest hold by seq, in whatever order the pool holds them
+      expect(await reads([ask, ch, schema, q, h("h2", 9), install(8, [{ repo: "r-x", commit: "c1" }]), h("h1", 6)])).toBe(none)
+      // newer than it: asked
+      expect(await reads([ask, ch, schema, q, h("h1", 6), install(8, [{ repo: "r-x", commit: "c1" }])])).toBeGreaterThan(none)
+    } finally {
+      served.delete("request")
+    }
+  })
+
   test("[MUST-FAIL] a restart row is no news to a produce that reads its shape: only an install bearing on a held request is", async () => {
     served.add("request")
     try {
@@ -1381,7 +1408,7 @@ describe("candidates", () => {
     }
   })
 
-  test("[MUST-FAIL] a call refused here is called once more after an install bearing on it, and settled again by its next refusal", async () => {
+  test("[MUST-FAIL] a call refused here is called once more for a request made after an install bearing on it, and settled again by its next refusal", async () => {
     served.add("git_commit")
     try {
       const askR = { shape: "world_changed", id: "w1", seq: 1, role: "person", what: "x", repo: "r-gap" }
@@ -1392,10 +1419,13 @@ describe("candidates", () => {
         { shape: "failure", id: `f${n}`, seq: seq + 2, role: "walk", call_id: `c${n}`, selection_ref: `s${n}`, status: 200, blames: "request", body: "nothing new to commit" }]
       const base = [askR, req("q1", 2), ...refusal(1, 3, "q1"), req("q2", 6)]
       const calls = async (rows: any[]) => (await onRoot(rows)).includes("call/git_commit")
+      const iw = install(8, [{ repo: "r-gap", commit: "c1" }])
       expect(await calls(base)).toBe(false)
-      expect(await calls([...base, install(8, [{ repo: "r-gap", commit: "c1" }])])).toBe(true)
-      expect(await calls([...base, install(8, [{ repo: "r-other", commit: "c1" }])])).toBe(false)
-      expect(await calls([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), ...refusal(2, 9, "q2")])).toBe(false)
+      // the request it found held is not called again: the one try is the request made again over the install
+      expect(await calls([...base, iw])).toBe(false)
+      expect(await calls([...base, iw, req("q3", 10)])).toBe(true)
+      expect(await calls([...base, install(8, [{ repo: "r-other", commit: "c1" }]), req("q3", 10)])).toBe(false)
+      expect(await calls([...base, iw, req("q3", 10), ...refusal(2, 11, "q3")])).toBe(false)
     } finally {
       served.delete("git_commit")
     }
