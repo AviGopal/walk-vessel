@@ -100,10 +100,14 @@ describe("a call that changed nothing the walk can tell apart is said", () => {
     expect((await look([...two, said(90, "q72", [reason])])).offered).toBe(true)
   })
 
-  test("[MUST-FAIL] a request for another call, made earlier, does not hide it: the reason is for the request of the call that repeated", async () => {
+  test("[MUST-FAIL] a request for another call, made earlier or later, does not hide it: the reason is for the request of the call that repeated", async () => {
     const read = { shape: "request", id: "q2", seq: 2.5, role: "described", input_refs: ["w1"], pointer: { type: "read_file", path: "src/engine.ts" } }
     const { skipped } = await look([...base, read, ...ask(3), ...replace(10, 5, "a1"), ...ask(20), ...replace(30, 22, "a1")])
     expect(skipped.map((s) => s.id)).toEqual(["q22"])
+    // and made later, between the request and its repeated answer
+    const later = { ...read, id: "q25", seq: 25 }
+    const after = await look([...base, ...ask(3), ...replace(10, 5, "a1"), ...ask(20), later, ...replace(30, 22, "a1")])
+    expect(after.skipped.map((s) => s.id)).toEqual(["q22"])
   })
 
   test("[GUARD] an answer that is not a repeat says nothing", async () => {
