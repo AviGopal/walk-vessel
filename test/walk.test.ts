@@ -1361,6 +1361,17 @@ describe("candidates", () => {
       await miss([ask, ch, schema, q("q-old", 5), held("h1", 6, "q-old"), install(8, [{ commit: "c1", vessel: "v-other" }])]) // neither names a repo
       // a vessel that serves something, but not this request's call
       await miss([...base, install(8, [{ repo: "r-tool", commit: "c1", vessel: "producer-x" }])])
+      // an install another held row of the root is due again over is not this request's: its own hold came after it
+      await miss([askR, ch, schema, { shape: "gitWorktree", id: "x1", seq: 4, role: "walk" }, held("hx", 5, "x1"), q("q-old", 6),
+        install(8, [{ repo: "r-gap", commit: "c1" }]), held("h1", 9, "q-old")])
+      // nor when it serves another request's call on this root: only the held request's own call is asked of
+      served.add("git_commit")
+      try {
+        const other = { shape: "request", id: "q-other", seq: 4, role: "described", input_refs: ["w1"], pointer: { type: "git_commit" } }
+        await miss([askR, ch, schema, other, q("q-old", 5), held("h1", 6, "q-old"), install(8, [{ repo: "r-tool", commit: "c1", vessel: "producer-x" }])])
+      } finally {
+        served.delete("git_commit")
+      }
       await miss([...base, { ...install(8, [{ repo: "r-gap", commit: "c1" }]), shape: "repository" }]) // an owner row of another shape
       await miss([...base, install(8, [null, "r-gap", { repo: "r-other", commit: "c1" }])]) // entries that name nothing
       // held again after the install (a hold row for the same request, its reason already told): the install is older
@@ -1371,7 +1382,7 @@ describe("candidates", () => {
     }
   })
 
-  test("[MUST-FAIL] discovery is asked who serves a request's call only while an install is newer than some request's latest hold", async () => {
+  test("[MUST-FAIL] discovery is asked who serves a held request's call only while an install naming a vessel is newer than its latest hold, and it is still the root's latest", async () => {
     served.add("request")
     try {
       const schema = { shape: "shape_schema", id: "s-q3", seq: 3, role: "owner", target: "request", inputs: ["world_changed"] }
@@ -1382,14 +1393,19 @@ describe("candidates", () => {
         await onRoot(rows)
         return asked.filter((p) => p.type === "vesselCapability" && p.shape === "fs_edit").length
       }
+      const iw = (seq: number) => install(seq, [{ repo: "r-x", commit: "c1", vessel: "v-x" }])
       const none = await reads([ask, ch, schema, q, h("h1", 6)])
       // an install older than the request's latest hold: news to no one, so nothing more is asked
-      expect(await reads([ask, ch, schema, q, install(4, [{ repo: "r-x", commit: "c1" }]), h("h1", 6)])).toBe(none)
-      expect(await reads([ask, ch, schema, q, h("h1", 6), install(8, [{ repo: "r-x", commit: "c1" }]), h("h2", 9)])).toBe(none)
+      expect(await reads([ask, ch, schema, q, iw(4), h("h1", 6)])).toBe(none)
+      expect(await reads([ask, ch, schema, q, h("h1", 6), iw(8), h("h2", 9)])).toBe(none)
       // its latest hold by seq, in whatever order the pool holds them
-      expect(await reads([ask, ch, schema, q, h("h2", 9), install(8, [{ repo: "r-x", commit: "c1" }]), h("h1", 6)])).toBe(none)
-      // newer than it: asked
-      expect(await reads([ask, ch, schema, q, h("h1", 6), install(8, [{ repo: "r-x", commit: "c1" }])])).toBeGreaterThan(none)
+      expect(await reads([ask, ch, schema, q, h("h2", 9), iw(8), h("h1", 6)])).toBe(none)
+      // a held request the root has since made again is no longer waiting: its install is news to no one
+      expect(await reads([ask, ch, schema, q, h("h1", 6), iw(8), { ...q, id: "q-new", seq: 10 }])).toBe(none)
+      // an install naming no vessel needs no one asked
+      expect(await reads([ask, ch, schema, q, h("h1", 6), install(8, [{ repo: "r-x", commit: "c1" }])])).toBe(none)
+      // newer than it, naming a vessel: asked
+      expect(await reads([ask, ch, schema, q, h("h1", 6), iw(8)])).toBeGreaterThan(none)
     } finally {
       served.delete("request")
     }
@@ -1425,7 +1441,13 @@ describe("candidates", () => {
       expect(await calls([...base, iw])).toBe(false)
       expect(await calls([...base, iw, req("q3", 10)])).toBe(true)
       expect(await calls([...base, install(8, [{ repo: "r-other", commit: "c1" }]), req("q3", 10)])).toBe(false)
+      // the vessel serving the call, installed: the same one try; a vessel not serving it is no news
+      expect(await calls([...base, install(8, [{ repo: "r-tool", commit: "c1", vessel: "producer-x" }]), req("q3", 10)])).toBe(true)
+      expect(await calls([...base, install(8, [{ repo: "r-tool", commit: "c1", vessel: "v-other" }]), req("q3", 10)])).toBe(false)
       expect(await calls([...base, iw, req("q3", 10), ...refusal(2, 11, "q3")])).toBe(false)
+      // and stays settled for the request after that: the install came before its latest refusal, so it was tried
+      expect(await calls([...base, iw, req("q3", 10), ...refusal(2, 11, "q3"), req("q4", 14)])).toBe(false)
+      expect(await calls([askR, req("q1", 2), install(3, [{ repo: "r-gap", commit: "c1" }]), ...refusal(1, 4, "q1"), req("q2", 7)])).toBe(false)
     } finally {
       served.delete("git_commit")
     }

@@ -396,21 +396,29 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const t = (q?.pointer as { type?: unknown } | undefined)?.type
     return typeof t === "string" ? t : undefined
   }
-  // Who serves each call the root's requests name is read only while an install can still be news here: one newer than
-  // some request's latest hold. Every install stays in the pool, so with any install at all every tick would ask again.
+  // An install bears on a held or refused call when it installed the root's own repo, the walk itself, or a vessel
+  // discovery says serves that call. Who serves it is read only for that one call, and only when an install with a vessel
+  // sits where it can still be news to it: every install stays in the pool, so a read on every tick would never stop.
   // An unanswered read serves no one.
-  const lastHold = new Map<string, number>()
-  for (const f of pool.filter(isHeld)) lastHold.set(String(f.request_ref), Math.max(lastHold.get(String(f.request_ref)) ?? 0, f.seq))
-  const since = Math.min(...lastHold.values())
-  const installs = pool.some((x) => x.shape === INFRA_WINDOW && x.installed !== undefined && x.seq > since)
-  const named = installs ? [...new Set(pool.filter((x) => REQUESTS.has(x.shape)).map(callOfReq).filter((t): t is string => t !== undefined))] : []
-  const serving = new Map(await Promise.all(named.map(async (t): Promise<[string, Set<string>]> => [t, (await servers(t)) ?? new Set()])))
-  const bears = (x: Row, call: string | undefined): boolean => x.shape === INFRA_WINDOW && x.role === OWNER &&
-    [x.installed].flat().some((i) => {
-      const { repo, vessel } = (i ?? {}) as { repo?: unknown; vessel?: unknown }
-      return (typeof repo === "string" && repo === rootRow?.repo) ||
-        (typeof vessel === "string" && (vessel === VESSEL_ID || (call !== undefined && serving.get(call)?.has(vessel) === true)))
-    })
+  const installedBy = (x: Row): Array<{ repo?: unknown; vessel?: unknown }> =>
+    x.shape === INFRA_WINDOW && x.role === OWNER ? [x.installed].flat().map((i) => (i ?? {}) as { repo?: unknown; vessel?: unknown }) : []
+  const bearsOn = async (xs: Row[], call: string | undefined): Promise<boolean> => {
+    const entries = xs.flatMap(installedBy)
+    if (entries.some(({ repo, vessel }) => (typeof repo === "string" && repo === rootRow?.repo) || vessel === VESSEL_ID)) return true
+    const vessels = entries.map(({ vessel }) => vessel).filter((v): v is string => typeof v === "string")
+    if (call === undefined || vessels.length === 0) return false
+    const serving = (await servers(call)) ?? new Set<string>()
+    return vessels.some((v) => serving.has(v))
+  }
+  // The root's latest row of each shape a held reason names, when an install since its latest hold bears on its call.
+  const heldAgain = new Set<string>()
+  for (const shape of new Set(pool.filter(isHeld).map((f) => byId.get(String(f.request_ref))?.shape))) {
+    const last = pool.filter((r) => r.shape === shape).sort((a, b) => a.seq - b.seq).at(-1)
+    const holds = last === undefined ? [] : pool.filter((f) => isHeld(f) && String(f.request_ref) === last.id)
+    if (last === undefined || holds.length === 0) continue
+    const toldAt = Math.max(...holds.map((f) => f.seq))
+    if (await bearsOn(pool.filter((x) => x.seq > toldAt), callOfReq(last))) heldAgain.add(last.id)
+  }
   // A row counts as graded when an outcome judged it with something the row itself did not carry: a person's verdict, a
   // grade at r 0 (which asks for another try), or a grade whose inputs reach past the row and what the row saw. An r 1
   // made from only the row and its own inputs is the producer agreeing with itself (grade independence is information,
@@ -484,8 +492,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const heldBack = holds.length > 0
     if ((judged || heldBack) && last !== undefined && s.role === OWNER && s.seq > last.seq) return false
     // and an install bearing on it since it was last held (above)
-    const toldAt = Math.max(...holds.map((f) => f.seq))
-    if (heldBack && pool.some((x) => x.seq > toldAt && bears(x, callOfReq(last)))) return false
+    if (heldBack && heldAgain.has(String(last?.id))) return false
     const sees = seen(s)
     const now = key(pool.filter(sees).map((r) => r.id))
     // What a row was made over is what the walk handed its producer: the key its selection kept (seen_key). Not what
@@ -674,8 +681,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const { writer: _w, role: _r, ...asked } = (r.pointer ?? {}) as Record<string, unknown>
     const takes = vocab === undefined ? undefined : callProblem(vocab, type, asked)
     // An install bearing on the call is news to a request made after it (the one try, made again over the install), never
-    // to the request it found held: that one is not called again, so an install is one try, not two.
-    const prior = settled(callKey(type, argsOf(asked)), (x) => x.seq < r.seq && bears(x, type))
+    // to the request it found held: that one is not called again, so an install is one try, not two. Only the call's
+    // latest refusal is asked: an install after it is after every earlier one too.
+    const asKey = callKey(type, argsOf(asked))
+    const lastRefusal = refused.filter((x) => x.key === asKey).at(-1)
+    const reopened = lastRefusal !== undefined && await bearsOn(pool.filter((x) => x.seq > lastRefusal.seq && x.seq < r.seq), type)
+    const prior = reopened ? undefined : settled(asKey)
     const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
       ...(prior !== undefined ? [`${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
     const behind = refsOfReasons(gate)
