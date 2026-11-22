@@ -311,6 +311,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // same file once was, is news here (82ac: its edit read as a repeat of 52d7's, and the root stalled with no move). The
   // root is the one its selection names; a row whose selection is not in the pool is counted with the others like it.
   const repeats = new Set<string>()
+  // each repeat, with the earlier row whose content it repeats (the first of its kind and content)
+  const repeatOf = new Map<string, Row>()
   {
     const typeOf = new Map(pool.filter((r) => r.shape === HOP && r.phase === STARTED).map((r) => [String(r.call_id), String(r.pointer_type)]))
     const madeFor = (r: Row): string => String(byId.get(String(r.selection_ref ?? [r.input_refs].flat()[0]))?.root ?? "")
@@ -323,6 +325,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       .filter((r) => r.retired !== true && Array.isArray(r.fields)).map((r) => [String(r.of), (r.fields as unknown[]).map(String)]))
     const at = (o: unknown, path: string): unknown => path.split(".").reduce<unknown>((v, k) => (typeof v === "object" && v !== null ? (v as Record<string, unknown>)[k] : undefined), o)
     const had = new Map<string, Set<string>>()
+    const first = new Map<string, Row>()
     const LEFT_OUT = new Set(["id", "seq", "t", "call_id", "selection_ref", "input_refs", "writer"])
     // A row another writer made (a detector writing a gap again) is weighed so too when the owner names its shape's
     // news_key: a gap restated with nothing the key names changed (its claim's wording, a stamp) tells no producer
@@ -338,7 +341,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       const content = keyed !== undefined && keyed.some(([, v]) => v !== undefined) ? JSON.stringify(keyed)
         : JSON.stringify(Object.keys(r).filter((k) => !LEFT_OUT.has(k)).sort().map((k) => [k, r[k]]))
       const seen = had.get(kind) ?? new Set<string>()
-      if (seen.has(content)) repeats.add(r.id)
+      const sig = JSON.stringify([kind, content])
+      if (seen.has(content)) {
+        repeats.add(r.id)
+        const was = first.get(sig)
+        if (was !== undefined) repeatOf.set(r.id, was)
+      } else first.set(sig, r)
       seen.add(content)
       had.set(kind, seen)
     }
@@ -532,6 +540,23 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   for (const r of declined ? [] : requests.filter(callable)) {
     latest.set(String((r.pointer as { type: string }).type), r)
   }
+  const typeOf = new Map(pool.filter((r) => r.shape === HOP && r.phase === STARTED).map((h) => [String(h.call_id), String(h.pointer_type)]))
+  // A CALL THAT CHANGED NOTHING THE WALK CAN TELL APART IS SAID. A call that ended with an answer an earlier call of its
+  // type on this root already gave (repeats, above) is no news, so the request that asked for it is not produced again
+  // over it; with nothing else new, the root sat with no move and its producer was never told why (0c5f: an edit
+  // answered as an earlier edit of the same range had, then no move for hours). So the walk holds that request for it,
+  // as it holds a request whose call is gated: a reason the producer reads, news once by the held rule, naming the call
+  // type and the earlier row, never the request, so the same answer given again to a later request is a reason already
+  // told, and another answer repeated is a new one. Only the newest request of its call type: an older one is settled.
+  for (const h of pool.filter((x) => informs(x) && x.kind === CALL && repeatOf.has(x.id))) {
+    const sel = byId.get(String(h.selection_ref))
+    const type = typeOf.get(String(h.call_id))
+    const req = latest.get(String(type))
+    if (sel === undefined || type === undefined || req === undefined || String(sel.from) !== req.id) continue
+    const was = repeatOf.get(h.id) as Row
+    skipped.push({ id: req.id, of: "request", against_refs: [was.id],
+      unserved: [`${type}: it answered as row ${was.seq} did, so it changed nothing the walk can tell apart; the same call again answers the same, and a different pointer is a different call`] })
+  }
   // A CALL THAT WAITS ON A PERSON (agf_i033lib9c2hs: d929's git_land, sent again every few seconds). A tool may answer
   // that only a person's verdict lets it go on (waits_for "person" on the call's failure row, lifted by the walk from the
   // tool's own answer); asked the same again before the person speaks, it answers the same. So a call type whose latest
@@ -539,7 +564,6 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // (records puts a person's row about any of the root's rows in the root's pool); until then the walk's move is to wait
   // for one. An owner row does not lift it: a seed run says nothing about this root. Read from the failure's own field
   // and the writer kind.
-  const typeOf = new Map(pool.filter((r) => r.shape === HOP && r.phase === STARTED).map((h) => [String(h.call_id), String(h.pointer_type)]))
   // the root's own rows: its pool, less what every root is given (the owner's configuration)
   const ownRows = new Set(pool.filter((r) => note.shared?.has(r.id) !== true && r.role !== OWNER).map((r) => r.id))
   const lastFailure = new Map<string, Row>()
