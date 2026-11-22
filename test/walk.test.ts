@@ -1285,7 +1285,7 @@ describe("candidates", () => {
     }
   })
 
-  test("a newer schema re-makes no request the walk did not hold, nor on a held reason of another's or a schema not the owner's (a guard)", async () => {
+  test("a newer schema re-makes no request the walk did not hold, nor on a held reason of another's, an older request's, or a schema not the owner's (a guard)", async () => {
     served.add("request")
     try {
       const schema = (seq: number, role = "owner") => ({ shape: "shape_schema", id: `s-q${seq}${role}`, seq, role, target: "request", inputs: ["world_changed"] })
@@ -1297,6 +1297,8 @@ describe("candidates", () => {
       expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old", "described")])).not.toContain("produce/request/ch1")
       expect(await ids([ask, ch, schema(10, "walk"), q("q-old", 5), held("h1", 6, "q-old")])).not.toContain("produce/request/ch1")
       expect(await ids([ask, ch, schema(3), q("q-old", 5), held("h1", 6, "q-old")])).not.toContain("produce/request/ch1")
+      // an older request held, a later one made and not held: the later one was sent, so it is not made again
+      expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old"), q("q-new", 8)])).not.toContain("produce/request/ch1")
     } finally {
       served.delete("request")
     }
