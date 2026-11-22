@@ -445,9 +445,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     // newer than the root's latest row of it, that judgment was made under the old words, so it is offered once more,
     // whatever it saw. The row it makes is newer than the schema: once per change of the schema. Nothing else a gate does
     // not read is re-made this way: an answer is not sent twice, and a deadline is not moved (a re-made one could hide a
-    // lapse). A row the walk held back (a held reason names it as request_ref) is re-made the same way: it was never
-    // called, sent or relied on, so making it again sends nothing twice and moves no deadline, and a root whose request
-    // the walk held, told why, would otherwise never be asked under the words the owner wrote to fix it.
+    // lapse). A row the walk held back (a held reason names it as request_ref) is re-made the same way: either its call
+    // was never made (a skip), or it was made once and its answer not kept (too_big), so nothing it asked for was sent
+    // on or relied on. Making it again sends nothing twice and moves no deadline, and a root whose request the walk held,
+    // told why, would otherwise never be asked under the words the owner wrote to fix it.
     const judged = reqs.some((q) => String(q.needs) === String(s.target))
     const last = pool.filter((r) => r.shape === String(s.target)).sort((a, b) => a.seq - b.seq).at(-1)
     const heldBack = last !== undefined && pool.some((f) => isHeld(f) && String(f.request_ref) === last.id)

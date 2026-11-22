@@ -1271,10 +1271,12 @@ describe("candidates", () => {
     try {
       const schema = (seq: number, role = "owner") => ({ shape: "shape_schema", id: `s-q${seq}${role}`, seq, role, target: "request", inputs: ["world_changed"] })
       const q = (id: string, seq: number) => ({ shape: "request", id, seq, role: "described", input_refs: ["w1"], pointer: { type: "fs_edit" } })
-      const held = (id: string, seq: number, of: string, role = "walk") =>
-        ({ shape: "failure", id, seq, role, request_ref: of, unserved: ["fs_edit (requires fileContent)"] })
+      const held = (id: string, seq: number, of: string, role = "walk", kind = "skip") =>
+        ({ shape: "failure", kind, id, seq, role, request_ref: of, unserved: ["fs_edit (requires fileContent)"] })
       // held under the old words: the owner's newer schema asks for it again
       expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old")])).toContain("produce/request/ch1")
+      // a read whose answer was too big to keep holds its request the same way: its call was made, its answer was not kept
+      expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old", "walk", "too_big")])).toContain("produce/request/ch1")
       // made again after the schema (and held again): not asked a third time until the schema changes again
       expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old"), q("q-new", 12), held("h2", 13, "q-new")]))
         .not.toContain("produce/request/ch1")
@@ -1288,8 +1290,8 @@ describe("candidates", () => {
     try {
       const schema = (seq: number, role = "owner") => ({ shape: "shape_schema", id: `s-q${seq}${role}`, seq, role, target: "request", inputs: ["world_changed"] })
       const q = (id: string, seq: number) => ({ shape: "request", id, seq, role: "described", input_refs: ["w1"], pointer: { type: "fs_edit" } })
-      const held = (id: string, seq: number, of: string, role = "walk") =>
-        ({ shape: "failure", id, seq, role, request_ref: of, unserved: ["fs_edit (requires fileContent)"] })
+      const held = (id: string, seq: number, of: string, role = "walk", kind = "skip") =>
+        ({ shape: "failure", kind, id, seq, role, request_ref: of, unserved: ["fs_edit (requires fileContent)"] })
       expect(await ids([ask, ch, schema(10), q("q-old", 5)])).not.toContain("produce/request/ch1")
       expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-other")])).not.toContain("produce/request/ch1")
       expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old", "described")])).not.toContain("produce/request/ch1")
