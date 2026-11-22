@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto"
 import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
-import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists } from "./calls"
+import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists, servers } from "./calls"
 import { callProblem, shownValue } from "./inputs"
 import { repeatKeysOf, stable } from "./acts"
 import { VESSEL_ID } from "./config"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, CLONE_BINDING, DUE, FAILURE, HOP, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, CLONE_BINDING, DUE, FAILURE, HOP, INFRA_WINDOW, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
@@ -384,6 +384,29 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     } else if (learned(r)) told.clear()
   }
   const held = (r: Row): boolean => heldNew.has(r.id)
+  // AN INSTALL THAT COULD BEAR ON A HELD REQUEST IS ONE MORE TRY FOR IT. A root the walk held, told why, waits for news;
+  // a fix installed as code (an owner infra_window row naming what it installed) names no root, so without this it never
+  // reached a root already told, and each fix changed only later roots. An install bears on a request when it installed
+  // the root's own repo (the root's repo field), the walk itself (which judged the request held), or a vessel discovery
+  // says serves the request's call (read now; pull-sync names the vessel from its own inventory, so no name is guessed
+  // from a repo). It is news once: the request made again over it, or the call it lets through, is newer than it. Every
+  // other restart row, and an install bearing on none of these, tells the root nothing.
+  const rootRow = note.root === undefined ? undefined : byId.get(note.root)
+  const callOfReq = (q: Row | undefined): string | undefined => {
+    const t = (q?.pointer as { type?: unknown } | undefined)?.type
+    return typeof t === "string" ? t : undefined
+  }
+  // Who serves each call the root's requests name is read only when the pool holds an install: a tick with none asks
+  // discovery nothing more. An unanswered read serves no one.
+  const installs = pool.some((x) => x.shape === INFRA_WINDOW && x.installed !== undefined)
+  const named = installs ? [...new Set(pool.filter((x) => REQUESTS.has(x.shape)).map(callOfReq).filter((t): t is string => t !== undefined))] : []
+  const serving = new Map(await Promise.all(named.map(async (t): Promise<[string, Set<string>]> => [t, (await servers(t)) ?? new Set()])))
+  const bears = (x: Row, call: string | undefined): boolean => x.shape === INFRA_WINDOW && x.role === OWNER &&
+    [x.installed].flat().some((i) => {
+      const { repo, vessel } = (i ?? {}) as { repo?: unknown; vessel?: unknown }
+      return (typeof repo === "string" && repo === rootRow?.repo) ||
+        (typeof vessel === "string" && (vessel === VESSEL_ID || (call !== undefined && serving.get(call)?.has(vessel) === true)))
+    })
   // A row counts as graded when an outcome judged it with something the row itself did not carry: a person's verdict, a
   // grade at r 0 (which asks for another try), or a grade whose inputs reach past the row and what the row saw. An r 1
   // made from only the row and its own inputs is the producer agreeing with itself (grade independence is information,
@@ -432,8 +455,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       Object.entries(((typeof e === "object" && e !== null ? (e as { where?: unknown }).where : undefined) ?? {}) as Record<string, unknown>)
         .every(([k, v]) => JSON.stringify(r[k]) === JSON.stringify(v)))
     const stalled = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === STALL && r.selection_ref === undefined && takes(r)
+    // A restart row is news only as an install bearing on a held request (pending, below): read as any row of its shape,
+    // every restart would make every root that reads it due again.
     return (r: Row | undefined): boolean =>
-      r !== undefined && reads(r) && !older.has(r.id) && !repeats.has(r.id) &&
+      r !== undefined && r.shape !== INFRA_WINDOW && reads(r) && !older.has(r.id) && !repeats.has(r.id) &&
       !(r.role === WALK && BOOKKEEPING.has(r.shape) && !brought(r) && !spoke(r) && !held(r) && !stalled(r))
   }
   // A produce the producer refused as not fitting the schema is not held: it is offered again like any produce, with the
@@ -451,8 +476,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     // told why, would otherwise never be asked under the words the owner wrote to fix it.
     const judged = reqs.some((q) => String(q.needs) === String(s.target))
     const last = pool.filter((r) => r.shape === String(s.target)).sort((a, b) => a.seq - b.seq).at(-1)
-    const heldBack = last !== undefined && pool.some((f) => isHeld(f) && String(f.request_ref) === last.id)
+    const holds = last === undefined ? [] : pool.filter((f) => isHeld(f) && String(f.request_ref) === last.id)
+    const heldBack = holds.length > 0
     if ((judged || heldBack) && last !== undefined && s.role === OWNER && s.seq > last.seq) return false
+    // and an install bearing on it since it was last held (above)
+    const toldAt = Math.max(...holds.map((f) => f.seq))
+    if (heldBack && pool.some((x) => x.seq > toldAt && bears(x, callOfReq(last)))) return false
     const sees = seen(s)
     const now = key(pool.filter(sees).map((r) => r.id))
     // What a row was made over is what the walk handed its producer: the key its selection kept (seen_key). Not what
@@ -640,7 +669,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const vocab = declaredInputs()
     const { writer: _w, role: _r, ...asked } = (r.pointer ?? {}) as Record<string, unknown>
     const takes = vocab === undefined ? undefined : callProblem(vocab, type, asked)
-    const prior = settled(callKey(type, argsOf(asked)))
+    const prior = settled(callKey(type, argsOf(asked)), (x) => bears(x, type))
     const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
       ...(prior !== undefined ? [`${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
     const behind = refsOfReasons(gate)

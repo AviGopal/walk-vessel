@@ -1304,6 +1304,103 @@ describe("candidates", () => {
     }
   })
 
+  // An install row as pull-sync writes it: an owner infra_window row whose installed[] names what went in, and where.
+  const install = (seq: number, installed?: unknown, role = "owner") =>
+    ({ shape: "infra_window", id: `iw${seq}`, seq, role, window_id: `restart-${seq}-${seq - 1}`, from_seq: seq, to_seq: seq - 1, statuses: [0], ...(installed !== undefined ? { installed } : {}) })
+  const onRoot = async (rows: any[], root = "w1") => (await (applicable as any)(rows, [], Date.now(), { root })).map((c: { id: string }) => c.id)
+
+  test("[MUST-FAIL] a request the walk held is made again once over an install bearing on it: the root's repo, the walk, or the vessel serving its call", async () => {
+    served.add("request")
+    try {
+      const askR = { ...ask, repo: "r-gap" }
+      const schema = { shape: "shape_schema", id: "s-q3", seq: 3, role: "owner", target: "request", inputs: ["world_changed"] }
+      const q = (id: string, seq: number) => ({ shape: "request", id, seq, role: "described", input_refs: ["w1"], pointer: { type: "fs_edit" } })
+      const held = (id: string, seq: number, of: string) => ({ shape: "failure", kind: "skip", id, seq, role: "walk", request_ref: of, unserved: ["fs_edit (requires fileContent)"] })
+      const base = [askR, ch, schema, q("q-old", 5), held("h1", 6, "q-old")]
+      expect(await onRoot(base)).not.toContain("produce/request/ch1") // held and told: nothing new
+      // (c) the root's own repo
+      expect(await onRoot([...base, install(8, [{ repo: "r-gap", commit: "c1" }])])).toContain("produce/request/ch1")
+      // (a) the walk itself, whatever repo it was
+      expect(await onRoot([...base, install(8, [{ repo: "r-walk", commit: "c1", vessel: "walk-test" }])])).toContain("produce/request/ch1")
+      // (b) a vessel discovery says serves the held request's call
+      served.add("fs_edit")
+      try {
+        expect(await onRoot([...base, install(8, [{ repo: "r-tool", commit: "c1", vessel: "producer-x" }])])).toContain("produce/request/ch1")
+      } finally {
+        served.delete("fs_edit")
+      }
+      // once per install: made again after it, and held again, it waits for the next
+      expect(await onRoot([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), q("q-new", 12), held("h2", 13, "q-new")])).not.toContain("produce/request/ch1")
+      // a later install is another try
+      expect(await onRoot([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), q("q-new", 12), held("h2", 13, "q-new"), install(15, [{ repo: "r-gap", commit: "c2" }])]))
+        .toContain("produce/request/ch1")
+    } finally {
+      served.delete("request")
+    }
+  })
+
+  test("an install re-makes no request it does not bear on, nor one not held, nor one held after it, nor on a row not the owner's (a guard)", async () => {
+    served.add("request")
+    try {
+      const askR = { ...ask, repo: "r-gap" }
+      const schema = { shape: "shape_schema", id: "s-q3", seq: 3, role: "owner", target: "request", inputs: ["world_changed"] }
+      const q = (id: string, seq: number) => ({ shape: "request", id, seq, role: "described", input_refs: ["w1"], pointer: { type: "fs_edit" } })
+      const held = (id: string, seq: number, of: string) => ({ shape: "failure", kind: "skip", id, seq, role: "walk", request_ref: of, unserved: ["fs_edit (requires fileContent)"] })
+      const base = [askR, ch, schema, q("q-old", 5), held("h1", 6, "q-old")]
+      const miss = async (rows: any[], root?: string) => expect(await onRoot(rows, root)).not.toContain("produce/request/ch1")
+      await miss([...base, install(8)]) // a restart that installed nothing
+      await miss([...base, install(8, [{ repo: "r-other", commit: "c1", vessel: "v-other" }])]) // another repo, another vessel
+      await miss([...base, install(8, [{ repo: "r-gap", commit: "c1" }], "detector")]) // not the owner's row
+      await miss([askR, ch, schema, q("q-old", 5), install(6, [{ repo: "r-gap", commit: "c1" }]), held("h1", 7, "q-old")]) // held after it
+      await miss([askR, ch, schema, q("q-old", 5), install(8, [{ repo: "r-gap", commit: "c1" }])]) // never held: it was sent
+      await miss([ask, ch, schema, q("q-old", 5), held("h1", 6, "q-old"), install(8, [{ repo: "undefined", commit: "c1" }])]) // a root with no repo
+      await miss([...base, install(8, [{ repo: "r-gap", commit: "c1" }])], "w-other") // another root's repo
+      await miss([ask, ch, schema, q("q-old", 5), held("h1", 6, "q-old"), install(8, [{ commit: "c1", vessel: "v-other" }])]) // neither names a repo
+      // a vessel that serves something, but not this request's call
+      await miss([...base, install(8, [{ repo: "r-tool", commit: "c1", vessel: "producer-x" }])])
+      await miss([...base, { ...install(8, [{ repo: "r-gap", commit: "c1" }]), shape: "repository" }]) // an owner row of another shape
+      await miss([...base, install(8, [null, "r-gap", { repo: "r-other", commit: "c1" }])]) // entries that name nothing
+      // held again after the install (a hold row for the same request, its reason already told): the install is older
+      // than its latest telling, so it is not news to it
+      await miss([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), held("h2", 9, "q-old")])
+    } finally {
+      served.delete("request")
+    }
+  })
+
+  test("[MUST-FAIL] a restart row is no news to a produce that reads its shape: only an install bearing on a held request is", async () => {
+    served.add("request")
+    try {
+      const schema = { shape: "shape_schema", id: "s-q3", seq: 3, role: "owner", target: "request", inputs: ["world_changed"], context: ["infra_window"] }
+      const q = { shape: "request", id: "q-old", seq: 5, role: "described", input_refs: ["w1"], pointer: { type: "fs_edit" } }
+      expect(await onRoot([ask, ch, schema, q])).not.toContain("produce/request/ch1")
+      expect(await onRoot([ask, ch, schema, q, install(8)])).not.toContain("produce/request/ch1")
+      expect(await onRoot([ask, ch, schema, q, install(8, [{ repo: "r-any", commit: "c1", vessel: "walk-test" }])])).not.toContain("produce/request/ch1")
+    } finally {
+      served.delete("request")
+    }
+  })
+
+  test("[MUST-FAIL] a call refused here is called once more after an install bearing on it, and settled again by its next refusal", async () => {
+    served.add("git_commit")
+    try {
+      const askR = { shape: "world_changed", id: "w1", seq: 1, role: "person", what: "x", repo: "r-gap" }
+      const req = (id: string, seq: number) => ({ shape: "request", id, seq, role: "described", pointer: { type: "git_commit", cwd: "/c", message: "fix" }, input_refs: ["w1"] })
+      const refusal = (n: number, seq: number, from: string) => [
+        { shape: "selection", id: `s${n}`, seq, role: "walk", a: "call/git_commit", from, root: "w1" },
+        { shape: "hop", id: `h${n}`, seq: seq + 1, role: "walk", phase: "started", kind: "call", call_id: `c${n}`, pointer_type: "git_commit", selection_ref: `s${n}` },
+        { shape: "failure", id: `f${n}`, seq: seq + 2, role: "walk", call_id: `c${n}`, selection_ref: `s${n}`, status: 200, blames: "request", body: "nothing new to commit" }]
+      const base = [askR, req("q1", 2), ...refusal(1, 3, "q1"), req("q2", 6)]
+      const calls = async (rows: any[]) => (await onRoot(rows)).includes("call/git_commit")
+      expect(await calls(base)).toBe(false)
+      expect(await calls([...base, install(8, [{ repo: "r-gap", commit: "c1" }])])).toBe(true)
+      expect(await calls([...base, install(8, [{ repo: "r-other", commit: "c1" }])])).toBe(false)
+      expect(await calls([...base, install(8, [{ repo: "r-gap", commit: "c1" }]), ...refusal(2, 9, "q2")])).toBe(false)
+    } finally {
+      served.delete("git_commit")
+    }
+  })
+
   test("[MUST-FAIL] what a tick cost is only in timing: two selections that differ in it alone are the same choice", async () => {
     const { selectionRow } = await import("../src/loop")
     const option = { cand: { id: "call/fileContent", kind: "call", pointer: {}, calls: [], t: "" }, pool: [...pool], context: ["world_changed", "asker:person", "age:0"], cell: "call/fileContent|world_changed,asker:person,age:0", skipped: [], root: "w1" }

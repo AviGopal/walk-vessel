@@ -148,7 +148,7 @@ export const exists = async (shape: string): Promise<boolean> => {
 // outcome, which other vessels serve. (Named debt: discovery does not say which of those vessels answered this call.)
 // Never copied: a stored row's own stamps, and r and refused, so a recorded answer can never read as a grade or a refusal.
 const OWN_FIELDS = new Set(["id", "seq", "t", "writer", "role", "shape", "r", "refused"])
-const servers = async (shape: string): Promise<Set<string> | null> => {
+export const servers = async (shape: string): Promise<Set<string> | null> => {
   const r = await resolve({ type: VESSEL_CAPABILITY, shape })
   const vessels = (r.body as { content?: { vessels?: Array<{ vesselId?: unknown }> } } | null)?.content?.vessels
   return r.ok && Array.isArray(vessels) ? new Set(vessels.map((v) => String(v.vesselId))) : null

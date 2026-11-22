@@ -29,6 +29,9 @@ export const WALK = "walk"
 export const PERSON = "person"
 export const OWNER = "owner"
 export const DESCRIBED = "described"
+// The owner's record of a span when a vessel was restarted; one that installed code names what it installed
+// (installed: [{repo, commit, vessel}]).
+export const INFRA_WINDOW = "infra_window"
 // The owner's schedule for a template the walk runs when due (records shares it with the template it names).
 export const RHYTHM = "rhythm"
 // The owner's word on what makes a result news: for a shape, the fields whose values identify it (a diff's tree and its
