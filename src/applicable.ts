@@ -48,8 +48,9 @@ export type Seen = { overdue?: boolean; awaits?: boolean; dues?: number[]; share
 
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
-  // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a schema
-  // written again offers its produce once, under the rules it has now. A row may name a variant: another way the owner
+  // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a produce
+  // offered is under the rules it has now; a schema written again re-makes a row already made only where that row is a
+  // gate's judgment or one the walk held back (pending, below). A row may name a variant: another way the owner
   // makes the same shape, from other inputs (a request from a detector's gap rather than from a person's ask). Each
   // variant is superseded only by a newer row of the same variant; a row naming none is the variant "".
   const variant = (r: Row): string => String(r.variant ?? "")
@@ -442,11 +443,15 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const pending = (s: Row): boolean => {
     // A judge that changed judges again: when a gate's judgment (a shape some owner requires row needs) has a schema row
     // newer than the root's latest row of it, that judgment was made under the old words, so it is offered once more,
-    // whatever it saw. The row it makes is newer than the schema: once per change of the schema. Nothing a gate does not
-    // read is re-made this way: an answer is not sent twice, and a deadline is not moved.
+    // whatever it saw. The row it makes is newer than the schema: once per change of the schema. Nothing else a gate does
+    // not read is re-made this way: an answer is not sent twice, and a deadline is not moved (a re-made one could hide a
+    // lapse). A row the walk held back (a held reason names it as request_ref) is re-made the same way: it was never
+    // called, sent or relied on, so making it again sends nothing twice and moves no deadline, and a root whose request
+    // the walk held, told why, would otherwise never be asked under the words the owner wrote to fix it.
     const judged = reqs.some((q) => String(q.needs) === String(s.target))
     const last = pool.filter((r) => r.shape === String(s.target)).sort((a, b) => a.seq - b.seq).at(-1)
-    if (judged && last !== undefined && s.role === OWNER && s.seq > last.seq) return false
+    const heldBack = last !== undefined && pool.some((f) => isHeld(f) && String(f.request_ref) === last.id)
+    if ((judged || heldBack) && last !== undefined && s.role === OWNER && s.seq > last.seq) return false
     const sees = seen(s)
     const now = key(pool.filter(sees).map((r) => r.id))
     // What a row was made over is what the walk handed its producer: the key its selection kept (seen_key). Not what

@@ -1266,6 +1266,40 @@ describe("candidates", () => {
     expect(await ids([ask, ch, schema, old])).not.toContain("produce/answer/ch1")
   })
 
+  test("[MUST-FAIL] a request the walk held back is made again under a newer schema, once", async () => {
+    served.add("request")
+    try {
+      const schema = (seq: number, role = "owner") => ({ shape: "shape_schema", id: `s-q${seq}${role}`, seq, role, target: "request", inputs: ["world_changed"] })
+      const q = (id: string, seq: number) => ({ shape: "request", id, seq, role: "described", input_refs: ["w1"], pointer: { type: "fs_edit" } })
+      const held = (id: string, seq: number, of: string, role = "walk") =>
+        ({ shape: "failure", id, seq, role, request_ref: of, unserved: ["fs_edit (requires fileContent)"] })
+      // held under the old words: the owner's newer schema asks for it again
+      expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old")])).toContain("produce/request/ch1")
+      // made again after the schema (and held again): not asked a third time until the schema changes again
+      expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old"), q("q-new", 12), held("h2", 13, "q-new")]))
+        .not.toContain("produce/request/ch1")
+    } finally {
+      served.delete("request")
+    }
+  })
+
+  test("a newer schema re-makes no request the walk did not hold, nor on a held reason of another's or a schema not the owner's (a guard)", async () => {
+    served.add("request")
+    try {
+      const schema = (seq: number, role = "owner") => ({ shape: "shape_schema", id: `s-q${seq}${role}`, seq, role, target: "request", inputs: ["world_changed"] })
+      const q = (id: string, seq: number) => ({ shape: "request", id, seq, role: "described", input_refs: ["w1"], pointer: { type: "fs_edit" } })
+      const held = (id: string, seq: number, of: string, role = "walk") =>
+        ({ shape: "failure", id, seq, role, request_ref: of, unserved: ["fs_edit (requires fileContent)"] })
+      expect(await ids([ask, ch, schema(10), q("q-old", 5)])).not.toContain("produce/request/ch1")
+      expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-other")])).not.toContain("produce/request/ch1")
+      expect(await ids([ask, ch, schema(10), q("q-old", 5), held("h1", 6, "q-old", "described")])).not.toContain("produce/request/ch1")
+      expect(await ids([ask, ch, schema(10, "walk"), q("q-old", 5), held("h1", 6, "q-old")])).not.toContain("produce/request/ch1")
+      expect(await ids([ask, ch, schema(3), q("q-old", 5), held("h1", 6, "q-old")])).not.toContain("produce/request/ch1")
+    } finally {
+      served.delete("request")
+    }
+  })
+
   test("[MUST-FAIL] what a tick cost is only in timing: two selections that differ in it alone are the same choice", async () => {
     const { selectionRow } = await import("../src/loop")
     const option = { cand: { id: "call/fileContent", kind: "call", pointer: {}, calls: [], t: "" }, pool: [...pool], context: ["world_changed", "asker:person", "age:0"], cell: "call/fileContent|world_changed,asker:person,age:0", skipped: [], root: "w1" }
