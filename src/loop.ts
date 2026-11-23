@@ -283,7 +283,9 @@ export const chain = async (): Promise<void> => {
     let episodesReads = 0
     let posteriorReads = 0
     const t0 = performance.now()
-    const read = await readUntil(() => { episodesReads++; return loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all", omit: UNREAD }) }, isEpisodes, "episodes")
+    // arm "beside": records hands the walk's arm after the open roots too, so a rhythm the arm made due is offered while
+    // requests stay open (choices offers it there only its rhythm moves).
+    const read = await readUntil(() => { episodesReads++; return loopCall(RECORD_READ, { episode: VESSEL_ID, roots: "all", omit: UNREAD, arm: "beside" }) }, isEpisodes, "episodes")
     if (read === undefined) return
     const episodesMs = ms(t0)
     const { shared, roots } = asEpisodes(read)

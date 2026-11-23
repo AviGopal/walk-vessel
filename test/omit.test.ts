@@ -66,6 +66,13 @@ describe("the episodes read names what the walk does not read back", () => {
     expect(others.filter((p) => "omit" in p).map((p) => p.type)).toEqual([])
   })
 
+  test("[MUST-FAIL] every episodes read asks for the arm beside the open roots; no other read the walk makes does", () => {
+    const episodes = pointers.filter((p) => p.type === "record_read" && p.roots === "all")
+    expect(episodes.length).toBeGreaterThanOrEqual(3)
+    for (const p of episodes) expect(p.arm).toBe("beside")
+    expect(pointers.filter((p) => !(p.type === "record_read" && p.roots === "all")).filter((p) => "arm" in p).map((p) => p.type)).toEqual([])
+  })
+
   test("a records that ignores omit and answers the selections whole: the walk keeps ticking, and stores each selection whole", () => {
     const sels = written.filter((r) => r.shape === "selection")
     expect(sels.length).toBeGreaterThanOrEqual(3)
