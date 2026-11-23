@@ -4,7 +4,7 @@ import { type Frontier, type Seen, type Skipped, applicable } from "./applicable
 import { type Cand, READ_AGAIN_MS, READ_WAIT_MS, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
-import { ARM, DESCRIBED, DUE, FAILURE, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
+import { ARM, DESCRIBED, DUE, FAILURE, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, RHYTHM, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean; dues?: number[] }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]>; frontier?: Frontier; rootCell?: string }
@@ -51,6 +51,7 @@ export const worksOn = (root: Row, rows: Row[]): ((r: Row) => boolean) => {
 export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row[]; awaits?: boolean; dues?: number[] }>, now = Date.now(), answers: Record<string, string> = {}, arm?: Row, head?: number, held?: Held): Promise<Option[]> => {
   const out: Option[] = []
   const waits = new Map<string, Option>()
+  const moving = new Set<string>()
   let overdue = false
   const everyRoot = new Set(shared.map((r) => r.id))
   for (const { root, rows, awaits, dues } of roots) {
@@ -70,7 +71,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const armBeside = roots.length > 1 && (awaits === false || (awaits === undefined && root.shape === ARM))
     const found = await applicable(work, skipped, now, seen, answers)
     const cands = armBeside ? found.filter((c) => c.rhythm === true) : found
-    if (cands.length > 0 || armBeside) held?.moving.add(root.id)
+    if (cands.length > 0 || armBeside) { held?.moving.add(root.id); moving.add(root.id) }
     else if (skipped.length > 0) held?.still.push({ root: root.id, pool, skipped })
     overdue = overdue || seen.overdue === true
     const gated = seen.gated
@@ -98,7 +99,18 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
   // A root whose first deadline has passed offers no wait of its own: grading the lapse is its move. Nor may another
   // root's wait be taken then, or a wait with no bound (an idle or gap root's) would keep that lapse ungraded until a row
   // happened to come.
-  const offered = out.length > 0 ? out : overdue ? [] : [...waits.values()]
+  // A WAIT ENDS BY THE NEXT STALL DUE. A root with no move is said once its newest row is the owner's every_ms behind
+  // (stalls, below), but the walk writes nothing while it waits, and a wait with no deadline ahead outlasts that clock:
+  // the root went unsaid for as long as the wait's own bound. So whichever wait is offered, a root's or the idle one,
+  // ends by the earliest time a root with no move, not yet said since its last change, falls due. A root with any move
+  // (a wait included) is not counted. With no rhythm row naming the stall, no wait is changed.
+  const due = stallDue(shared, roots.filter(({ root }) => !moving.has(root.id)), now)
+  const capped = (o: Option): Option => {
+    if (due === undefined) return o
+    const until = Math.max(now, Math.min(Number(o.cand.pointer.until ?? Number.POSITIVE_INFINITY), due))
+    return { ...o, cand: { ...o.cand, pointer: { ...o.cand.pointer, until } } }
+  }
+  const offered = out.length > 0 ? out : overdue ? [] : [...waits.values()].map(capped)
   if (offered.length > 0 || roots.length === 0) return offered
   // Nothing to do on any root (every produce pending, nothing to call, no wait offered): the walk waits for the next row
   // rather than having no move. A deadline still ahead bounds it, since one passing makes a lapse gradable. This wait is
@@ -111,7 +123,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
   const pool = [...shared, arm].sort((x, y) => x.seq - y.seq)
   const cand: Cand = { pointer: { shapes: [], ...(ahead.length > 0 ? { until: Math.min(...ahead) } : {}) }, calls: [], t: "", id: WAIT_FOR, kind: WAIT_FOR }
   const context = ["idle"]
-  return [{ cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped: [], root: arm.id }]
+  return [capped({ cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped: [], root: arm.id })]
 }
 
 /**
@@ -230,40 +242,78 @@ export const UNREAD: Record<string, string[]> = { [SELECTION]: ["cands", "posts"
 // kind (the walk's own word, as a skip is), no status, never a grade or a lapse. Counted in store rows, the unit a
 // detector's quiet window is counted in, from seqs the walk already holds: no read is made. Derived from rows alone, so
 // it replays over any past window. With no stall_rule, nothing is written.
-export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, options: Array<{ root: string }>, at: number): Array<Record<string, unknown>> => {
-  const rule = shared.filter((r) => r.shape === STALL_RULE && r.role === OWNER).sort((a, b) => a.seq - b.seq).at(-1)
+// THE STALL CLOCK IS ALSO TIME. A count in store rows stops when the walk does: parked on one wait it writes a few rows
+// an hour, and a root with no move sat a day before N rows came. The owner's rhythm row naming the stall
+// ({target: "stall", every_ms}) says a root once its newest counted row is every_ms or more old by that row's own t,
+// against the tick's now; whichever count is reached first says it. Read at use time like the rule; with no such row,
+// or one retired, the store-row count alone applies, as before. Replays from the rows and their t.
+type Clock = { rows?: number; ms?: number }
+const stallClock = (shared: Row[]): Clock => {
+  const newest = (f: (r: Row) => boolean): Row | undefined => shared.filter((r) => r.role === OWNER && f(r)).sort((a, b) => a.seq - b.seq).at(-1)
+  const rule = newest((r) => r.shape === STALL_RULE)
+  const rhythm = newest((r) => r.shape === RHYTHM && r.target === STALL)
   const n = Number(rule?.after_rows)
-  if (rule === undefined || rule.retired === true || !Number.isInteger(n) || n < 1 || !Number.isFinite(at)) return []
-  const moving = new Set(options.map((o) => o.root))
+  // every_ms is a number or no clock: a string is not read as one
+  const ms = typeof rhythm?.every_ms === "number" ? rhythm.every_ms : Number.NaN
+  return {
+    ...(rule !== undefined && rule.retired !== true && Number.isInteger(n) && n >= 1 ? { rows: n } : {}),
+    ...(rhythm !== undefined && rhythm.retired !== true && Number.isFinite(ms) && ms >= 1 ? { ms } : {}),
+  }
+}
+
+// A root's newest counted row (its work, past the walk's own stall rows and its producers' answers to them), and whether
+// it was already said since. Only the root's work counts: a row made on another root is shown to its producers, never
+// news here (worksOn).
+const sat = (root: Row, all: Row[]): { row: Row; said: boolean } => {
+  const rows = all.filter(worksOn(root, all))
   const said = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === STALL && r.selection_ref === undefined
+  // WHAT THE WALK'S OWN PRODUCERS SAY IN ANSWER TO BEING SAID IS NOT A CHANGE. A stall row is news to the root's
+  // producers once, so one is offered again; with nothing to do it declines, and counted as a change that decline
+  // restarted the count, and the root was said again every N rows. A row made under a produce selection newer than
+  // the root's newest stall row (the selection, its hops and facts, the row it produced) is that answer. What follows
+  // from it still is a change: a call it asked for runs under a call selection, and rows from outside the walk carry
+  // no selection of a produce. A tick writes its selection before its stall rows, so a produce answering a stall is
+  // always under a newer selection; one already in flight when the root was said is under an older one, and counts.
+  // What the walk itself held back from that answer is the answer too (below).
+  // A root never said has no answer to give: every row of it counts, as before.
+  const last = Math.max(-Infinity, ...rows.filter(said).map((r) => r.seq))
+  const sels = new Map(rows.filter((r) => r.shape === SELECTION).map((r) => [r.id, r]))
+  const produced = (r: Row | undefined): boolean => {
+    const s = r === undefined ? undefined : r.shape === SELECTION ? r : sels.get(String(r.selection_ref))
+    return Number.isFinite(last) && s !== undefined && s.seq > last && String(s.a).startsWith(`${PRODUCE}/`)
+  }
+  // A reason the walk held back that answer for (its own row, under no selection: a root with no move is not drawn)
+  // names the request it holds back (request_ref): when that request is the answer, so is the held reason. One step
+  // only: the request named must itself be under that produce, so no chain of the walk's own rows hides a change.
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  const answer = (r: Row): boolean => produced(r) ||
+    (r.role === WALK && r.selection_ref === undefined && typeof r.request_ref === "string" && produced(byId.get(r.request_ref)))
+  const row = [root, ...rows.filter((r) => !said(r) && !answer(r))].reduce((m, r) => (r.seq > m.seq ? r : m))
+  return { row, said: rows.some((r) => said(r) && r.seq > row.seq) }
+}
+
+// When the time clock next says a root among these (the earliest newest-row t plus every_ms of a root not yet said), or
+// undefined with no time clock or no such root.
+export const stallDue = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, now: number): number | undefined => {
+  const { ms } = stallClock(shared)
+  if (ms === undefined || !Number.isFinite(now)) return undefined
+  const dues = roots.map(({ root, rows }) => sat(root, rows)).filter((x) => !x.said).map((x) => Date.parse(String(x.row.t)) + ms).filter(Number.isFinite)
+  return dues.length > 0 ? Math.min(...dues) : undefined
+}
+
+export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, options: Array<{ root: string }>, at: number, now = Number.NaN): Array<Record<string, unknown>> => {
+  const { rows: n, ms } = stallClock(shared)
+  if (n === undefined && ms === undefined) return []
+  const moving = new Set(options.map((o) => o.root))
   const out: Array<Record<string, unknown>> = []
-  for (const { root, rows: all } of roots.filter(({ root }) => !moving.has(root.id))) {
-    // Only the root's work counts: a row made on another root is shown to its producers, never news here (worksOn).
-    const rows = all.filter(worksOn(root, all))
-    // WHAT THE WALK'S OWN PRODUCERS SAY IN ANSWER TO BEING SAID IS NOT A CHANGE. A stall row is news to the root's
-    // producers once, so one is offered again; with nothing to do it declines, and counted as a change that decline
-    // restarted the count, and the root was said again every N rows. A row made under a produce selection newer than
-    // the root's newest stall row (the selection, its hops and facts, the row it produced) is that answer. What follows
-    // from it still is a change: a call it asked for runs under a call selection, and rows from outside the walk carry
-    // no selection of a produce. A tick writes its selection before its stall rows, so a produce answering a stall is
-    // always under a newer selection; one already in flight when the root was said is under an older one, and counts.
-    // What the walk itself held back from that answer is the answer too (below).
-    // A root never said has no answer to give: every row of it counts, as before.
-    const last = Math.max(-Infinity, ...rows.filter(said).map((r) => r.seq))
-    const sels = new Map(rows.filter((r) => r.shape === SELECTION).map((r) => [r.id, r]))
-    const produced = (r: Row | undefined): boolean => {
-      const s = r === undefined ? undefined : r.shape === SELECTION ? r : sels.get(String(r.selection_ref))
-      return Number.isFinite(last) && s !== undefined && s.seq > last && String(s.a).startsWith(`${PRODUCE}/`)
-    }
-    // A reason the walk held back that answer for (its own row, under no selection: a root with no move is not drawn)
-    // names the request it holds back (request_ref): when that request is the answer, so is the held reason. One step
-    // only: the request named must itself be under that produce, so no chain of the walk's own rows hides a change.
-    const byId = new Map(rows.map((r) => [r.id, r]))
-    const answer = (r: Row): boolean => produced(r) ||
-      (r.role === WALK && r.selection_ref === undefined && typeof r.request_ref === "string" && produced(byId.get(r.request_ref)))
-    const newest = Math.max(root.seq, ...rows.filter((r) => !said(r) && !answer(r)).map((r) => r.seq))
-    if (rows.some((r) => said(r) && r.seq > newest)) continue
-    if (at - newest >= n) out.push({ shape: FAILURE, kind: STALL, root: root.id, rows: n, since_seq: newest, input_refs: [root.id] })
+  for (const { root, rows } of roots.filter(({ root }) => !moving.has(root.id))) {
+    const { row, said } = sat(root, rows)
+    if (said) continue
+    const byRows = n !== undefined && Number.isFinite(at) && at - row.seq >= n
+    const t = Date.parse(String(row.t))
+    const byTime = ms !== undefined && Number.isFinite(now) && Number.isFinite(t) && now - t >= ms
+    if (byRows || byTime) out.push({ shape: FAILURE, kind: STALL, root: root.id, ...(n !== undefined ? { rows: n } : {}),
+      since_seq: row.seq, ...(byTime ? { every_ms: ms, since_t: row.t } : {}), input_refs: [root.id] })
   }
   return out
 }
@@ -291,7 +341,8 @@ export const chain = async (): Promise<void> => {
     const { shared, roots } = asEpisodes(read)
     const t1 = performance.now()
     const held: Held = { moving: new Set(), still: [] }
-    const options = await choices(shared, roots, Date.now(), await shapeAnswers(), armRow, head, held)
+    const now = Date.now()
+    const options = await choices(shared, roots, now, await shapeAnswers(), armRow, head, held)
     const choicesMs = ms(t1)
     // A root with no move at all still says what it holds back and why, once per reason (recordSkipped keeps to that): a
     // request held by a gate or as a repeat is otherwise never written, so its producer, never shown why, is never offered
@@ -322,7 +373,7 @@ export const chain = async (): Promise<void> => {
     await recordSkipped(pool, skipped, sel)
     // No selection_ref on a stall row: the tick's selection is another root's move, and records reads a walk failure's
     // selection_ref as that move having failed. A root with any move, a wait included, is not stalled.
-    for (const row of stalls(shared, roots, [...options, ...[...held.moving].map((root) => ({ root }))], Number(sel.seq))) await writeRow(row)
+    for (const row of stalls(shared, roots, [...options, ...[...held.moving].map((root) => ({ root }))], Number(sel.seq), now)) await writeRow(row)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
     const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated, options[i].frontier) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
