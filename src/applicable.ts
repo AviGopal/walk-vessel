@@ -767,7 +767,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       if (q === undefined) return []
       const fields = Object.entries(q.binds as Record<string, unknown>).map(([k, from]) => [k, frontierRow[String(from)]] as const)
       if (fields.length === 0 || fields.some(([, v]) => v === undefined)) return []
-      const pointer: Record<string, unknown> = { type, ...Object.fromEntries(fields) }
+      // the call is the one the chain names: a binds naming type does not change it
+      const pointer: Record<string, unknown> = { ...Object.fromEntries(fields), type }
       const before = pool.some((x) => x.shape === SELECTION && x.a === id && (x.frontier as { id?: unknown } | undefined)?.id === frontierRow.id)
       if (before || !(await exists(type))) return []
       const vocab = declaredInputs()
