@@ -118,6 +118,17 @@ describe("the owner's rhythm", () => {
     expect(await ids([arm, ch, retro, pace(3, 1), made], { ...IDLE, head: 21 })).toContain(P)
   })
 
+  // every_rows below 1 (0, a fraction) is no rhythm: its template or produce is never offered, however far the head moves,
+  // and it is not offered as an unpaced one either, since the row still names it.
+  test("[GUARD] a rhythm of every_rows 0 or 0.5 is never offered, on either the template or the produce", async () => {
+    for (const every of [0, 0.5]) {
+      for (const head of [3, 4, 1000]) {
+        expect(await ids([arm, tpl, rhythm(3, every)], { ...IDLE, head })).not.toContain("run/t-det")
+        expect(await ids([arm, ch, retro, pace(3, every)], { ...IDLE, head })).not.toContain(P)
+      }
+    }
+  })
+
   test("a produce no rhythm names is offered as before; a template rhythm still paces only its template", async () => {
     const answer = { shape: "shape_schema", id: "s-ans", seq: 2, role: "owner", target: "answer", inputs: ["arm"] }
     expect(await ids([arm, ch, answer, rhythm(3, 5000)], IDLE)).toContain("produce/answer/ch")
