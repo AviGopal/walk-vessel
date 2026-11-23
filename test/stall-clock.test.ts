@@ -12,6 +12,7 @@ const keys = ["WALK_VESSEL_ID", "WALK_PORT", "DISCOVERY_URL", "WALK_ENDPOINT", "
 const was = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
 type Opt = { cand: { kind: string; id: string; pointer: Record<string, unknown> }; root: string }
 let stalls: typeof import("../src/loop").stalls
+let tickStalls: typeof import("../src/loop").tickStalls
 let choices: (shared: any[], roots: any[], now?: number, answers?: Record<string, string>, arm?: any) => Promise<Opt[]>
 beforeAll(async () => {
   Object.assign(process.env, {
@@ -20,6 +21,7 @@ beforeAll(async () => {
   globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
   const loop = await import("../src/loop")
   stalls = loop.stalls
+  tickStalls = loop.tickStalls
   choices = loop.choices as unknown as typeof choices
 })
 afterAll(() => {
@@ -147,6 +149,20 @@ describe("a wait ends by the next stall due", () => {
 
   test("[MUST-FAIL] a stall already due (not yet said) ends the wait now, never in the past", async () => {
     expect(waits(await choices([clock(30 * MIN)], [still("g1", 45 * MIN)], NOW, {}, arm))).toEqual([["arm1", NOW]])
+  })
+
+  test("[MUST-FAIL] a wait the cap ends now is met in the same tick: the stall step says exactly the roots whose due has passed", async () => {
+    // g1's due passed 15 minutes ago, g2's is 20 minutes ahead, i1 has a move (its own wait) though its newest row is old
+    const shared = [{ ...clock(30 * MIN) }]
+    const roots = [dueRoot(600 * MIN), still("g1", 45 * MIN), still("g2", 10 * MIN)]
+    const held = { moving: new Set<string>(), still: [] }
+    const options = await choices(shared, roots, NOW, {}, undefined, undefined, held)
+    expect(waits(options)).toEqual([["i1", NOW]])
+    const said = tickStalls(shared, roots, options, held as any, AT, NOW).map((r) => r.root)
+    expect(said).toEqual(["g1"])
+    // and the next tick, with g1 said, caps at g2's due, never at now again
+    const g1 = { ...roots[1]!, rows: [...roots[1]!.rows, { shape: "failure", id: "st", seq: 105, role: "walk", kind: "stall", root: "g1", t: iso(NOW) }] }
+    expect(waits(await choices(shared, [roots[0]!, g1, roots[2]!], NOW, {}, undefined, undefined, { moving: new Set(), still: [] }))).toEqual([["i1", NOW + 20 * MIN]])
   })
 
   test("[GUARD] a deadline earlier than the stall due still bounds the wait", async () => {

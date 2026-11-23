@@ -373,6 +373,13 @@ export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, 
   return out
 }
 
+// The tick's stall step. The roots it leaves unsaid are the ones choices() found moving (held.moving), the same set its
+// wait cap left out, and it reads the same now: so a wait capped at a due that has passed is always met by that root
+// being said in the same tick, which moves the due on. Fed another set or no time, the cap would end every wait at
+// once while nothing said the root, and the walk would spin on waits of no length.
+export const tickStalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, options: Array<{ root: string }>, held: Held, at: number, now: number): Array<Record<string, unknown>> =>
+  stalls(shared, roots, [...options, ...[...held.moving].map((root) => ({ root }))], at, now)
+
 export const chain = async (): Promise<void> => {
   const armRow = (await readUntil(() => loopCall(RECORD_WAIT_EXACT, { shapes: [ARM], after_seq: 0, where: { vessel_id: VESSEL_ID } }), isArm, "arm row")) as Row | undefined
   if (armRow === undefined) return
@@ -428,7 +435,7 @@ export const chain = async (): Promise<void> => {
     await recordSkipped(pool, skipped, sel)
     // No selection_ref on a stall row: the tick's selection is another root's move, and records reads a walk failure's
     // selection_ref as that move having failed. A root with any move, a wait included, is not stalled.
-    for (const row of stalls(shared, roots, [...options, ...[...held.moving].map((root) => ({ root }))], Number(sel.seq), now)) await writeRow(row)
+    for (const row of tickStalls(shared, roots, options, held, Number(sel.seq), now)) await writeRow(row)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
     const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated, options[i].frontier) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
