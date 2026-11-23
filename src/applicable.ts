@@ -750,7 +750,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // it (binds: {pointer field: row field}); a requires row naming no binds offers nothing, so which rows lead on to which
   // call is the owner's to say, never the walk's. Once per frontier row: a selection of the call made over the same
   // frontier (its frontier field) settles it, so it is offered again only over a newer made row. A request already
-  // asking for the call, or a decline, leaves it to the request.
+  // asking for the call, or a decline, leaves it to the request. A failed offered call writes a failure, not a made row,
+  // so the same frontier is not offered again: the wait ends when the root makes a newer row (another commit, a refreshed
+  // clone) or a producer asks for the call. That holds for an outage too, which the offer does not retry on its own: a
+  // producer that sees the failure asks again. Records reads the frontier as the row an offered call consumed.
   const frontierRow = frontierBefore(Number.POSITIVE_INFINITY)
   const asked = new Set(call.flat().map((c) => c.id))
   const chained = frontierRow === undefined || declined ? [] : await Promise.all([...new Set([...new Set(reqs.map((q) => String(q.for)))]
