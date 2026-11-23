@@ -110,4 +110,74 @@ describe("the owner's rhythm", () => {
     const plain = { ...tpl, id: "t-plain", calls: [{ shape: "git_status", pointer: { cwd: "/x" } }] }
     expect(await ids([arm, plain], IDLE)).toContain("run/t-plain")
   })
+
+  // BESIDE OPEN ROOTS: records hands the walk's arm with the open roots (awaits false), so a rhythm counted against the
+  // store's head runs while requests stay open. The arm then offers only its due moves, through the same root draw.
+  describe("the walk's arm beside an open root", () => {
+    const ask = { shape: "world_changed", id: "w1", seq: 4, role: "person" }
+    const answer = { shape: "shape_schema", id: "s-ans", seq: 2, role: "owner", target: "answer", inputs: ["arm"] }
+    const plain = { ...tpl, id: "t-plain", calls: [{ shape: "git_status", pointer: { cwd: "/x" } }] }
+    const armRows = (ran?: number): any[] => [arm, ...(ran === undefined ? [] : [{ shape: "selection", id: "s-run", seq: ran, role: "walk", root: "arm1", a: "run/t-det" }])]
+    const opts = async (shared: any[], head: number | undefined, o: { ran?: number; awaits?: boolean | null; alone?: boolean; held?: any } = {}) => {
+      const armRoot = { root: arm, rows: armRows(o.ran), ...(o.awaits === null ? {} : { awaits: o.awaits ?? false }) }
+      const roots = o.alone ? [armRoot] : [{ root: ask, rows: [ask], awaits: true }, armRoot]
+      return (await (choices as any)(shared, roots, Date.now(), {}, arm, head, o.held)) as Array<{ cand: { id: string }; root: string; cell: string }>
+    }
+    const onArm = (os: Array<{ cand: { id: string }; root: string }>) => os.filter((o) => o.root === "arm1").map((o) => o.cand.id)
+
+    test("[MUST-FAIL] it offers no idle move of its own: a produce or template no rhythm names stays the idle walk's", async () => {
+      const got = onArm(await opts([tpl, rhythm(3, 5000), ch, answer, plain], 9000))
+      expect(got).toContain("run/t-det")
+      expect(got).not.toContain("produce/answer/ch")
+      expect(got).not.toContain("run/t-plain")
+    })
+
+    test("[MUST-FAIL] a records that does not say whether anyone awaits is read as before: the arm row's root is the arm", async () => {
+      const got = onArm(await opts([tpl, rhythm(3, 5000), ch, answer], 9000, { awaits: null }))
+      expect(got).toEqual(["run/t-det"])
+    })
+
+    test("[GUARD] a due rhythm's run is offered on the arm, in the cell it has when the walk idles", async () => {
+      const beside = (await opts([tpl, rhythm(3, 5000)], 9000)).find((o) => o.cand.id === "run/t-det")
+      const alone = (await opts([tpl, rhythm(3, 5000)], 9000, { alone: true })).find((o) => o.cand.id === "run/t-det")
+      expect(beside?.root).toBe("arm1")
+      expect(beside?.cell).toBe(alone?.cell)
+    })
+
+    test("[GUARD] not due, or retired: not offered beside a root either", async () => {
+      expect(onArm(await opts([tpl, rhythm(3, 5000)], 5002))).not.toContain("run/t-det")
+      expect(onArm(await opts([tpl, rhythm(3, 5000), rhythm(4, 5000, { retired: true })], 9000))).not.toContain("run/t-det")
+      expect(onArm(await opts([tpl, rhythm(3, 5000)], undefined))).not.toContain("run/t-det")
+    })
+
+    test("[GUARD] once run, it is due again only every_rows after that run", async () => {
+      expect(onArm(await opts([tpl, rhythm(3, 5000)], 5019, { ran: 20 }))).not.toContain("run/t-det")
+      expect(onArm(await opts([tpl, rhythm(3, 5000)], 5020, { ran: 20 }))).toContain("run/t-det")
+    })
+
+    test("[GUARD] a produce a rhythm paces is offered beside a root when due, and not before", async () => {
+      expect(onArm(await opts([ch, retro, pace(3, 5)], 9))).toContain(P)
+      expect(onArm(await opts([ch, retro, pace(3, 50)], 9))).not.toContain(P)
+    })
+
+    test("[GUARD] alone, the arm idles as before: its produces and its templates are offered", async () => {
+      const got = onArm(await opts([tpl, rhythm(3, 5000), ch, answer, plain], 9000, { alone: true }))
+      expect(got).toEqual(expect.arrayContaining(["run/t-det", "produce/answer/ch", "run/t-plain"]))
+    })
+
+    test("[GUARD] the request root's own moves are unchanged beside the arm: a template no rhythm names runs there", async () => {
+      const got = await opts([plain], 9000)
+      expect(got.filter((o) => o.root === "w1").map((o) => o.cand.id)).toContain("run/t-plain")
+    })
+
+    test("[MUST-FAIL] with nothing due it is held back for the roots' work, not a root with no move: no stall is said of it", async () => {
+      const held = { moving: new Set<string>(), still: [] as Array<{ root: string }> }
+      // (with no move on any root the walk still idles, as it always has: that wait is the tick's, named by the arm)
+      const got = onArm(await opts([tpl, rhythm(3, 5000), ch, answer], 2000, { held }))
+      expect(got).not.toContain("run/t-det")
+      expect(got).not.toContain("produce/answer/ch")
+      expect(held.moving.has("arm1")).toBe(true)
+      expect(held.still.map((h) => h.root)).not.toContain("arm1")
+    })
+  })
 })

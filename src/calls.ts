@@ -29,6 +29,8 @@ export type Cand = {
   seen_key?: string
   /** For a call: no call the request's frontier is taken by is this one (applicable.ts), kept on its selection. */
   out_of_scope?: true
+  /** A move the owner's rhythm made due (a scheduled template's run, a paced produce): offered beside open roots too. */
+  rhythm?: true
 }
 /** pool: the ids of every row the move had, handed to the call that needs them (a produce, a run) and never stored. */
 type Runner = (c: Cand, sel: Row, pool: string[]) => Promise<void>

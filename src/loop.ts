@@ -62,8 +62,15 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const work = pool.filter((r) => everyRoot.has(r.id) || mine(r))
     const skipped: Skipped[] = []
     const seen: Seen = { awaits, dues, shared: new Set(shared.filter((r) => !ids.has(r.id)).map((r) => r.id)), root: root.id, head }
-    const cands = await applicable(work, skipped, now, seen, answers)
-    if (cands.length > 0) held?.moving.add(root.id)
+    // THE WALK'S ARM BESIDE OPEN ROOTS OFFERS ONLY WHAT ITS RHYTHMS MADE DUE. A rhythm is counted against the store's
+    // head, not against idling, so a detector it schedules runs while requests stay open; offered only on the idle arm,
+    // it never ran while any root was open. Beside other roots the arm's wait and its other produces are not offered:
+    // they are idling, which is for when nothing else is open. Its due moves go through the same root draw, cell and
+    // posterior as when it idles. Held back for the roots' work, the arm is not a root with no move, so no stall is said.
+    const armBeside = roots.length > 1 && (awaits === false || (awaits === undefined && root.shape === ARM))
+    const found = await applicable(work, skipped, now, seen, answers)
+    const cands = armBeside ? found.filter((c) => c.rhythm === true) : found
+    if (cands.length > 0 || armBeside) held?.moving.add(root.id)
     else if (skipped.length > 0) held?.still.push({ root: root.id, pool, skipped })
     overdue = overdue || seen.overdue === true
     const gated = seen.gated

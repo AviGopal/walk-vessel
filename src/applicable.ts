@@ -594,6 +594,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       pointer: { type: target, shape: target, via_ref: ch.id, ...(v ? { variant: v } : {}) },
       reads: [s.inputs, s.context ?? []].flat().map(shapeOf),
       seen_key: key(pool.filter(seen(s)).map((r) => r.id)),
+      ...(pacedOnly.has(target) ? { rhythm: true as const } : {}),
     }))
   }))
 
@@ -854,7 +855,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .filter(({ i }) => unserved[i].length === 0 && unbound[i].length === 0)
     // a scheduled template's re-run is its rhythm's (due, above), not this rule's
     .filter(({ r, i }) => scheduled.has(r.id) || (!ran(r) && !sameRefused(r, i)))
-    .map(({ r, i }): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in], inputs: inputs[i] }))
+    .map(({ r, i }): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in], inputs: inputs[i],
+      ...(scheduled.has(r.id) ? { rhythm: true as const } : {}) }))
 
   // When to wait follows the request's own deadlines (law 5). The walk's arm row is in the pool only when the walk is
   // idle (no open request): then it waits for the next row, unbounded, which is what idling is. While a request is open,
