@@ -238,8 +238,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       for (const x of absent) if (have.has(x.shape)) unmetEntries.add(x.shape)
       return all ? ins : absent.map((x) => x.shape)
     })[0]
-  const toward = (need: string): string => {
+  // the steps toward a need, and the calls among them: each call a step names as where a shape comes from
+  const chainOf = (need: string): { steps: string[]; calls: string[] } => {
     const steps: string[] = []
+    const calls: string[] = []
     const followed = new Set<string>()
     const follow = (shape: string, unmetHere = false): void => {
       if (followed.has(shape)) return
@@ -256,11 +258,15 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
         return
       }
       const callers = Object.keys(answers).filter((c) => answers[c] === shape).sort()
-      if (callers.length > 0 && (unmetHere || !have.has(shape) || unmetEntries.has(shape))) steps.push(`${shape} comes from a ${callers.join(" or ")} call`)
+      if (callers.length > 0 && (unmetHere || !have.has(shape) || unmetEntries.has(shape))) {
+        steps.push(`${shape} comes from a ${callers.join(" or ")} call`)
+        calls.push(...callers)
+      }
     }
     follow(need, true)
-    return [need, ...steps].join("; ")
+    return { steps, calls }
   }
+  const toward = (need: string): string => [need, ...chainOf(need).steps].join("; ")
   // Why a row of the needed shape that IS here does not meet a requirement: for each latest one, the first field of the
   // where it differs on, with both values, so a skip says what to change (agf_zwbwadr9y08l: "no change_wanted here meets
   // what is required" named neither the field nor the two values, and two templates bound to repo super kept being
@@ -288,10 +294,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // the rows behind each text unmet() returned, by the whole text (never a search inside it), for the skip that carries it
   const behindOf = new Map<string, Set<string>>()
   const refsOfReasons = (texts: string[]): string[] => [...new Set(texts.flatMap((t) => [...(behindOf.get(t) ?? [])]))]
-  const unmet = (shape: string, pointer?: Record<string, unknown>, only: (rs: Row[]) => boolean = () => true): string[] => {
+  const unmetGroups = (shape: string, pointer?: Record<string, unknown>, only: (rs: Row[]) => boolean = () => true): Row[][] => {
     const groups = new Map<string, Row[]>()
     for (const q of reqs.filter((q) => String(q.for) === shape)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
     return [...groups.values()].filter(only).filter((rs) => !rs.some((q) => meets(q, pointer)))
+  }
+  const unmet = (shape: string, pointer?: Record<string, unknown>, only: (rs: Row[]) => boolean = () => true): string[] =>
+    unmetGroups(shape, pointer, only)
       .map((rs) => {
         const pairs = rs.flatMap((q) => against(q, pointer))
         const why = [...new Set(pairs.map(([reason]) => reason))].slice(0, 3)
@@ -300,7 +309,6 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
         if (ids.length > 0) behindOf.set(text, new Set([...(behindOf.get(text) ?? []), ...ids]))
         return text
       })
-  }
   // What a producer is shown before it promises a call (request_acts' gated, acts.ts): each call the owner's requires rows
   // gate, with the groups this same reading finds unmet here, worded as a skip words them. A group bound to the call's
   // own pointer (x-pointer: an edit needs a read of the file it edits) can only be judged for one target, so it is named
@@ -691,7 +699,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       const h = startedOf.get(String(f.call_id))
       return h === undefined ? [] : [{ seq: f.seq, key: callKey(String(h.pointer_type), h.args) }]
     }
-    if (a.startsWith(`${CALL}/`)) {
+    // a call no request asked for (the chain step, below) is held by its frontier row instead: there is no request
+    // pointer to key it by
+    if (a.startsWith(`${CALL}/`) && typeof sel?.from === "string") {
       const p = (byId.get(String(sel?.from))?.pointer ?? {}) as Record<string, unknown>
       return [{ seq: f.seq, key: callKey(String(p.type ?? a.slice(CALL.length + 1)), argsOf(p)) }]
     }
@@ -731,6 +741,38 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       ...(over.widened || over.calls.includes(type) ? {} : { out_of_scope: true }),
     }))
   }))
+
+  // THE STEP A GATED CALL'S CHAIN NAMES IS OFFERED (USER ruling 11-23, the walk offers the step a refusal's chain names).
+  // A call the owner's requires rows gate is told what it needs and where that comes from ("gitDiff comes from a git_diff
+  // call"); when the call so named takes the root's newest made row, it is offered
+  // without waiting for a producer to ask for it, as any call is: served, its inputs declared, nothing it requires
+  // unmet, not waiting on a person. Its pointer is bound from the frontier row by the owner's requires row that takes
+  // it (binds: {pointer field: row field}); a requires row naming no binds offers nothing, so which rows lead on to which
+  // call is the owner's to say, never the walk's. Once per frontier row: a selection of the call made over the same
+  // frontier (its frontier field) settles it, so it is offered again only over a newer made row. A request already
+  // asking for the call, or a decline, leaves it to the request.
+  const frontierRow = frontierBefore(Number.POSITIVE_INFINITY)
+  const asked = new Set(call.flat().map((c) => c.id))
+  const chained = frontierRow === undefined || declined ? [] : await Promise.all([...new Set([...new Set(reqs.map((q) => String(q.for)))]
+    .flatMap((t) => unmetGroups(t, undefined, (rs) => !pointerBound(rs)).flat().flatMap((q) => chainOf(String(q.needs)).calls)))]
+    .sort()
+    .map(async (type): Promise<Cand[]> => {
+      const id = [CALL, type].join("/")
+      if (asked.has(id) || waitsOnPerson(type)) return []
+      const q = reqs.find((x) => String(x.for) === type && String(x.needs) === String(frontierRow.shape) && takenBy(x, frontierRow)
+        && typeof x.binds === "object" && x.binds !== null)
+      if (q === undefined) return []
+      const fields = Object.entries(q.binds as Record<string, unknown>).map(([k, from]) => [k, frontierRow[String(from)]] as const)
+      if (fields.length === 0 || fields.some(([, v]) => v === undefined)) return []
+      const pointer: Record<string, unknown> = { type, ...Object.fromEntries(fields) }
+      const before = pool.some((x) => x.shape === SELECTION && x.a === id && (x.frontier as { id?: unknown } | undefined)?.id === frontierRow.id)
+      if (before || !(await exists(type))) return []
+      const vocab = declaredInputs()
+      const { type: _t, ...args } = pointer
+      if (vocab !== undefined && callProblem(vocab, type, args) !== undefined) return []
+      if (unmet(type, pointer).length > 0) return []
+      return [{ ...base, id, kind: CALL, pointer, reads: [String(frontierRow.shape)] }]
+    }))
 
   // A template is run only when every shape it calls is served, as a call is: one naming a shape nothing serves (a
   // "hop", which is a record of a call, not a shape) would fail at its first step every time.
@@ -913,5 +955,5 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A row of the root's own that waits on a person holds its other moves the same way, but the ruling names a call's
   // wait, not a row's: a passed deadline's lapse is still graded beside the wait, as on a root with no wait.
   if (rowWaits) return [...(overdue ? lapse : []), ...waitFor]
-  return [...produce.flat(), ...call.flat(), ...run, ...waitFor]
+  return [...produce.flat(), ...call.flat(), ...chained.flat(), ...run, ...waitFor]
 }
