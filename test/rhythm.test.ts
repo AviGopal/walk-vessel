@@ -101,6 +101,23 @@ describe("the owner's rhythm", () => {
     expect(await ids([arm, ch, retro, pace(3, 5)], { root: "arm1", awaits: false })).not.toContain(P)
   })
 
+  // every_rows 1, the smallest rhythm: due once a single row was written since its row or its last run, not before.
+  test("[GUARD] a template rhythm of every_rows 1 is due one row after its row, and one row after its run", async () => {
+    expect(await ids([arm, tpl, rhythm(3, 1)], { ...IDLE, head: 3 })).not.toContain("run/t-det")
+    expect(await ids([arm, tpl, rhythm(3, 1)], { ...IDLE, head: 4 })).toContain("run/t-det")
+    const ran = { shape: "selection", id: "s-run", seq: 20, role: "walk", root: "arm1", a: "run/t-det" }
+    expect(await ids([arm, tpl, rhythm(3, 1), ran], { ...IDLE, head: 20 })).not.toContain("run/t-det")
+    expect(await ids([arm, tpl, rhythm(3, 1), ran], { ...IDLE, head: 21 })).toContain("run/t-det")
+  })
+
+  test("[GUARD] a paced produce of every_rows 1 is due one row after its row, and one row after its last produce", async () => {
+    expect(await ids([arm, ch, retro, pace(3, 1)], { ...IDLE, head: 3 })).not.toContain(P)
+    expect(await ids([arm, ch, retro, pace(3, 1)], { ...IDLE, head: 4 })).toContain(P)
+    const made = { shape: "selection", id: "s-p", seq: 20, role: "walk", root: "arm1", a: P }
+    expect(await ids([arm, ch, retro, pace(3, 1), made], { ...IDLE, head: 20 })).not.toContain(P)
+    expect(await ids([arm, ch, retro, pace(3, 1), made], { ...IDLE, head: 21 })).toContain(P)
+  })
+
   test("a produce no rhythm names is offered as before; a template rhythm still paces only its template", async () => {
     const answer = { shape: "shape_schema", id: "s-ans", seq: 2, role: "owner", target: "answer", inputs: ["arm"] }
     expect(await ids([arm, ch, answer, rhythm(3, 5000)], IDLE)).toContain("produce/answer/ch")
