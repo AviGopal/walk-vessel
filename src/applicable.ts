@@ -48,6 +48,14 @@ export type Skipped = { id: string; unserved: string[]; of?: "request"; unbound?
 export type Frontier = { id?: string; shape?: string; calls: string[]; widened: boolean }
 export type Seen = { overdue?: boolean; awaits?: boolean; dues?: number[]; shared?: ReadonlySet<string>; root?: string; head?: number; gated?: Record<string, string[]>; frontier?: Frontier }
 
+// What an owner's install row installed: each entry's repo and vessel.
+const installedBy = (x: Row): Array<{ repo?: unknown; vessel?: unknown }> =>
+  x.shape === INFRA_WINDOW && x.role === OWNER ? [x.installed].flat().map((i) => (i ?? {}) as { repo?: unknown; vessel?: unknown }) : []
+// Whether any of these rows installed the root's own repo or the walk itself: the part of an install's bearing on a root
+// that needs no read (a vessel serving the root's call is read where a call is held).
+export const installsRepoOrWalk = (xs: Row[], repo: unknown): boolean =>
+  xs.flatMap(installedBy).some((e) => (typeof e.repo === "string" && e.repo === repo) || e.vessel === VESSEL_ID)
+
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
   // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a produce
@@ -435,11 +443,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // discovery says serves that call. Who serves it is read only for that one call, and only when an install with a vessel
   // sits where it can still be news to it: every install stays in the pool, so a read on every tick would never stop.
   // An unanswered read serves no one.
-  const installedBy = (x: Row): Array<{ repo?: unknown; vessel?: unknown }> =>
-    x.shape === INFRA_WINDOW && x.role === OWNER ? [x.installed].flat().map((i) => (i ?? {}) as { repo?: unknown; vessel?: unknown }) : []
   const bearsOn = async (xs: Row[], call: string | undefined): Promise<boolean> => {
+    if (installsRepoOrWalk(xs, rootRow?.repo)) return true
     const entries = xs.flatMap(installedBy)
-    if (entries.some(({ repo, vessel }) => (typeof repo === "string" && repo === rootRow?.repo) || vessel === VESSEL_ID)) return true
     const vessels = entries.map(({ vessel }) => vessel).filter((v): v is string => typeof v === "string")
     if (call === undefined || vessels.length === 0) return false
     const serving = (await servers(call)) ?? new Set<string>()
