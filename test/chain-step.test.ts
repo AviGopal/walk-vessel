@@ -69,9 +69,11 @@ describe("the step a gated call's chain names", () => {
     expect((await run([commit], owner({ cwd: "cwd", type: "call_id" }))).map((c) => c.pointer)).toEqual([{ type: "git_diff", cwd }])
   })
 
-  test("[MUST-FAIL] only a selection of this call settles it: another move over the same commit, or a row of another shape naming the call, does not", async () => {
+  test("[MUST-FAIL] only a selection of this call settles it: another move over the same commit, another call over it, or a row of another shape naming the call, does not", async () => {
     const produce = { shape: "selection", id: "s69650", seq: 69650, role: "walk", a: "produce/gitDiff/t1", frontier: { id: "k1", shape: "gitCommitResult" }, root }
     expect((await run([commit, produce])).length).toBe(1)
+    const status = { shape: "selection", id: "s69660", seq: 69660, role: "walk", a: "call/git_status", frontier: { id: "k1", shape: "gitCommitResult" }, root }
+    expect((await run([commit, status])).map((c) => c.pointer.type)).toEqual(["git_diff"])
     const other = { shape: "stall", id: "st1", seq: 69590, role: "walk", a: "call/git_diff", frontier: { id: "k1", shape: "gitCommitResult" }, root }
     expect((await run([commit, other])).length).toBe(1)
   })
