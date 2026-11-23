@@ -301,7 +301,8 @@ export const stallDue = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>
   return dues.length > 0 ? Math.min(...dues) : undefined
 }
 
-export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, options: Array<{ root: string }>, at: number, now = Number.NaN): Array<Record<string, unknown>> => {
+// now is required: the time clock says nothing without the tick's time, and a caller that left it out would compile.
+export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, options: Array<{ root: string }>, at: number, now: number): Array<Record<string, unknown>> => {
   const { rows: n, ms } = stallClock(shared)
   if (n === undefined && ms === undefined) return []
   const moving = new Set(options.map((o) => o.root))

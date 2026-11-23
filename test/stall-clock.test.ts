@@ -75,6 +75,13 @@ describe("a root with no move is said by time", () => {
       expect(stalls([rule, r], [g], [], AT, NOW)).toEqual([])
   })
 
+  test("[GUARD] every_ms 1 is a clock; 0 and a negative are none", () => {
+    const g = gapRoot("g1", 1)
+    expect(stalls([clock(1)], [g], [], AT, NOW)).toMatchObject([{ every_ms: 1 }])
+    expect(stalls([clock(0)], [g], [], AT, NOW)).toEqual([])
+    expect(stalls([clock(-5)], [g], [], AT, NOW)).toEqual([])
+  })
+
   test("[GUARD] a root with a move, its wait included, is not said however old its newest row", () => {
     expect(stalls([rule, clock(30 * MIN)], [gapRoot("g1", 600 * MIN)], [{ root: "g1" }], AT, NOW)).toEqual([])
   })
