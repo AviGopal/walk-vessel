@@ -222,6 +222,46 @@ describe("a root waiting on a person is never ended", () => {
     expect(ends(stalls([rule(), clock], one([stray, ...said2]), [], AT, NOW))).toHaveLength(1)
   })
 
+  // the field set the walk writes a tool's answer with: selection_ref to the root's selection, no root field
+  const answered = { shape: "gitCommitResult", id: "gc3", seq: 107, role: "walk", writer: "walk-test", selection_ref: "p1", call_id: "c1", input_refs: ["g1"], needs_person: ["tight/a.ts (protected: repos/x/tight/)"], t: iso(NOW - 268 * MIN) }
+
+  test("[MUST-NOT-END] a marked commit as the walk writes it (under the root's selection, no root field): never ended", () => {
+    expect(ends(stalls([rule(), clock], one([prod("p1", 106, 270), answered, ...said2]), [], AT, NOW))).toEqual([])
+    // not vacuous: the same rows with the commit unmarked end at the third say
+    expect(ends(stalls([rule(), clock], one([prod("p1", 106, 270), { ...answered, needs_person: [] }, ...said2]), [], AT, NOW))).toHaveLength(1)
+  })
+
+  test("[MUST-NOT-END] a wait lifted by a protect_list row, retried, and answered marked again (live shape): said, never ended", () => {
+    const p0 = prod("p0", 104, 290)
+    const wait = { shape: "failure", id: "f0", seq: 105, role: "walk", selection_ref: "p0", call_id: "c0", status: 409, waits_for: "person", list_sha256: "a".repeat(64), input_refs: ["g1"], t: iso(NOW - 285 * MIN) }
+    const list = { shape: "protect_list", id: "pl1", seq: 106, role: "owner", list_sha256: "b".repeat(64), t: iso(NOW - 280 * MIN) }
+    const retried = { ...answered, selection_ref: "p1", list_sha256: "b".repeat(64) }
+    expect(ends(stalls([rule(), clock, list], one([p0, wait, prod("p1", 106, 270), retried, ...said2]), [], AT, NOW))).toEqual([])
+  })
+
+  test("[MUST-FAIL] a marked row every root is given is no root's mark: the root ends", () => {
+    const sharedMark = { ...answered, id: "gc-shared" }
+    expect(ends(stalls([rule(), clock, sharedMark], one([prod("p1", 106, 270), sharedMark, ...said2]), [], AT, NOW))).toHaveLength(1)
+  })
+
+  test("[MUST-NOT-END] the newest of each shape by each writer: another writer's newer unmarked row of the shape, or the writer's newer row of another shape, leaves the mark", () => {
+    const p2 = prod("p2", 108, 265)
+    const byOther = { ...answered, id: "gc4", seq: 109, writer: "other-test", selection_ref: "p2", call_id: "c2", needs_person: [] }
+    expect(ends(stalls([rule(), clock], one([prod("p1", 106, 270), answered, p2, byOther, ...said2]), [], AT, NOW))).toEqual([])
+    const diff = { shape: "gitDiffResult", id: "gd1", seq: 109, role: "walk", writer: "walk-test", selection_ref: "p2", call_id: "c2", input_refs: ["g1"], t: iso(NOW - 262 * MIN) }
+    expect(ends(stalls([rule(), clock], one([prod("p1", 106, 270), answered, p2, diff, ...said2]), [], AT, NOW))).toEqual([])
+  })
+
+  test("[MUST-FAIL] the newest by seq, whatever order the rows come in: a newer unmarked commit listed first still ends the mark", () => {
+    const clean = { ...answered, id: "gc5", seq: 109, selection_ref: "p2", call_id: "c2", needs_person: [] }
+    expect(ends(stalls([rule(), clock], one([prod("p2", 108, 265), clean, prod("p1", 106, 270), answered, ...said2]), [], AT, NOW))).toHaveLength(1)
+  })
+
+  test("[MUST-FAIL] a marked commit under another root's selection does not mark this root", () => {
+    const other = { ...prod("p1", 106, 270), root: "g2" }
+    expect(ends(stalls([rule(), clock], one([other, answered, ...said2]), [], AT, NOW))).toHaveLength(1)
+  })
+
   test("[MUST-FAIL] once a person has spoken, it ends as any root does", () => {
     const spoke = { shape: "verdict", id: "v1", seq: 107, role: "person", root: "g1", t: iso(NOW - 270 * MIN), input_refs: ["h"] }
     expect(ends(stalls([rule(), clock], one([waits, spoke, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toHaveLength(1)

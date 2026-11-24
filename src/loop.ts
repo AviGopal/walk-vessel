@@ -334,10 +334,13 @@ const stallOf = (shared: Row[], root: Row, all: Row[], c: Clock): Stall => {
   const spoke = (r: Row): boolean => personSpokeAfter(all, root.id, (id) => own.has(id), r.seq)
   // A change the protected list marked for a person (needs_person on the tool's own answer: a commit made, landing only on a
   // person's verdict) waits on the person just as a refused land does: shown on their page, never ended. Read from the
-  // root's own rows (those naming it), the newest of each shape by each writer, so a newer commit with nothing marked
-  // ends it as a newer row ends any wait.
+  // root's own rows, the newest of each shape by each writer, so a newer commit with nothing marked ends it as a newer row
+  // ends any wait. A row is the root's when it names the root or was written under one of the root's selections (a tool's
+  // answer carries selection_ref, not root); a row shown to every root is no root's.
+  const selections = new Set(rows.filter((x) => x.shape === SELECTION && x.root !== undefined).map((x) => x.id))
+  const mine = (x: Row): boolean => !sharedIds.has(x.id) && (x.root !== undefined || selections.has(String(x.selection_ref)))
   const newest = new Map<string, Row>()
-  for (const r of rows.filter((x) => x.root !== undefined).sort(bySeq)) newest.set(JSON.stringify([r.shape, r.writer]), r)
+  for (const r of rows.filter(mine).sort(bySeq)) newest.set(JSON.stringify([r.shape, r.writer]), r)
   const marked = [...newest.values()].some((r) => Array.isArray(r.needs_person) && r.needs_person.length > 0 && !spoke(r))
   const person = marked || rows.some((r) => r.waits_for === "person" && !spoke(r))
   const ends = person ? undefined : c.ends
