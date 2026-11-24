@@ -557,7 +557,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     // "never made"); a made row that is here and graded frees it, as before.
     const gradedMade = new Set(pool.filter((r) => r.shape === String(s.target) && graded.has(r.id)).map((r) => String(r.selection_ref)))
     const endedSel = new Set(pool.filter((h) => h.shape === HOP && h.phase === ENDED && h.kind === PRODUCE).map((h) => String(h.selection_ref)))
-    const failedSel = new Set(pool.filter((f) => f.shape === FAILURE).map((f) => String(f.selection_ref)))
+    // A failure ending an attempt (ends) charges a produce that was made; it is not its call failing, so it frees nothing.
+    const failedSel = new Set(pool.filter((f) => f.shape === FAILURE && f.ends === undefined).map((f) => String(f.selection_ref)))
     const made = pool.filter((x) => x.shape === SELECTION && String(x.a).startsWith(`${PRODUCE}/${String(s.target)}/`)
       && endedSel.has(x.id) && !failedSel.has(x.id) && !gradedMade.has(x.id))
     const byRow = ungraded.map((r) => byId.get(String(r.selection_ref))).filter((x): x is Row => x !== undefined)

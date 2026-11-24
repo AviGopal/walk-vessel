@@ -1068,6 +1068,22 @@ describe("candidates", () => {
     expect(await ids([ch, schema, ask, sel, plan, ...news("c2", 12, "second read")])).toContain(P)
   })
 
+  test("[MUST-FAIL] an end row naming a produce charges it and frees nothing: the produce stays made and is not offered again", async () => {
+    served.add("plan")
+    const ch = { shape: "channel", id: "ch", seq: 1, role: "owner", calls: [] }
+    const schema = { shape: "shape_schema", id: "s-plan", seq: 2, role: "owner", target: "plan", inputs: ["world_changed"], context: ["hop", "answer"] }
+    const ask = { shape: "world_changed", id: "w1", seq: 3, role: "person", what: "x" }
+    const sel = { shape: "selection", id: "sp", seq: 9, role: "walk", a: "produce/plan/ch", root: "w1", seen_key: "k" }
+    const ended = { shape: "hop", id: "hp", seq: 9.8, role: "walk", phase: "ended", kind: "produce", call_id: "cp", selection_ref: "sp" }
+    const end = { shape: "failure", id: "fe", seq: 10, role: "walk", ends: "stall", root: "w1", selection_ref: "sp", input_refs: ["w1", "s3"] }
+    const P = "produce/plan/ch"
+    const ids = async (rows: any[]) => (await (applicable as any)(rows)).map((c: { id: string }) => c.id)
+    expect(await ids([ch, schema, ask, sel, ended])).not.toContain(P)
+    expect(await ids([ch, schema, ask, sel, ended, end])).not.toContain(P)
+    // a call failing still frees it (a guard: the end row is told apart, not every failure)
+    expect(await ids([ch, schema, ask, sel, ended, { shape: "failure", id: "fp", seq: 10, role: "walk", call_id: "cp", selection_ref: "sp", status: 422 }])).toContain(P)
+  })
+
   test("[MUST-FAIL] a template run in this root is not run again over the same inputs: the request it led to is called instead", async () => {
     for (const x of ["git_worktree", "fs_edit"]) served.add(x)
     const gap = { shape: "gap", id: "g1", seq: 1, role: "detector", gap_id: "G1", status: "open" }
