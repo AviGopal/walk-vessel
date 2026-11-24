@@ -1171,15 +1171,20 @@ describe("candidates", () => {
     expect(of("wb").every((o: any) => String(o.gated?.git_land).startsWith("git_land (requires land_verdict"))).toBe(true)
   })
 
-  test("[MUST-FAIL] gated: a precondition bound to the call's pointer is named per target, read or not", async () => {
+  test("[MUST-FAIL] gated: a precondition bound to the call's pointer is judged for the frontier's target, named per target with none", async () => {
     const own = (x: Record<string, unknown>, seq: number) => ({ ...x, seq, role: "owner" })
     const read = own({ shape: "requires", id: "qr", for: "fs_edit", needs: "fileContent", where: { path: { "x-pointer": "path" } }, latest_by: "path", group: "read" }, 2)
     const content = { shape: "fileContent", id: "fc", seq: 3, role: "walk", path: "/t/src/a.ts", content: "a" }
+    // no frontier (nothing made, or a read no vessel declares a call answers with): named for the target the call names
     for (const rows of [[read], [read, content]]) {
       const note: any = {}
       await (applicable as any)(rows, [], Date.now(), note)
       expect(note.gated.fs_edit).toEqual([expect.stringMatching(/^fs_edit \(requires fileContent.*, for the target the call names$/)])
     }
+    // the read is the root's frontier: the edit of the file it read is not gated
+    const met: any = {}
+    await (applicable as any)([read, content], [], Date.now(), met, { fs_read: "fileContent" })
+    expect(met.gated.fs_edit).toBeUndefined()
   })
 
   test("[MUST-FAIL] preconditions in different groups must each be met: a group is a gate, its rows its alternatives", async () => {

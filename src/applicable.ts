@@ -319,12 +319,39 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       })
   // What a producer is shown before it promises a call (request_acts' gated, acts.ts): each call the owner's requires rows
   // gate, with the groups this same reading finds unmet here, worded as a skip words them. A group bound to the call's
-  // own pointer (x-pointer: an edit needs a read of the file it edits) can only be judged for one target, so it is named
-  // as needed for the target, not as met or unmet. Shown, not refused: a promise of a gated call stays allowed.
-  const pointerBound = (rs: Row[]): boolean => rs.some((q) => Object.values((q.where ?? {}) as Record<string, unknown>)
-    .some((v) => typeof v === "object" && v !== null && "x-pointer" in v))
+  // own pointer (x-pointer: an edit needs a read of the file it edits, a commit an edit in its clone) is judged for the
+  // target the root's frontier names: the next step takes what the root last made, so its pointer's fields are that
+  // row's. Met there, the call is not gated; unmet, the reasons are read against that target, never against a literal of
+  // another alternative. A frontier lacking a field the group binds names no target, and the group is named as needed
+  // for the target the call names. Shown, not refused: a promise of a gated call stays allowed.
+  const pointerFields = (rs: Row[]): string[] => [...new Set(rs.flatMap((q) => Object.values((q.where ?? {}) as Record<string, unknown>)
+    .flatMap((v) => typeof v === "object" && v !== null && "x-pointer" in v ? [String((v as { "x-pointer": unknown })["x-pointer"])] : [])))]
+  const pointerBound = (rs: Row[]): boolean => pointerFields(rs).length > 0
+  const frontierNow = frontierBefore(Number.POSITIVE_INFINITY)
+  const frontierTarget = (rs: Row[]): Record<string, unknown> | undefined => {
+    const fields = pointerFields(rs)
+    if (frontierNow === undefined || fields.some((f) => frontierNow[f] === undefined)) return undefined
+    return Object.fromEntries(fields.map((f) => [f, frontierNow[f]]))
+  }
+  const groupOf = (rs: Row[]): string => String(rs[0]?.group ?? "")
+  const gatedFor = (t: string): string[] => {
+    const bound = new Map<string, Record<string, unknown>>()
+    for (const q of reqs.filter((x) => String(x.for) === t)) {
+      const g = String(q.group ?? "")
+      if (bound.has(g)) continue
+      const rs = reqs.filter((x) => String(x.for) === t && String(x.group ?? "") === g)
+      const p = pointerBound(rs) ? frontierTarget(rs) : undefined
+      if (p !== undefined) bound.set(g, p)
+    }
+    return [
+      ...unmet(t, undefined, (rs) => !pointerBound(rs)),
+      ...unmet(t, undefined, (rs) => pointerBound(rs) && !bound.has(groupOf(rs))).map((x) => `${x}, for the target the call names`),
+      ...[...bound].flatMap(([g, p]) => unmet(t, p, (rs) => groupOf(rs) === g)
+        .map((x) => `${x}, for the frontier's ${Object.entries(p).map(([k, v]) => `${k} ${val(v)}`).join(", ")}`)),
+    ]
+  }
   note.gated = Object.fromEntries([...new Set(reqs.map((q) => String(q.for)))].sort()
-    .map((t) => [t, [...unmet(t, undefined, (rs) => !pointerBound(rs)), ...unmet(t, undefined, pointerBound).map((x) => `${x}, for the target the call names`)]])
+    .map((t) => [t, gatedFor(t)])
     .filter(([, needs]) => needs.length > 0))
   // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
   // came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that ended, it
