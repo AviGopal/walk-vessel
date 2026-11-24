@@ -152,6 +152,16 @@ describe("an ended root", () => {
       .toEqual([{ shape: "failure", ends: "stall", root: "g1", selection_ref: "p6", input_refs: ["g1", "s5"] }])
   })
 
+  test("[MUST-NOT-END] a commit marked needs_person, ended before the exemption was read, woken by the walk's install: counted afresh, never ended again", () => {
+    const marked = { shape: "gitCommitResult", id: "gc1", seq: 105, role: "walk", writer: "walk-test", root: "g1", needs_person: ["tight/a.ts (protected: repos/x/tight/)"], t: iso(NOW - 280 * MIN) }
+    const walkInstall = { shape: "infra_window", id: "iw140", seq: 140, role: "owner", installed: [{ vessel: "walk-test" }], t: iso(NOW - 40 * MIN) }
+    const rows = [marked, ...done, prod("p5", 142, 38), st("s4", 145, 90), prod("p6", 146, 89), st("s5", 150, 60)]
+    const out = stalls([rule(), clock, walkInstall], one(rows), [], AT, NOW)
+    expect(ends(out)).toEqual([])
+    // not vacuous: the same rows with the commit unmarked end at the third say
+    expect(ends(stalls([rule(), clock, walkInstall], one([{ ...marked, needs_person: [] }, ...rows.slice(1)]), [], AT, NOW))).toHaveLength(1)
+  })
+
   test("[MUST-FAIL] wakes on a change of its own: said again from it", () => {
     const person = { shape: "note", id: "n1", seq: 140, role: "person", root: "g1", t: iso(NOW - 40 * MIN) }
     expect(says(stalls([rule(), clock], one([...done, person]), [], AT, NOW))).toMatchObject([{ said: 1, since_seq: 140 }])
@@ -188,6 +198,28 @@ describe("a root waiting on a person is never ended", () => {
     const said = [st("s1", 110, 90), st("s2", 120, 60)]
     expect(ends(stalls([rule(), clock], one([owners, waits, cites("x3", "iw0"), ...said]), [], AT, NOW))).toEqual([])
     expect(ends(stalls([rule(), clock, given], one([given, waits, cites("x4", "chx"), ...said]), [], AT, NOW))).toEqual([])
+  })
+
+  // a commit the protected list marked: made, landing only on a person's verdict; no failure says it waits
+  const marked = { shape: "gitCommitResult", id: "gc1", seq: 105, role: "walk", writer: "walk-test", root: "g1", needs_person: ["tight/a.ts (protected: repos/x/tight/)"], t: iso(NOW - 280 * MIN) }
+  const said2 = [st("s1", 110, 90), st("s2", 120, 60)]
+
+  test("[MUST-NOT-END] a commit marked needs_person, with no failure saying it waits: never ended (USER ruling 11-23, show them on my page)", () => {
+    expect(ends(stalls([rule(), clock], one([marked, ...said2]), [], AT, NOW))).toEqual([])
+    expect(says(stalls([rule(), clock], one([marked, prod("p1", 106, 270)]), [], AT, NOW))).toHaveLength(1)
+  })
+
+  test("[MUST-FAIL] the marked commit's exemption: a person's word after it, a newer commit marking nothing, or an empty mark each end it as any root", () => {
+    const spoke = { shape: "verdict", id: "v2", seq: 107, role: "person", root: "g1", t: iso(NOW - 270 * MIN), input_refs: ["gc1"] }
+    expect(ends(stalls([rule(), clock], one([marked, spoke, ...said2]), [], AT, NOW))).toHaveLength(1)
+    const clean = { ...marked, id: "gc2", seq: 106, needs_person: [] }
+    expect(ends(stalls([rule(), clock], one([marked, clean, ...said2]), [], AT, NOW))).toHaveLength(1)
+    expect(ends(stalls([rule(), clock], one([{ ...marked, needs_person: [] }, ...said2]), [], AT, NOW))).toHaveLength(1)
+  })
+
+  test("[MUST-FAIL] only the root's own rows mark it: a needs_person row naming no root (shown to every root) does not", () => {
+    const { root: _r, ...stray } = marked
+    expect(ends(stalls([rule(), clock], one([stray, ...said2]), [], AT, NOW))).toHaveLength(1)
   })
 
   test("[MUST-FAIL] once a person has spoken, it ends as any root does", () => {
