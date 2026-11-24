@@ -177,8 +177,8 @@ describe("a tick decides the same with or without its selections' cands, posts a
         wrote += want.writes.length + want.acts.length
       }
     }
-    // the cuts reach moves of every kind the episode had, not only the wait it ends on, and rows the tick writes
-    expect([...kinds].sort()).toEqual(expect.arrayContaining(["produce", "wait-for"]))
+    // the cuts reach moves of more than one kind, the land call among them, and rows the tick writes
+    expect([...kinds].sort()).toEqual(expect.arrayContaining(["call", "produce"]))
     expect(wrote).toBeGreaterThan(0)
   }, 120_000)
 

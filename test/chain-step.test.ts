@@ -164,10 +164,7 @@ describe("the step a gated call's chain names", () => {
     try { expect(await run([commit])).toEqual([]) } finally { served.add("git_diff") }
   })
 
-  test("[GUARD] not while git_diff waits on a person, and not over a decline", async () => {
-    const hop = { shape: "hop", id: "h1", seq: 69610, role: "walk", phase: "started", kind: "call", call_id: "cx", pointer_type: "git_diff", selection_ref: "sx" }
-    const waits = { shape: "failure", id: "fx", seq: 69620, role: "walk", call_id: "cx", waits_for: "person", input_refs: [root] }
-    expect(await run([commit, hop, waits])).toEqual([])
+  test("[GUARD] not over a decline", async () => {
     const decline = { shape: "request", id: "rq-no", seq: 69650, role: "described", input_refs: [root] }
     expect(await run([commit, decline])).toEqual([])
   })

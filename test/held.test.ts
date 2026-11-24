@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: MIT
-// What a tick says of the roots it did not draw: a root waiting on a person has a move (its wait) and is neither stalled
-// nor made to say what it holds back; a root with no move at all says once what it holds back and why, citing itself and
-// the held row and naming no selection, since the tick's selection is another root's.
+// What a tick says of the roots it did not draw: a root with no move at all says once what it holds back and why,
+// citing itself and the held row and naming no selection, since the tick's selection is another root's.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { gunzipSync } from "node:zlib"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
 import { type Fake, fake, freePort, healthy, run } from "./harness"
 
 const NODE_KEY = "node-key-for-test"
-type Fx = { as_of_seq: number; now: number; awaits: boolean; root: any; shared: any[]; rows: any[] }
-const fx = JSON.parse(gunzipSync(readFileSync(join(import.meta.dir, "fixtures", "d929-person-wait.json.gz"))).toString()) as Fx
 
 // One tick of the vessel against a fake discovery serving these episodes; every row the walk writes is kept.
 const tick = (shared: any[], roots: any[], selSeq: number) => {
@@ -48,24 +42,6 @@ const tick = (shared: any[], roots: any[], selSeq: number) => {
 
 const ask = (id: string, seq: number) => ({ shape: "world_changed", id, seq, writer: "kid-person", role: "person", what: "x", t: new Date().toISOString() })
 const cites = (r: Record<string, any>, id: string) => [r.input_refs].flat().map(String).includes(id) || r.root === id
-
-describe("a root waiting on a person, beside a root with a move (d929 as records serves it)", () => {
-  // The rule's rows far behind the tick for every root, so only having a move keeps a root from a stall row.
-  const shared = [...fx.shared, { shape: "stall_rule", id: "sr", seq: 2, writer: "owner", role: "owner", after_rows: 5 }]
-  const other = ask("w-move", fx.as_of_seq - 10)
-  // a root of a shape nothing takes: no move at all, the control that the rule is live in this tick
-  const none = { shape: "note", id: "z1", seq: fx.as_of_seq - 20, writer: "detector", role: "detector" }
-  const st = tick(shared, [{ root: fx.root, rows: fx.rows, awaits: fx.awaits }, { root: other, rows: [other] }, { root: none, rows: [none] }], fx.as_of_seq + 1000)
-
-  test("[MUST-FAIL] the waiting root is not drawn, gets no stall row and no skip row (red before: a stall row for it)", () => {
-    const sel = st.written.find((r) => r.shape === "selection")
-    expect(sel?.root).toBe("w-move")
-    const about = st.written.filter((r) => r.shape === "failure" && cites(r, fx.root.id))
-    expect(about).toEqual([])
-    // the control: the rule is live, so its silence on the waiting root is the wait, not a missing rule
-    expect(st.written.filter((r) => r.shape === "failure" && r.kind === "stall").map((r) => r.root)).toEqual(["z1"])
-  })
-})
 
 describe("roots with no move at all say what they hold back, once per reason, naming no selection", () => {
   const shared = [

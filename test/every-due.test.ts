@@ -70,14 +70,6 @@ describe("the walk's deadlines are the ones records answers", () => {
     expect([note.overdue, got.filter((c) => c.kind === "wait-for")]).toEqual([true, []])
   })
 
-  test("[MUST-FAIL] a request whose row waits on a person, with a deadline passed and one ahead, waits bounded by the one ahead", async () => {
-    const wait = { shape: "failure", id: "x1", seq: 99, role: "described", waits_for: "person", input_refs: [A.root.id] }
-    const got = await applicable([...shared, ...A.rows, wait], [], NOW, { root: A.root.id, awaits: true, dues: A.dues })
-    expect(got.filter((c) => c.kind === "wait-for").map((c) => c.pointer.until)).toEqual([A.dues[1]])
-    const passed = await applicable([...shared, ...B.rows, { ...wait, input_refs: [B.root.id] }], [], NOW, { root: B.root.id, awaits: true, dues: B.dues })
-    expect(passed.filter((c) => c.kind === "wait-for").map((c) => "until" in c.pointer)).toEqual([false])
-  })
-
   test("[MUST-FAIL] a records that answers no dues (one older than this change) leaves the root as a root with no deadline: never an unbounded wait, never overdue", async () => {
     for (const r of [A, B]) {
       const plain = r.rows.filter((x) => x.shape !== "due")

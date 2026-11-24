@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { actsFactRow, frontierFields } from "./acts"
-import { type Frontier, type Seen, type Skipped, applicable, installsRepoOrWalk, personSpokeAfter } from "./applicable"
+import { type Frontier, type Seen, type Skipped, applicable, installsRepoOrWalk } from "./applicable"
 import { type Cand, READ_AGAIN_MS, READ_WAIT_MS, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
@@ -23,8 +23,8 @@ const ageBucket = (root: Row, now: number): number => {
  * by the earliest deadline ahead across every root, and not offered once any root's deadline has passed, so one root's
  * wait never lets another's deadline pass unseen.
  */
-// What a tick learns of every root besides the options it offers: which roots had any move, a wait included (a root
-// waiting on a person has one, though the wait is offered only when no root has another move), and, for each root with
+// What a tick learns of every root besides the options it offers: which roots had any move, a wait included (the wait
+// is offered only when no root has another move), and, for each root with
 // none at all, what it held back and why (its skipped requests and templates), so the tick can say so.
 export type Held = { moving: Set<string>; still: Array<{ root: string; pool: Row[]; skipped: Skipped[] }> }
 
@@ -255,10 +255,9 @@ export const UNREAD: Record<string, string[]> = { [SELECTION]: ["cands", "posts"
 // charged once through the one debit path; with no such selection, one row citing none, which charges no one. An ended
 // root is not said again and bounds no wait. Its gap is never touched: it stays open, and the root wakes, counted afresh,
 // on a row of its own (a change) or on an owner's install of its repo or of the walk written after the end, the news
-// that something it could not do may now be done. A root whose call waits on a person (a row of its own saying waits_for
-// person, no person's row since) is never ended and is said once per change, as before; a row that only names paths
-// (needs_person on a commit) is information, not a wait: no change waits on a person. With no ends_after, a root is said
-// once per change, as before.
+// that something it could not do may now be done. No root waits on a person: a row naming one (waits_for, needs_person)
+// is information, and its root is said and ended as any other. With no ends_after, a root is said once per change, as
+// before.
 type Clock = { rows?: number; ms?: number; ends?: number }
 const stallClock = (shared: Row[]): Clock => {
   const newest = (f: (r: Row) => boolean): Row | undefined => shared.filter((r) => r.role === OWNER && f(r)).sort((a, b) => a.seq - b.seq).at(-1)
@@ -327,13 +326,7 @@ const stallOf = (shared: Row[], root: Row, all: Row[], c: Clock): Stall => {
   if (end !== undefined && wake === undefined) return { base: row, said: [] }
   const base = wake ?? row
   const stalled = rows.filter((r) => said(r) && r.seq > base.seq).sort(bySeq)
-  // waiting on a person: by the rule the call's own wait is lifted by, so a root the walk still holds for a person's
-  // word is never ended for having no move
-  const sharedIds = new Set(shared.map((r) => r.id))
-  const own = new Set(all.filter((r) => r.role !== OWNER && !sharedIds.has(r.id)).map((r) => r.id))
-  const spoke = (r: Row): boolean => personSpokeAfter(all, root.id, (id) => own.has(id), r.seq)
-  const person = rows.some((r) => r.waits_for === "person" && !spoke(r))
-  const ends = person ? undefined : c.ends
+  const ends = c.ends
   const from = stalled.length === 0 ? base : ends !== undefined ? stalled.at(-1) : undefined
   return { base, said: stalled, ...(ends !== undefined ? { ends } : {}), ...(from !== undefined ? { from } : {}) }
 }

@@ -3,7 +3,8 @@
 // naming ends_after S, a said root is said again each period from its last stall row, and the S-th stall row since its
 // last change also writes one end row per produce made since the first of them (each answer moved nothing), or one
 // citing none. An ended root is not said again and bounds no wait; it wakes on a change of its own or an owner's
-// install of its repo after the end. A root waiting on a person is never ended. With no ends_after, as before.
+// install of its repo after the end. No root waits on a person: a row naming one is information, and its root ends
+// as any other. With no ends_after, as before.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 
 const realFetch = globalThis.fetch
@@ -158,39 +159,25 @@ describe("an ended root", () => {
   })
 })
 
-describe("a root waiting on a person is never ended", () => {
-  // the land call refused for a person's verdict, then the walk's capped waits ending with nothing
-  const waits = { shape: "failure", id: "f1", seq: 105, role: "walk", root: "g1", call_id: "c1", waits_for: "person", t: iso(NOW - 280 * MIN) }
-  const nulls = Array.from({ length: 12 }, (_, i) => ({ shape: "selection", id: `w${i}`, seq: 140 + i, role: "walk", a: "wait-for/c1", root: "g1", t: iso(NOW - (200 - i * 15) * MIN) }))
-
-  test("[GUARD] waiting (a move): no stall row, no end row, whatever the store holds", () => {
-    expect(stalls([rule(), clock], one([waits, ...nulls, st("s1", 160, 90), st("s2", 170, 60)]), [{ root: "g1" }], AT, NOW)).toEqual([])
-  })
-
-  test("[MUST-NOT-END] a stretch with no move: said once per change, never ended", () => {
-    expect(stalls([rule(), clock], one([waits, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW)).toEqual([])
-    expect(stalls([rule(), clock], one([waits, prod("p1", 106, 270)]), [], AT, NOW)).toMatchObject([{ kind: "stall" }])
-    expect(stallDue([rule(), clock], one([waits, st("s1", 110, 10)]), NOW)).toBeUndefined()
-  })
-
-  test("[MUST-NOT-END] a person's row about nothing of the root's (a page viewed, naming no root) is not their word: never ended", () => {
-    const viewed = { shape: "exposure", id: "x1", seq: 107, role: "person", t: iso(NOW - 270 * MIN), input_refs: ["elsewhere"] }
-    expect(ends(stalls([rule(), clock], one([waits, viewed, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toEqual([])
-    // in the root's pool (naming it) but citing nothing of its rows: still not their word on it
-    const inPool = { ...viewed, id: "x2", root: "g1" }
-    expect(ends(stalls([rule(), clock], one([waits, inPool, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toEqual([])
-  })
-
-  test("[MUST-NOT-END] a person's row citing only an owner row, or only a row every root is given, is not their word on the root", () => {
-    const owners = { shape: "infra_window", id: "iw0", seq: 50, role: "owner", installed: [{ repo: "r9" }], t: iso(NOW - 400 * MIN) }
-    const given = { shape: "channel", id: "chx", seq: 51, role: "described", t: iso(NOW - 400 * MIN) }
-    const cites = (id: string, ref: string) => ({ shape: "exposure", id, seq: 107, role: "person", t: iso(NOW - 270 * MIN), input_refs: [ref] })
-    const said = [st("s1", 110, 90), st("s2", 120, 60)]
-    expect(ends(stalls([rule(), clock], one([owners, waits, cites("x3", "iw0"), ...said]), [], AT, NOW))).toEqual([])
-    expect(ends(stalls([rule(), clock, given], one([given, waits, cites("x4", "chx"), ...said]), [], AT, NOW))).toEqual([])
-  })
-
+describe("no root waits on a person", () => {
   const said2 = [st("s1", 110, 90), st("s2", 120, 60)]
+  // a land call's failure as the walk writes it (calls.ts: selection_ref and input_refs to the call's selection, no
+  // root), still saying waits_for person from before no change waited on one (120950's field set)
+  const callSel = { shape: "selection", id: "cs1", seq: 104, role: "walk", a: "call/git_land", root: "g1", t: iso(NOW - 290 * MIN) }
+  const waits = { shape: "failure", id: "f1", seq: 105, role: "walk", writer: "walk-test", call_id: "c1", selection_ref: "cs1", status: 409,
+    body: "{\"error\":\"only a person's verdict lands it\"}", input_refs: ["cs1"], waits_for: "person", t: iso(NOW - 285 * MIN) }
+
+  test("[MUST-FAIL] a call's failure saying waits_for person, as the walk writes it: the root ends at the third say as any root does", () => {
+    expect(ends(stalls([rule(), clock], one([callSel, waits, ...said2]), [], AT, NOW))).toHaveLength(1)
+    const { selection_ref: _s, ...byRoot } = { ...waits, root: "g1" }
+    expect(ends(stalls([rule(), clock], one([byRoot, ...said2]), [], AT, NOW))).toHaveLength(1)
+  })
+
+  test("[MUST-FAIL] a row of its own saying waits_for person (a gap marked before no gap waited on one): the root ends", () => {
+    const marked = { shape: "gap", id: "g1-2", seq: 106, role: "detector", root: "g1", waits_for: "person", t: iso(NOW - 280 * MIN) }
+    expect(ends(stalls([rule(), clock], one([marked, ...said2]), [], AT, NOW))).toHaveLength(1)
+  })
+
   // a commit as the walk writes a tool's answer (selection_ref to the root's selection, no root field), still carrying
   // needs_person from before no change waited on a person
   const answered = { shape: "gitCommitResult", id: "gc3", seq: 107, role: "walk", writer: "walk-test", selection_ref: "p1", call_id: "c1", input_refs: ["g1"], needs_person: ["tight/a.ts (protected: repos/x/tight/)"], t: iso(NOW - 268 * MIN) }
@@ -201,16 +188,11 @@ describe("a root waiting on a person is never ended", () => {
     expect(ends(stalls([rule(), clock], one([byRoot, ...said2]), [], AT, NOW))).toHaveLength(1)
   })
 
-  test("[MUST-NOT-END] a wait lifted by a protect_list row, retried, and answered marked again (live shape): said, never ended", () => {
+  test("[MUST-FAIL] a wait lifted by a protect_list row, retried, and answered marked again (live shape): ends", () => {
     const p0 = prod("p0", 104, 290)
     const wait = { shape: "failure", id: "f0", seq: 105, role: "walk", selection_ref: "p0", call_id: "c0", status: 409, waits_for: "person", list_sha256: "a".repeat(64), input_refs: ["g1"], t: iso(NOW - 285 * MIN) }
     const list = { shape: "protect_list", id: "pl1", seq: 106, role: "owner", list_sha256: "b".repeat(64), t: iso(NOW - 280 * MIN) }
     const retried = { ...answered, selection_ref: "p1", list_sha256: "b".repeat(64) }
-    expect(ends(stalls([rule(), clock, list], one([p0, wait, prod("p1", 106, 270), retried, ...said2]), [], AT, NOW))).toEqual([])
-  })
-
-  test("[MUST-FAIL] once a person has spoken, it ends as any root does", () => {
-    const spoke = { shape: "verdict", id: "v1", seq: 107, role: "person", root: "g1", t: iso(NOW - 270 * MIN), input_refs: ["h"] }
-    expect(ends(stalls([rule(), clock], one([waits, spoke, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toHaveLength(1)
+    expect(ends(stalls([rule(), clock, list], one([p0, wait, prod("p1", 106, 270), retried, ...said2]), [], AT, NOW))).toHaveLength(1)
   })
 })

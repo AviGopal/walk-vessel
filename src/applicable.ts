@@ -56,13 +56,6 @@ const installedBy = (x: Row): Array<{ repo?: unknown; vessel?: unknown }> =>
 export const installsRepoOrWalk = (xs: Row[], repo: unknown): boolean =>
   xs.flatMap(installedBy).some((e) => (typeof e.repo === "string" && e.repo === repo) || e.vessel === VESSEL_ID)
 
-// Whether a person has spoken on a root since seq: a person's row that is the root, or cites one of the root's own rows
-// (own: rows of the root's that are not owner configuration). A verdict cites the diff it judges, never the ask. A
-// person's row about nothing of the root's (a page they viewed elsewhere) is not their word on it. One rule for whoever
-// asks whether a wait on a person still holds: the call offered again, and the stall step's sparing of a waiting root.
-export const personSpokeAfter = (pool: Row[], root: unknown, own: (id: string) => boolean, seq: number): boolean =>
-  pool.some((r) => r.seq > seq && r.role === PERSON && (r.id === root || [r.input_refs].flat().map(String).some(own)))
-
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
   // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a produce
@@ -653,39 +646,6 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     skipped.push({ id: req.id, of: "request", against_refs: [was.id],
       unserved: [`${type}: it answered as row ${was.seq} did, so it changed nothing the walk can tell apart; the same call again answers the same, and a different pointer is a different call`] })
   }
-  // A CALL THAT WAITS ON A PERSON (agf_i033lib9c2hs: d929's git_land, sent again every few seconds). A tool may answer
-  // that only a person's verdict lets it go on (waits_for "person" on the call's failure row, lifted by the walk from the
-  // tool's own answer); asked the same again before the person speaks, it answers the same. So a call type whose latest
-  // failure on this root waits for a person is not offered until the root holds a row a person wrote after that failure
-  // (records puts a person's row about any of the root's rows in the root's pool); until then the walk's move is to wait
-  // for one. An owner row does not lift it: a seed run says nothing about this root. Read from the failure's own field
-  // and the writer kind.
-  // the root's own rows: its pool, less what every root is given (the owner's configuration)
-  const ownRows = new Set(pool.filter((r) => note.shared?.has(r.id) !== true && r.role !== OWNER).map((r) => r.id))
-  const lastFailure = new Map<string, Row>()
-  for (const f of pool.filter((r) => r.shape === FAILURE && r.role === WALK && typeof r.call_id === "string").sort((a, b) => a.seq - b.seq)) {
-    const t = typeOf.get(String(f.call_id))
-    if (t !== undefined) lastFailure.set(t, f)
-  }
-  // a person's row about this root (the root itself, or citing any row of the root's own: a verdict cites the diff it
-  // judges, never the ask; qa), newer than the row that said it waits
-  const spokeAfter = (seq: number): boolean => personSpokeAfter(pool, note.root, (id) => ownRows.has(id), seq)
-  const waitsOnPerson = (type: string): boolean => {
-    const f = lastFailure.get(type)
-    return f !== undefined && f.waits_for === "person" && !spokeAfter(f.seq)
-  }
-  // Any other row of the root's own that says it waits for a person (a detector's gap whose claim a person must judge
-  // first) holds the whole root the same way, lifted by the same person's row: the field means one thing whoever wrote
-  // it. As with a call, the newest row says whether it still waits: the newest of the root's own rows of each shape by
-  // each writer, so a writer ends its wait by writing the row again without the field (a gap whose check is runnable
-  // again), not only by a person, and another writer's row of the same shape (the walk's own skip or stall) ends
-  // nothing. A call's failure is read above instead, per call.
-  const callFailure = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && typeof r.call_id === "string"
-  const newestOwn = new Map<string, Row>()
-  for (const r of pool.filter((x) => ownRows.has(x.id) && !callFailure(x)).sort((a, b) => a.seq - b.seq)) {
-    newestOwn.set(JSON.stringify([r.shape, r.role, r.writer]), r)
-  }
-  const rowWaits = [...newestOwn.values()].some((r) => r.waits_for === "person" && !spokeAfter(r.seq))
   // A call refused for the request's state (its failure blames the request, as records stamps it) settles that call on
   // this root, one rule for a request's call and a template's run: over the same inputs the same call gets the same
   // answer, so neither is made again until something new comes. The call is its shape and its arguments as sent (a run's,
@@ -724,7 +684,6 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     pool.some((x) => x.seq > seq && (brought(x) || learned(x) || also(x)))
   const settled = (key: string, also?: (x: Row) => boolean) => refused.filter((x) => x.key === key && !newsSince(x.seq, also)).at(-1)
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
-    if (waitsOnPerson(type)) return []
     const served = await exists(type)
     // a call is offered only when its callee declared what it takes and this request's pointer meets it (inputs.ts):
     // checked here and again when it is forwarded; said in the skip, so the request is produced again with the reason
@@ -759,7 +718,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A call the owner's requires rows gate is told what it needs and where that comes from ("gitDiff comes from a git_diff
   // call"); when the call so named takes the root's newest made row, it is offered
   // without waiting for a producer to ask for it, as any call is: served, its inputs declared, nothing it requires
-  // unmet, not waiting on a person. Its pointer is bound from the frontier row by the owner's requires row that takes
+  // unmet. Its pointer is bound from the frontier row by the owner's requires row that takes
   // it (binds: {pointer field: row field}); a requires row naming no binds offers nothing, so which rows lead on to which
   // call is the owner's to say, never the walk's. Once per frontier row: a selection of the call made over the same
   // frontier (its frontier field) settles it, so it is offered again only over a newer made row. A request already
@@ -774,7 +733,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .sort()
     .map(async (type): Promise<Cand[]> => {
       const id = [CALL, type].join("/")
-      if (asked.has(id) || waitsOnPerson(type)) return []
+      if (asked.has(id)) return []
       const q = reqs.find((x) => String(x.for) === type && String(x.needs) === String(frontierRow.shape) && takenBy(x, frontierRow)
         && typeof x.binds === "object" && x.binds !== null)
       if (q === undefined) return []
@@ -939,20 +898,14 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // A passed deadline holds every wait back only while grading its lapse is on offer this turn. Once that grade is
   // pending (the walk graded what it saw and nothing new came), waiting is the walk's move again: otherwise a request
   // graded but never closed would keep the walk from ever waiting.
-  // A root whose call waits on a person is not overdue: its lapse is not graded (below), so it holds no other root's wait
-  // back. Only a call's wait is read here: a row's wait holds the root's other moves and changes no grading (below).
-  const callWait = [...latest.keys()].some(waitsOnPerson)
-  const personWait = rowWaits || callWait
   const lapse = produce.flat().filter((c) => c.pointer.type === OUTCOME)
-  const overdue = !callWait && passed && ahead.length === 0 && lapse.length > 0
+  const overdue = passed && ahead.length === 0 && lapse.length > 0
   if (overdue) note.overdue = true
   const bound = ahead.length > 0 ? { until: ahead[0] } : {}
   // One wait: for the next row a person or the owner writes. The walk runs one move at a time, so while it waits none of
   // its own produces or calls is in flight, and nothing else writes the shapes they make: a wait for one of those (an
   // answer, a due, a template) could only time out. records answers any wait with the next person or owner row.
-  // A call that waits on a person (waitsOnPerson, above) makes waiting the walk's move too: what the root needs next is a
-  // person's row, which is what records answers a wait with (qa: withheld, the walk must wait, not produce another try).
-  const waitFor = idle || ahead.length > 0 || personWait
+  const waitFor = idle || ahead.length > 0
     ? [[] as string[]].map((shapes): Cand => ({
       ...base,
       id: [WAIT_FOR, ...shapes].join("/"),
@@ -962,15 +915,5 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     }))
     : []
 
-  // While a call waits on a person, nothing the root could produce or run moves it: the person's row is what it needs
-  // (deployment: on d929, answers, requests, deadlines, grades and templates went on being produced, a new git_land
-  // request among them, each a model call, while git_land itself was held). So the root offers its wait and nothing
-  // else. Its lapse is not graded either, once its first deadline has passed (the USER, 11-16: "No lapse while
-  // waiting"): the deadline measured the makers' work, and the time is the person's. The person's row is what ends the
-  // wait; until then the root shows as waiting on them.
-  if (callWait) return waitFor
-  // A row of the root's own that waits on a person holds its other moves the same way, but the ruling names a call's
-  // wait, not a row's: a passed deadline's lapse is still graded beside the wait, as on a root with no wait.
-  if (rowWaits) return [...(overdue ? lapse : []), ...waitFor]
   return [...produce.flat(), ...call.flat(), ...chained.flat(), ...run, ...waitFor]
 }
