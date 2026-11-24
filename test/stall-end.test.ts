@@ -58,6 +58,8 @@ describe("a said root is said again each period", () => {
     const r = rule({ ends_after: undefined })
     expect(stalls([r, clock], one([st("s1", 110, 60)]), [], AT, NOW)).toEqual([])
     expect(stalls([rule({ ends_after: "3" }), clock], one([st("s1", 110, 60)]), [], AT, NOW)).toEqual([])
+    // 0 is how the owner turns ending off: no ending, and no re-say
+    expect(stalls([rule({ ends_after: 0 }), clock], one([st("s1", 110, 60), st("s2", 120, 31)]), [], AT, NOW)).toEqual([])
   })
 
   test("[MUST-FAIL] the wait is bounded by the next say of a said root", () => {
