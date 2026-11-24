@@ -181,6 +181,15 @@ describe("a root waiting on a person is never ended", () => {
     expect(ends(stalls([rule(), clock], one([waits, inPool, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toEqual([])
   })
 
+  test("[MUST-NOT-END] a person's row citing only an owner row, or only a row every root is given, is not their word on the root", () => {
+    const owners = { shape: "infra_window", id: "iw0", seq: 50, role: "owner", installed: [{ repo: "r9" }], t: iso(NOW - 400 * MIN) }
+    const given = { shape: "channel", id: "chx", seq: 51, role: "described", t: iso(NOW - 400 * MIN) }
+    const cites = (id: string, ref: string) => ({ shape: "exposure", id, seq: 107, role: "person", t: iso(NOW - 270 * MIN), input_refs: [ref] })
+    const said = [st("s1", 110, 90), st("s2", 120, 60)]
+    expect(ends(stalls([rule(), clock], one([owners, waits, cites("x3", "iw0"), ...said]), [], AT, NOW))).toEqual([])
+    expect(ends(stalls([rule(), clock, given], one([given, waits, cites("x4", "chx"), ...said]), [], AT, NOW))).toEqual([])
+  })
+
   test("[MUST-FAIL] once a person has spoken, it ends as any root does", () => {
     const spoke = { shape: "verdict", id: "v1", seq: 107, role: "person", root: "g1", t: iso(NOW - 270 * MIN), input_refs: ["h"] }
     expect(ends(stalls([rule(), clock], one([waits, spoke, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toHaveLength(1)
