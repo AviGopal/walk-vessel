@@ -156,8 +156,16 @@ describe("a root waiting on a person is never ended", () => {
     expect(stallDue([rule(), clock], one([waits, st("s1", 110, 10)]), NOW)).toBeUndefined()
   })
 
+  test("[MUST-NOT-END] a person's row about nothing of the root's (a page viewed, naming no root) is not their word: never ended", () => {
+    const viewed = { shape: "exposure", id: "x1", seq: 107, role: "person", t: iso(NOW - 270 * MIN), input_refs: ["elsewhere"] }
+    expect(ends(stalls([rule(), clock], one([waits, viewed, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toEqual([])
+    // in the root's pool (naming it) but citing nothing of its rows: still not their word on it
+    const inPool = { ...viewed, id: "x2", root: "g1" }
+    expect(ends(stalls([rule(), clock], one([waits, inPool, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toEqual([])
+  })
+
   test("[MUST-FAIL] once a person has spoken, it ends as any root does", () => {
-    const spoke = { shape: "verdict", id: "v1", seq: 107, role: "person", root: "g1", t: iso(NOW - 270 * MIN) }
+    const spoke = { shape: "verdict", id: "v1", seq: 107, role: "person", root: "g1", t: iso(NOW - 270 * MIN), input_refs: ["h"] }
     expect(ends(stalls([rule(), clock], one([waits, spoke, st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toHaveLength(1)
   })
 })

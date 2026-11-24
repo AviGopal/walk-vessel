@@ -111,6 +111,8 @@ describe("a call that waits on a person", () => {
     expect(await offered([ask, req, sel, hop, waiting, { shape: "answer", id: "a6", seq: 6, role: "described", input_refs: ["w1"] }])).toBe(false)
     expect(await offered([ask, req, sel, hop, waiting, { shape: "hop", id: "h6", seq: 6, role: "walk", phase: "ended" }])).toBe(false)
     expect(await offered([ask, req, sel, hop, waiting, { shape: "world_changed", id: "w9", seq: 6, role: "person", what: "other" }])).toBe(false)
+    // a person's row naming the root but citing nothing of its rows (a page viewed) is not their word on it
+    expect(await offered([ask, req, sel, hop, waiting, { shape: "exposure", id: "x6", seq: 6, role: "person", root: "w1", input_refs: ["elsewhere"] }])).toBe(false)
     // an owner row (a seed run) says nothing about this root: it does not lift the wait (deployment)
     expect(await offered([ask, req, sel, hop, waiting, { shape: "requires", id: "o6", seq: 6, role: "owner", for: "x", needs: "y", input_refs: ["w1"] }])).toBe(false)
   })

@@ -56,6 +56,13 @@ const installedBy = (x: Row): Array<{ repo?: unknown; vessel?: unknown }> =>
 export const installsRepoOrWalk = (xs: Row[], repo: unknown): boolean =>
   xs.flatMap(installedBy).some((e) => (typeof e.repo === "string" && e.repo === repo) || e.vessel === VESSEL_ID)
 
+// Whether a person has spoken on a root since seq: a person's row that is the root, or cites one of the root's own rows
+// (own: rows of the root's that are not owner configuration). A verdict cites the diff it judges, never the ask. A
+// person's row about nothing of the root's (a page they viewed elsewhere) is not their word on it. One rule for whoever
+// asks whether a wait on a person still holds: the call offered again, and the stall step's sparing of a waiting root.
+export const personSpokeAfter = (pool: Row[], root: unknown, own: (id: string) => boolean, seq: number): boolean =>
+  pool.some((r) => r.seq > seq && r.role === PERSON && (r.id === root || [r.input_refs].flat().map(String).some(own)))
+
 export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Date.now(), note: Seen = {}, answers: Record<string, string> = {}): Promise<Cand[]> => {
   const have = new Set(pool.map((r) => r.shape))
   // The owner's newest schema row for a target supersedes older ones (described reads the newest too), so a produce
@@ -662,8 +669,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   // a person's row about this root (the root itself, or citing any row of the root's own: a verdict cites the diff it
   // judges, never the ask; qa), newer than the row that said it waits
-  const spokeAfter = (seq: number): boolean => pool.some((r) => r.seq > seq && r.role === PERSON &&
-    (r.id === note.root || [r.input_refs].flat().map(String).some((id) => ownRows.has(id))))
+  const spokeAfter = (seq: number): boolean => personSpokeAfter(pool, note.root, (id) => ownRows.has(id), seq)
   const waitsOnPerson = (type: string): boolean => {
     const f = lastFailure.get(type)
     return f !== undefined && f.waits_for === "person" && !spokeAfter(f.seq)

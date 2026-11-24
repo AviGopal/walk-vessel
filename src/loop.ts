@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 import { actsFactRow, frontierFields } from "./acts"
-import { type Frontier, type Seen, type Skipped, applicable, installsRepoOrWalk } from "./applicable"
+import { type Frontier, type Seen, type Skipped, applicable, installsRepoOrWalk, personSpokeAfter } from "./applicable"
 import { type Cand, READ_AGAIN_MS, READ_WAIT_MS, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
-import { ARM, DESCRIBED, DUE, FAILURE, INFRA_WINDOW, OWNER, PERSON, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, RHYTHM, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
+import { ARM, DESCRIBED, DUE, FAILURE, INFRA_WINDOW, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, RHYTHM, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean; dues?: number[] }> }
 type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]>; frontier?: Frontier; rootCell?: string }
@@ -327,7 +327,11 @@ const stallOf = (shared: Row[], root: Row, all: Row[], c: Clock): Stall => {
   if (end !== undefined && wake === undefined) return { base: row, said: [] }
   const base = wake ?? row
   const stalled = rows.filter((r) => said(r) && r.seq > base.seq).sort(bySeq)
-  const person = rows.some((r) => r.waits_for === "person" && !rows.some((p) => p.role === PERSON && p.seq > r.seq))
+  // waiting on a person: by the rule the call's own wait is lifted by, so a root the walk still holds for a person's
+  // word is never ended for having no move
+  const sharedIds = new Set(shared.map((r) => r.id))
+  const own = new Set(all.filter((r) => r.role !== OWNER && !sharedIds.has(r.id)).map((r) => r.id))
+  const person = rows.some((r) => r.waits_for === "person" && !personSpokeAfter(all, root.id, (id) => own.has(id), r.seq))
   const ends = person ? undefined : c.ends
   const from = stalled.length === 0 ? base : ends !== undefined ? stalled.at(-1) : undefined
   return { base, said: stalled, ...(ends !== undefined ? { ends } : {}), ...(from !== undefined ? { from } : {}) }
