@@ -255,10 +255,10 @@ export const UNREAD: Record<string, string[]> = { [SELECTION]: ["cands", "posts"
 // charged once through the one debit path; with no such selection, one row citing none, which charges no one. An ended
 // root is not said again and bounds no wait. Its gap is never touched: it stays open, and the root wakes, counted afresh,
 // on a row of its own (a change) or on an owner's install of its repo or of the walk written after the end, the news
-// that something it could not do may now be done. A root waiting on a person (a row of its own saying waits_for person,
-// or its newest row of a shape naming needs_person, no person's row since) is never ended and is said once per change, as before (the USER: changes waiting on the
-// person's verdict are shown on the person's page and wait until the person decides). With no ends_after, a root is
-// said once per change, as before.
+// that something it could not do may now be done. A root whose call waits on a person (a row of its own saying waits_for
+// person, no person's row since) is never ended and is said once per change, as before; a row that only names paths
+// (needs_person on a commit) is information, not a wait: no change waits on a person. With no ends_after, a root is said
+// once per change, as before.
 type Clock = { rows?: number; ms?: number; ends?: number }
 const stallClock = (shared: Row[]): Clock => {
   const newest = (f: (r: Row) => boolean): Row | undefined => shared.filter((r) => r.role === OWNER && f(r)).sort((a, b) => a.seq - b.seq).at(-1)
@@ -332,17 +332,7 @@ const stallOf = (shared: Row[], root: Row, all: Row[], c: Clock): Stall => {
   const sharedIds = new Set(shared.map((r) => r.id))
   const own = new Set(all.filter((r) => r.role !== OWNER && !sharedIds.has(r.id)).map((r) => r.id))
   const spoke = (r: Row): boolean => personSpokeAfter(all, root.id, (id) => own.has(id), r.seq)
-  // A change the protected list marked for a person (needs_person on the tool's own answer: a commit made, landing only on a
-  // person's verdict) waits on the person just as a refused land does: shown on their page, never ended. Read from the
-  // root's own rows, the newest of each shape by each writer, so a newer commit with nothing marked ends it as a newer row
-  // ends any wait. A row is the root's when it names the root or was written under one of the root's selections (a tool's
-  // answer carries selection_ref, not root); a row shown to every root is no root's.
-  const selections = new Set(rows.filter((x) => x.shape === SELECTION && x.root !== undefined).map((x) => x.id))
-  const mine = (x: Row): boolean => !sharedIds.has(x.id) && (x.root !== undefined || selections.has(String(x.selection_ref)))
-  const newest = new Map<string, Row>()
-  for (const r of rows.filter(mine).sort(bySeq)) newest.set(JSON.stringify([r.shape, r.writer]), r)
-  const marked = [...newest.values()].some((r) => Array.isArray(r.needs_person) && r.needs_person.length > 0 && !spoke(r))
-  const person = marked || rows.some((r) => r.waits_for === "person" && !spoke(r))
+  const person = rows.some((r) => r.waits_for === "person" && !spoke(r))
   const ends = person ? undefined : c.ends
   const from = stalled.length === 0 ? base : ends !== undefined ? stalled.at(-1) : undefined
   return { base, said: stalled, ...(ends !== undefined ? { ends } : {}), ...(from !== undefined ? { from } : {}) }
