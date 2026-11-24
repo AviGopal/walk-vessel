@@ -77,3 +77,50 @@ describe("a commit's precondition bound to its clone is judged for the frontier'
     }
   })
 })
+
+describe("the frontier names a target only for a group it can bind, and only from the root's own rows", () => {
+  test("[GUARD] a group binding two fields, with a frontier carrying one of them: no target, named for the target the call names", async () => {
+    const both = [
+      owner("rq-read", 1, { shape: "requires", for: "fs_patch", needs: "fileContent", where: { path: { "x-pointer": "path" } }, group: "here" }),
+      owner("rq-clone", 2, { shape: "requires", for: "fs_patch", needs: "gitWorktree", where: { cwd }, group: "here" }),
+    ]
+    const note: any = { root: "g1" }
+    await applicable([...both, gap, tree], [], Date.now(), note, ANSWERS)
+    expect(note.frontier?.id).toBe("w1")
+    expect(note.gated?.fs_patch?.length).toBe(1)
+    expect(note.gated?.fs_patch?.[0]).toEndWith("for the target the call names")
+  })
+
+  test("[GUARD] a shared made row newer than the root's own edit is not its frontier: the edit's clone is judged", async () => {
+    const other = { ...tree, id: "w9", seq: 20, cwd: "/trees/s" }
+    const note: any = { root: "g1", shared: new Set(["w9"]) }
+    await applicable([...COMMIT, gap, tree, edit("/trees/x"), other], [], Date.now(), note, ANSWERS)
+    expect(note.frontier?.id).toBe("e1")
+    expect(note.gated?.git_commit).toBeUndefined()
+  })
+})
+
+describe("a call gated by a plain group beside one bound to its pointer is named once per group", () => {
+  // land_verdict r 1, a group bound to nothing, unmet here: named as it is, whatever the frontier
+  const judged = owner("rq-judged", 4, { shape: "requires", for: "git_commit", needs: "land_verdict", where: { r: 1 }, group: "judged" })
+  const gatedWith = async (pool: any[]) => {
+    const note: any = { root: "g1" }
+    await applicable([...COMMIT, judged, gap, ...pool], [], Date.now(), note, ANSWERS)
+    return note.gated?.git_commit as string[] | undefined
+  }
+
+  test("[GUARD] the bound group met at the frontier: only the plain group is named, once, with no frontier suffix", async () => {
+    const gated = await gatedWith([tree, edit("/trees/x")])
+    expect(gated?.length).toBe(1)
+    expect(gated?.[0]).toStartWith("git_commit (requires land_verdict")
+    expect(gated?.[0]).not.toContain("for the frontier's")
+  })
+
+  test("[GUARD] the bound group unmet at the frontier: the plain group once as it is, the bound group once for the frontier's clone", async () => {
+    const gated = await gatedWith([tree, edit("/trees/x"), { ...tree, id: "w2", seq: 13, cwd: "/trees/z" }])
+    expect(gated?.length).toBe(2)
+    expect(gated?.filter((x) => x.startsWith("git_commit (requires land_verdict") && !x.includes("for the frontier's")).length).toBe(1)
+    expect(gated?.filter((x) => x.startsWith("git_commit (requires fileEditResult") && x.endsWith(`for the frontier's cwd "/trees/z"`)).length).toBe(1)
+    expect(gated?.some((x) => x.endsWith("for the frontier's "))).toBe(false)
+  })
+})
