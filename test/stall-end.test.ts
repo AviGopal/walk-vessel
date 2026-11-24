@@ -85,6 +85,23 @@ describe("the S-th say ends the attempt", () => {
     expect(ends(stalls([rule({ ends_after: 2 }), clock], one([st("s1", 110, 60)]), [], AT, NOW))).toHaveLength(1)
   })
 
+  test("[MUST-FAIL] with S 1 the first say ends; a retired rule ends nothing", () => {
+    expect(ends(stalls([rule({ ends_after: 1 }), clock], one([]), [], AT, NOW))).toHaveLength(1)
+    expect(ends(stalls([rule({ retired: true }), clock], one([st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW))).toEqual([])
+  })
+
+  test("[MUST-FAIL] only the walk's own produces are charged: another writer's selection since the first say is not", () => {
+    const other = { shape: "selection", id: "o1", seq: 112, role: "described", a: "produce/request/ch1", root: "g1", t: iso(NOW - 85 * MIN) }
+    const rows = [st("s1", 110, 90), prod("p1", 111, 89), other, st("s2", 120, 60)]
+    expect(ends(stalls([rule(), clock], one(rows), [], AT, NOW)).map((r) => r.selection_ref)).toEqual(["p1"])
+  })
+
+  test("[MUST-FAIL] a produce made on another root, shown in this root's episode, is not charged to it", () => {
+    const elsewhere = { ...prod("o2", 112, 85), root: "g2" }
+    const rows = [st("s1", 110, 90), prod("p1", 111, 89), elsewhere, st("s2", 120, 60)]
+    expect(ends(stalls([rule(), clock], one(rows), [], AT, NOW)).map((r) => r.selection_ref)).toEqual(["p1"])
+  })
+
   test("[MUST-FAIL] no produce since the first say: one end row citing no selection", () => {
     expect(ends(stalls([rule(), clock], one([st("s1", 110, 90), st("s2", 120, 60)]), [], AT, NOW)))
       .toEqual([{ shape: "failure", ends: "stall", root: "g1", input_refs: ["g1", "s2"] }])

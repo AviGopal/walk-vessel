@@ -165,6 +165,13 @@ describe("a wait ends by the next stall due", () => {
     expect(waits(await choices(shared, [roots[0]!, g1, roots[2]!], NOW, {}, undefined, undefined, { moving: new Set(), still: [] }))).toEqual([["i1", NOW + 20 * MIN]])
   })
 
+  test("[MUST-FAIL] a root choices() found moving (held.moving) is not said by the stall step, though it offers no option", () => {
+    const shared = [{ ...clock(30 * MIN) }]
+    const roots = [still("g1", 45 * MIN)]
+    expect(tickStalls(shared, roots, [], { moving: new Set(["g1"]), still: [] } as any, AT, NOW)).toEqual([])
+    expect(tickStalls(shared, roots, [], { moving: new Set<string>(), still: [] } as any, AT, NOW).map((r) => r.root)).toEqual(["g1"])
+  })
+
   test("[GUARD] a deadline earlier than the stall due still bounds the wait", async () => {
     const got = await choices([clock(30 * MIN)], [dueRoot(600 * MIN, NOW + 2 * MIN), still("g1", 10 * MIN)], NOW)
     expect(waits(got)).toEqual([["i1", NOW + 2 * MIN]])

@@ -370,7 +370,8 @@ export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, 
     // the answers since the first of these stall rows: each moved nothing
     const first = stalled[0]?.seq ?? Number.POSITIVE_INFINITY
     const refs = [root.id, ...(last !== undefined ? [last.id] : [])]
-    const answers = rows.filter((r) => r.shape === SELECTION && r.role === WALK && r.seq > first && String(r.a).startsWith(`${PRODUCE}/`)).sort(bySeq)
+    // the root's own: its episode also shows it rows made on other roots, and those are not its answers
+    const answers = rows.filter(worksOn(root, rows)).filter((r) => r.shape === SELECTION && r.role === WALK && r.seq > first && String(r.a).startsWith(`${PRODUCE}/`)).sort(bySeq)
     for (const s of answers) out.push({ shape: FAILURE, ends: STALL, root: root.id, selection_ref: s.id, input_refs: refs })
     if (answers.length === 0) out.push({ shape: FAILURE, ends: STALL, root: root.id, input_refs: refs })
   }
