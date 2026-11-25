@@ -63,6 +63,14 @@ describe("what a tool's failure was about", () => {
     }
   })
 
+  test("[GUARD] a call that is no call (its type empty, or not a string) is not kept; the path is still named", async () => {
+    for (const type of ["", 7]) {
+      const f = await run(200, { error: "no", class: "anchor_mismatch" }, { ...EDIT, pointer: { ...EDIT.pointer, type } })
+      expect(f).toMatchObject({ path: "src/index.ts", class: "anchor_mismatch" })
+      expect(f?.call).toBeUndefined()
+    }
+  })
+
   test("[MUST-FAIL] a class of exactly 64 is kept; a call naming no path still names its call", async () => {
     expect((await run(200, { error: "no", class: "k".repeat(64) }))?.class).toBe("k".repeat(64))
     const status = { id: "call/git_status", kind: "call", pointer: { type: "git_status", cwd: "/t" } }
