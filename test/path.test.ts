@@ -153,11 +153,86 @@ describe("the route back from the call that reaches the root", () => {
   })
 })
 
+describe("what the route is read from", () => {
+  test("[GUARD] only the owner's credits row names the call: a newer one from another writer changes nothing", async () => {
+    const other = { id: "cr-x", seq: 40, writer: "walk-test", role: "walk", shape: "credits", target: "gap", by_call: "git_diff" }
+    expect((await run([...CHAIN, scope(NOW)], [...TODAY, other])).path?.call).toBe("git_land")
+  })
+
+  test("[MUST-FAIL] a path is read as the gate reads it: a leading ./ or backslashes are the same path, an empty one is under nothing", async () => {
+    const at = async (site: string) => {
+      const note: any = { root: "g1" }
+      await applicable([...CHAIN, scope(BEFORE), gapRow({ edit_site: site }), ...TODAY].sort((a, b) => a.seq - b.seq), [], 1_000, note, ANSWERS)
+      return note.path
+    }
+    expect((await at(`./${SITE}`))?.broken?.length).toBe(1)
+    expect((await at(SITE.replaceAll("/", "\\")))?.broken?.length).toBe(1)
+    expect((await at(""))?.next).toEqual(["git_commit"])
+  })
+
+  // two calls each needing what the other answers, and nothing else: a cycle reaches nothing
+  const CYCLE = [
+    owner("cr", -2, { shape: "credits", target: "gap", by_call: "a_call" }),
+    owner("rq-a", 1, { shape: "requires", for: "a_call", needs: "sB" }),
+    owner("rq-b", 2, { shape: "requires", for: "b_call", needs: "sA" }),
+  ]
+  const cycle = async (owners: any[], answers: Record<string, string> = { a_call: "sA", b_call: "sB" }) => {
+    const note: any = { root: "g1" }
+    await applicable([...owners, gapRow()].sort((a, b) => a.seq - b.seq), [], 1_000, note, answers)
+    return note.path
+  }
+  test("[MUST-FAIL] a cycle alone is no route", async () => {
+    const path = await cycle(CYCLE)
+    expect(path?.calls).toBeUndefined()
+    expect(path?.broken).toEqual([])
+  })
+
+  test("[MUST-FAIL] two shapes each made from the other, and nothing else, are no route", async () => {
+    const path = await cycle([
+      owner("cr", -2, { shape: "credits", target: "gap", by_call: "a_call" }),
+      owner("rq-a", 1, { shape: "requires", for: "a_call", needs: "sX" }),
+      owner("s-x", 2, { shape: "shape_schema", target: "sX", inputs: ["sY"] }),
+      owner("s-y", 3, { shape: "shape_schema", target: "sY", inputs: ["sX"] }),
+    ], { a_call: "sA" })
+    expect(path?.calls).toBeUndefined()
+  })
+
+  test("[MUST-FAIL] what was read while a cycle was open is read again once it settles: a need met through it later counts", async () => {
+    // a landing needs sP and sQ; sP's call needs sQ or sR; sQ's call needs sP. Read first inside sP, sQ meets sP still
+    // open; sP then holds through sR, so sQ, needed again by a_call, holds through it
+    expect(await cycle([
+      owner("cr", -2, { shape: "credits", target: "gap", by_call: "a_call" }),
+      owner("rq-a-p", 1, { shape: "requires", for: "a_call", needs: "sP", group: "p" }),
+      owner("rq-a-q", 2, { shape: "requires", for: "a_call", needs: "sQ", group: "q" }),
+      owner("rq-p-q", 3, { shape: "requires", for: "p_call", needs: "sQ", group: "x" }),
+      owner("rq-p-r", 4, { shape: "requires", for: "p_call", needs: "sR", group: "x" }),
+      owner("rq-c", 5, { shape: "requires", for: "c_call", needs: "sP" }),
+    ], { a_call: "sA", p_call: "sP", c_call: "sQ", r_call: "sR" }))
+      .toEqual({ call: "a_call", calls: ["a_call", "c_call", "p_call", "r_call"], next: ["r_call"] })
+  })
+
+  test("[MUST-FAIL] beside a cycle, the route through the call that needs nothing names that call and not the cycle's", async () => {
+    expect(await cycle([...CYCLE, owner("rq-c", 3, { shape: "requires", for: "c_call", needs: "gap" })], { a_call: "sA", b_call: "sB", c_call: "sB" }))
+      .toEqual({ call: "a_call", calls: ["a_call", "c_call"], next: ["c_call"] })
+  })
+})
+
 describe("calls on no route are offered, marked", () => {
   test("[MUST-FAIL] with a route, a call off it is marked off_path and the commit on it is not", async () => {
     const { cands } = await run([...CHAIN, scope(NOW)], [...TODAY, request("q1", 20, "code_search"), request("q2", 21, "git_commit")])
     expect(cands.filter((c) => c.kind === "call").map((c) => c.id).sort()).toEqual(["call/code_search", "call/git_commit"])
     expect(offPath(cands)).toEqual(["call/code_search"])
+  })
+
+  test("[GUARD] a call the chain offers on its own, off the route, is marked too", async () => {
+    const owners = [...CHAIN, scope(NOW),
+      owner("rq-list", 31, { shape: "requires", for: "fs_list", needs: "dirIndex", where: { fresh: true } }),
+      owner("rq-index", 32, { shape: "requires", for: "fs_index", needs: "attempt_explanation", binds: { path: "repo_path" } })]
+    const note: any = { root: "g1" }
+    const cands = await applicable([...owners, gapRow(), ...TODAY, walkRow("attempt_explanation", "x3", 16, { repo_path: "repos/y-vessel/src/a.ts" })]
+      .sort((a, b) => a.seq - b.seq), [], 1_000, note, { ...ANSWERS, fs_index: "dirIndex" })
+    expect(cands.filter((c) => c.kind === "call").map((c) => c.id)).toContain("call/fs_index")
+    expect(offPath(cands)).toEqual(["call/fs_index"])
   })
 
   test("[MUST-FAIL] with no route, every call is offered and marked", async () => {

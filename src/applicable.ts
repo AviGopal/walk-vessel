@@ -165,7 +165,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const dotted = (r: Row, k: string): unknown => k.split(".").reduce<unknown>((x, step) =>
     typeof x === "object" && x !== null ? (x as Record<string, unknown>)[step] : undefined, r)
-  const entryCovering = (rel: string, list: string[]): string | undefined => list.find((e) => e.endsWith("/") ? rel === e.slice(0, -1) || rel.startsWith(e) : rel === e)
+  // read as the gate reads a path: backslashes as slashes, a leading "./" dropped, and an empty path under nothing
+  const entryCovering = (path: string, list: string[]): string | undefined => {
+    const rel = path.replace(/\\/g, "/").replace(/^\.\//, "")
+    return rel === "" ? undefined : list.find((e) => e.endsWith("/") ? rel === e.slice(0, -1) || rel.startsWith(e) : rel === e)
+  }
   // the value of the row's field and the entry covering it, or undefined when nothing covers it or it is not judged
   const coveredBy = (r: Row, k: string, spec: Outside): [string, string] | undefined => {
     const list = pool.filter((x) => x.shape === spec.shape && x.role === OWNER).sort((a, b) => a.seq - b.seq).at(-1)?.[spec.field]
@@ -415,28 +419,45 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const broken: string[] = []
     const callMemo = new Map<string, boolean>()
     const shapeMemo = new Map<string, boolean>()
+    // A shape or call still being read, met again below itself, is no route: a cycle reaches nothing on its own. A result
+    // read while one was open is kept only when it is a route (which held without the cycle); otherwise it is read again
+    // once the open one is settled, so a call is never named on the route through a cycle that turned out to reach
+    // nothing, nor left off it for one that did.
+    const open = new Set<string>()
+    let metOpen = false
+    const settle = <K>(memo: Map<K, boolean>, key: K, read: () => boolean): boolean => {
+      const outer = metOpen
+      metOpen = false
+      const ok = read()
+      if (ok || !metOpen) memo.set(key, ok)
+      metOpen = outer || metOpen
+      return ok
+    }
     const reachShape = (shape: string, why: string): boolean => {
       const known = shapeMemo.get(shape)
       if (known !== undefined) return known
-      // a shape in progress is not a break: the route that needs it is still being read
-      shapeMemo.set(shape, true)
-      const makers = schemas.filter((x) => String(x.target) === shape)
-      const callers = Object.keys(answers).filter((c) => answers[c] === shape).sort()
-      const ok = makers.some((x) => [x.inputs].flat().every((e) => entryHere(e) || reachShape(shapeOf(e), `${shapeOf(e)} for ${shape}`)))
-        || callers.some((c) => reachCall(c))
-      if (makers.length === 0 && callers.length === 0) broken.push(why)
-      shapeMemo.set(shape, ok)
+      if (open.has(`shape ${shape}`)) { metOpen = true; return false }
+      open.add(`shape ${shape}`)
+      const ok = settle(shapeMemo, shape, () => {
+        const makers = schemas.filter((x) => String(x.target) === shape)
+        const callers = Object.keys(answers).filter((c) => answers[c] === shape).sort()
+        if (makers.length === 0 && callers.length === 0) broken.push(why)
+        return makers.some((x) => [x.inputs].flat().every((e) => entryHere(e) || reachShape(shapeOf(e), `${shapeOf(e)} for ${shape}`)))
+          || callers.some((c) => reachCall(c))
+      })
+      open.delete(`shape ${shape}`)
       return ok
     }
     const reachCall = (c: string): boolean => {
       const known = callMemo.get(c)
       if (known !== undefined) return known
-      callMemo.set(c, true)
-      const ok = groupsFor(c).every((rs) => groupMet(rs) || rs.some((q) => {
+      if (open.has(`call ${c}`)) { metOpen = true; return false }
+      open.add(`call ${c}`)
+      const ok = settle(callMemo, c, () => groupsFor(c).every((rs) => groupMet(rs) || rs.some((q) => {
         const reasons = [...new Set(against(q).map(([reason]) => reason))]
         return reachShape(String(q.needs), `${String(q.needs)} for ${c}${reasons.length > 0 ? `: ${reasons.join("; ")}` : ""}`)
-      }))
-      callMemo.set(c, ok)
+      })))
+      open.delete(`call ${c}`)
       if (ok) onRoute.add(c)
       return ok
     }
