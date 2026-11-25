@@ -235,6 +235,24 @@ describe("how a refusal's cutoff is carried down the route", () => {
       .toEqual({ call: "land", calls: ["land", "rcall", "vcall", "xcall"], next: ["rcall", "xcall"] })
   })
 
+  test("[GUARD] an input made after the cutoff counts only as its latest row: an older one meeting the where, replaced by a newer one failing it, does not", async () => {
+    const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }), needs("rq-c", 2, "dcall", "C", { where: { ok: true } }),
+      owner("s-c", 3, { shape: "shape_schema", target: "C", inputs: [{ shape: "E", where: { fresh: true }, latest_by: "k" }] })]
+    const rows = [REFUSED_V, walkRow("E", "e1", 14, { k: "a", fresh: true }), walkRow("E", "e2", 15, { k: "a", fresh: false })]
+    expect(await route(owners, rows, { land: "Lout", dcall: "V", ncall: "E" }))
+      .toEqual({ call: "land", calls: ["dcall", "land", "ncall"], next: ["ncall"] })
+  })
+
+  test("[GUARD] a maker's input naming no where is not cut: what makes it is judged uncut", async () => {
+    // C is made from any E; none is here, so ncall makes one, and ncall needs an X: the X made at 11 meets it, since
+    // nothing refused an E
+    const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }), needs("rq-c", 2, "dcall", "C", { where: { ok: true } }),
+      owner("s-c", 3, { shape: "shape_schema", target: "C", inputs: ["E"] }), needs("rq-x", 4, "ncall", "X", { where: { ok: true } })]
+    const rows = [walkRow("X", "x1", 11, { ok: true }), REFUSED_V]
+    expect(await route(owners, rows, { land: "Lout", dcall: "V", ncall: "E", xcall: "X" }))
+      .toEqual({ call: "land", calls: ["dcall", "land", "ncall"], next: ["ncall"] })
+  })
+
   test("[GUARD] an empty where names nothing: such a group is never cut", async () => {
     const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }), needs("rq-c", 2, "dcall", "C", { where: {} })]
     const rows = [walkRow("C", "c1", 11), REFUSED_V]
