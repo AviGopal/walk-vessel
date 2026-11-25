@@ -411,9 +411,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     return [...groups.values()]
   }
   const groupMet = (rs: Row[], since?: number): boolean => {
-    if (!pointerBound(rs)) return rs.some((q) => meets(q, undefined, since))
+    if (!pointerBound(rs)) return rs.some((q) => meets(q, undefined, standing(q) ? undefined : since))
     const p = frontierTarget(rs)
-    return p !== undefined && rs.some((q) => meets(q, p, since))
+    return p !== undefined && rs.some((q) => meets(q, p, standing(q) ? undefined : since))
   }
   // AFTER A REFUSAL, THE ROUTE RUNS THROUGH WHAT IS MADE AFTER IT. A need whose newest row here fails what is required (a
   // verdict of 0 on the newest tree) is not reached by making it again from the rows that row was made from: the route
@@ -423,6 +423,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // the gap), so no refusal uses it up: it is never cut. A group with one that does is cut whole, its where-less
   // alternatives too, or a row made before the refusal would meet it with nothing new made. The newest failing row
   // sets the cutoff, so a refusal already followed by a fresh attempt does not hold.
+  // Only what can be made again is used up. A shape nothing here makes (made, above: no schema targets it and no call
+  // answers with it, as a gap; or an ask) is a standing fact, read as it stands under any cutoff: no row of it can be
+  // made after a refusal, so cutting it would leave every route through it dead (an open gap, which every change tool
+  // needs). Which shapes are made is read from the owner graph, never listed.
+  const standing = (q: Row): boolean => !made.has(String(q.needs))
   const hasWhere = (x: unknown): boolean => {
     const w = typeof x === "object" && x !== null ? (x as { where?: unknown }).where : undefined
     return typeof w === "object" && w !== null && Object.keys(w).length > 0
@@ -433,7 +438,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     return failing.length === 0 ? undefined : Math.max(...failing.map((x) => x.seq))
   }
   const entryAfter = (e: unknown, since: number | undefined): boolean => {
-    if (since === undefined || !hasWhere(e)) return entryHere(e)
+    if (since === undefined || !hasWhere(e) || !made.has(shapeOf(e))) return entryHere(e)
     const where = (e as { where: Record<string, unknown> }).where
     const by = (e as { latest_by?: unknown }).latest_by
     return latestPer(pool.filter((r) => r.shape === shapeOf(e) && r.seq > since), by).some((r) => Object.entries(where).every(([k, v]) => fieldMeets(r, k, v, undefined)))

@@ -217,11 +217,46 @@ describe("how a refusal's cutoff is carried down the route", () => {
   })
 
   test("[MUST-FAIL] a group with one where is cut whole: its where-less alternative met only before the refusal does not meet it", async () => {
+    // K is made here (kcall answers it), so a K made before the refusal is used up by it
     const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }),
       needs("rq-c", 2, "dcall", "C", { where: { ok: true }, group: "g" }), needs("rq-k", 3, "dcall", "K", { group: "g" })]
     const rows = [walkRow("K", "k1", 11), REFUSED_V]
-    expect(await route(owners, rows, { land: "Lout", dcall: "V", ccall: "C" }))
+    expect(await route(owners, rows, { land: "Lout", dcall: "V", ccall: "C", kcall: "K" }))
       .toEqual({ call: "land", calls: ["ccall", "dcall", "land"], next: ["ccall"] })
+  })
+
+  // A standing fact: G, which no schema targets and no call answers (the form of a gap: an open gap is not made again
+  // after a refusal). The owner graph of a change tool: it needs a wanted change W, made from a G that is not localized,
+  // or the open G itself.
+  const STANDING = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }),
+    needs("rq-w", 2, "dcall", "W", { where: { wanted: true }, group: "change" }), needs("rq-g", 3, "dcall", "G", { where: { open: true }, group: "change" }),
+    owner("s-w", 4, { shape: "shape_schema", target: "W", inputs: [{ shape: "G", where: { loc: false } }] })]
+
+  test("[MUST-FAIL] a fact nothing here makes is read as it stands after a refusal: an open G older than the refusal still meets its group", async () => {
+    const rows = [walkRow("G", "gg1", 11, { open: true, loc: true }), REFUSED_V]
+    expect(await route(STANDING, rows, { land: "Lout", dcall: "V" })).toEqual({ call: "land", calls: ["dcall", "land"], next: ["dcall"] })
+  })
+
+  test("[MUST-FAIL] a maker's input that nothing here makes is read as it stands: a W can still be made from a G older than the refusal", async () => {
+    const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }), needs("rq-w", 2, "dcall", "W", { where: { wanted: true } }),
+      owner("s-w", 4, { shape: "shape_schema", target: "W", inputs: [{ shape: "G", where: { open: true } }] })]
+    const rows = [walkRow("G", "gg1", 11, { open: true }), REFUSED_V]
+    // the next step is the W's produce, not a call: dcall is on the route, callable once a W is made
+    expect(await route(owners, rows, { land: "Lout", dcall: "V" })).toEqual({ call: "land", calls: ["dcall", "land"], next: [] })
+  })
+
+  test("[MUST-FAIL] bound to the call's own pointer (a clone's repo), a standing fact is read as it stands too", async () => {
+    // git_worktree's form: the open G must name the repo the call would name, read from the newest made row naming one
+    const repo = { "x-pointer": "repo" }
+    const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }),
+      needs("rq-w", 2, "dcall", "W", { where: { wanted: true, repo }, group: "change" }), needs("rq-g", 3, "dcall", "G", { where: { open: true, repo }, group: "change" })]
+    const rows = [walkRow("G", "gg1", 11, { open: true, repo: "x-vessel" }), walkRow("T", "t1", 12, { repo: "x-vessel" }), REFUSED_V]
+    expect(await route(owners, rows, { land: "Lout", dcall: "V", tcall: "T" })).toEqual({ call: "land", calls: ["dcall", "land"], next: ["dcall"] })
+  })
+
+  test("[GUARD] a standing fact is still read: a G that is not open meets nothing, and there is no route", async () => {
+    const rows = [walkRow("G", "gg1", 11, { open: false, loc: true }), REFUSED_V]
+    expect(await route(STANDING, rows, { land: "Lout", dcall: "V" })).toHaveProperty("broken")
   })
 
   test("[MUST-FAIL] one call reached both uncut and under a cutoff: each is read on its own, and it is callable now under either", async () => {
