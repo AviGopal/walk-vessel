@@ -247,14 +247,15 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // one row can say "a row about the same thing this call is about" (the same path, say). A call whose pointer has no
   // such field does not meet it. The field is the owner's to name; the walk knows none.
   const ofCall = boundValue
-  const latestOf = (q: Row): Row[] => {
+  // since: only rows made after that seq count (the route's cutoff, below)
+  const latestOf = (q: Row, since = Number.NEGATIVE_INFINITY): Row[] => {
     const by = typeof q.latest_by === "string" ? q.latest_by : undefined
     const latest = new Map<string, Row>()
-    for (const x of pool.filter((r) => r.shape === String(q.needs)).sort((a, b) => a.seq - b.seq)) latest.set(by ? JSON.stringify(x[by]) : "", x)
+    for (const x of pool.filter((r) => r.shape === String(q.needs) && r.seq > since).sort((a, b) => a.seq - b.seq)) latest.set(by ? JSON.stringify(x[by]) : "", x)
     return [...latest.values()]
   }
-  const meets = (q: Row, pointer?: Record<string, unknown>): boolean => {
-    return latestOf(q).some((x) =>
+  const meets = (q: Row, pointer?: Record<string, unknown>, since?: number): boolean => {
+    return latestOf(q, since).some((x) =>
       Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => fieldMeets(x, k, v, pointer)))
   }
   // Rows may name a group: rows of one group are alternatives (any one met meets the group), and every group must be met.
@@ -409,16 +410,39 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     for (const q of reqs.filter((x) => String(x.for) === c)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
     return [...groups.values()]
   }
-  const groupMet = (rs: Row[]): boolean => {
-    if (!pointerBound(rs)) return rs.some((q) => meets(q))
+  const groupMet = (rs: Row[], since?: number): boolean => {
+    if (!pointerBound(rs)) return rs.some((q) => meets(q, undefined, since))
     const p = frontierTarget(rs)
-    return p !== undefined && rs.some((q) => meets(q, p))
+    return p !== undefined && rs.some((q) => meets(q, p, since))
+  }
+  // AFTER A REFUSAL, THE ROUTE RUNS THROUGH WHAT IS MADE AFTER IT. A need whose newest row here fails what is required (a
+  // verdict of 0 on the newest tree) is not reached by making it again from the rows that row was made from: the route
+  // takes only rows made after it, through the maker's inputs and back through each call it then needs (a diff of a new
+  // tree needs a new commit, a new commit a new edit, a new edit a read made since the file was committed). A
+  // precondition naming no where asks only that its shape be here (a clone, the gap), so no refusal uses it up: it is
+  // never cut. The newest failing row sets the cutoff, so a refusal already followed by a fresh attempt does not hold.
+  const hasWhere = (x: unknown): boolean => {
+    const w = typeof x === "object" && x !== null ? (x as { where?: unknown }).where : undefined
+    return typeof w === "object" && w !== null && Object.keys(w).length > 0
+  }
+  const failingAt = (q: Row, rs: Row[]): number | undefined => {
+    const p = pointerBound(rs) ? frontierTarget(rs) : undefined
+    const failing = latestOf(q).filter((x) => !Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => fieldMeets(x, k, v, p)))
+    return failing.length === 0 ? undefined : Math.max(...failing.map((x) => x.seq))
+  }
+  const entryAfter = (e: unknown, since: number | undefined): boolean => {
+    if (since === undefined || !hasWhere(e)) return entryHere(e)
+    const where = (e as { where: Record<string, unknown> }).where
+    const by = (e as { latest_by?: unknown }).latest_by
+    return latestPer(pool.filter((r) => r.shape === shapeOf(e) && r.seq > since), by).some((r) => Object.entries(where).every(([k, v]) => fieldMeets(r, k, v, undefined)))
   }
   const pathFor = (by: string): Path => {
     const onRoute = new Set<string>()
     const broken: string[] = []
     const callMemo = new Map<string, boolean>()
     const shapeMemo = new Map<string, boolean>()
+    // each call on the route with the cutoffs it was reached under: callable now when every group is met under one of them
+    const reachedAt = new Map<string, Set<number | undefined>>()
     // A shape or call still being read, met again below itself, is no route: a cycle reaches nothing on its own. A result
     // read while one was open is kept only when it is a route (which held without the cycle); otherwise it is read again
     // once the open one is settled, so a call is never named on the route through a cycle that turned out to reach
@@ -433,37 +457,45 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       metOpen = outer || metOpen
       return ok
     }
-    const reachShape = (shape: string, why: string): boolean => {
-      const known = shapeMemo.get(shape)
+    const later = (a: number | undefined, b: number | undefined): number | undefined => a === undefined ? b : b === undefined ? a : Math.max(a, b)
+    const reachShape = (shape: string, why: string, since?: number): boolean => {
+      const key = `shape ${shape}@${since ?? ""}`
+      const known = shapeMemo.get(key)
       if (known !== undefined) return known
-      if (open.has(`shape ${shape}`)) { metOpen = true; return false }
-      open.add(`shape ${shape}`)
-      const ok = settle(shapeMemo, shape, () => {
+      if (open.has(key)) { metOpen = true; return false }
+      open.add(key)
+      const ok = settle(shapeMemo, key, () => {
         const makers = schemas.filter((x) => String(x.target) === shape)
         const callers = Object.keys(answers).filter((c) => answers[c] === shape).sort()
         if (makers.length === 0 && callers.length === 0) broken.push(why)
-        return makers.some((x) => [x.inputs].flat().every((e) => entryHere(e) || reachShape(shapeOf(e), `${shapeOf(e)} for ${shape}`)))
-          || callers.some((c) => reachCall(c))
+        return makers.some((x) => [x.inputs].flat().every((e) => entryAfter(e, since)
+          || reachShape(shapeOf(e), `${shapeOf(e)} for ${shape}`, hasWhere(e) ? since : undefined)))
+          || callers.some((c) => reachCall(c, since))
       })
-      open.delete(`shape ${shape}`)
+      open.delete(key)
       return ok
     }
-    const reachCall = (c: string): boolean => {
-      const known = callMemo.get(c)
+    const reachCall = (c: string, since?: number): boolean => {
+      const key = `call ${c}@${since ?? ""}`
+      const known = callMemo.get(key)
       if (known !== undefined) return known
-      if (open.has(`call ${c}`)) { metOpen = true; return false }
-      open.add(`call ${c}`)
-      const ok = settle(callMemo, c, () => groupsFor(c).every((rs) => groupMet(rs) || rs.some((q) => {
-        const reasons = [...new Set(against(q).map(([reason]) => reason))]
-        return reachShape(String(q.needs), `${String(q.needs)} for ${c}${reasons.length > 0 ? `: ${reasons.join("; ")}` : ""}`)
-      })))
-      open.delete(`call ${c}`)
-      if (ok) onRoute.add(c)
+      if (open.has(key)) { metOpen = true; return false }
+      open.add(key)
+      const ok = settle(callMemo, key, () => groupsFor(c).every((rs) => {
+        const cut = rs.some(hasWhere) ? since : undefined
+        return groupMet(rs, cut) || rs.some((q) => {
+          const reasons = [...new Set(against(q).map(([reason]) => reason))]
+          return reachShape(String(q.needs), `${String(q.needs)} for ${c}${reasons.length > 0 ? `: ${reasons.join("; ")}` : ""}`, later(cut, failingAt(q, rs)))
+        })
+      }))
+      open.delete(key)
+      if (ok) { onRoute.add(c); reachedAt.set(c, new Set([...(reachedAt.get(c) ?? []), since])) }
       return ok
     }
     if (!reachCall(by)) return { call: by, broken: [...new Set(broken)] }
     const calls = [...onRoute].sort()
-    return { call: by, calls, next: calls.filter((c) => groupsFor(c).every(groupMet)) }
+    return { call: by, calls, next: calls.filter((c) => [...(reachedAt.get(c) ?? [])].some((since) =>
+      groupsFor(c).every((rs) => groupMet(rs, rs.some(hasWhere) ? since : undefined)))) }
   }
   const rootKind = note.root === undefined ? undefined : byId.get(note.root)?.shape
   const reachedBy = rootKind === undefined ? undefined : pool.filter((r) => r.shape === CREDITS && r.role === OWNER && String(r.target) === String(rootKind))

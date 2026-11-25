@@ -16,6 +16,8 @@ let choose: (seed: number, options: Array<{ root: string; path?: any }>, posts: 
 let noPathWeight: (shared: any[]) => number
 let actsFactRow: (pool: any[], root: string, write: (row: object) => Promise<any>, sel?: string, gated?: Record<string, string[]>, frontier?: any, path?: any) => Promise<string | undefined>
 let selectionRow: (arm: string, options: any[], post: { at_seq: number; posts: any[] }, seed: number, i: number, timing: any, w?: number) => Record<string, unknown>
+let drawn: (arm: string, shared: any[], options: any[], post: { at_seq: number; posts: any[] }, seed: number, timing: any) => { i: number; row: Record<string, unknown> }
+let factOf: (o: any, write: (row: object) => Promise<any>, sel: string) => Promise<string | undefined>
 beforeAll(async () => {
   Object.assign(process.env, {
     WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test", WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: "k",
@@ -27,6 +29,8 @@ beforeAll(async () => {
   choose = loop.choose as never
   noPathWeight = (loop as any).noPathWeight
   selectionRow = loop.selectionRow as never
+  drawn = (loop as any).drawn
+  factOf = (loop as any).factOf
   actsFactRow = (await import("../src/acts")).actsFactRow as never
 })
 afterAll(() => {
@@ -153,6 +157,77 @@ describe("the route back from the call that reaches the root", () => {
   })
 })
 
+describe("after a refusal, the route runs through what is made after it", () => {
+  const T = "a".repeat(40)
+  const U = "b".repeat(40)
+  const commit = (id: string, seq: number, t: string) => walkRow("gitCommitResult", id, seq, { cwd: "/trees/x", committed_tree: t })
+  const diff = (id: string, seq: number, t: string) => walkRow("gitDiff", id, seq, { cwd: "/trees/x", tree: t })
+  const verdict = (id: string, seq: number, t: string, r: number) =>
+    ({ shape: "land_verdict", id, seq, writer: "described", role: "described", tree: t, r, input_refs: ["g1"] })
+  const read = (id: string, seq: number) => walkRow("fileContent", id, seq, { cwd: "/trees/x", path: "/trees/x/src/index.ts" })
+  // the root as it stands after its change was refused: committed, diffed, judged 0, explained
+  const REFUSED = [...TODAY, commit("c1", 15, T), diff("d1", 16, T), verdict("v1", 17, T, 0), why("x3", 18)]
+
+  test("[MUST-FAIL] a verdict of 0 on the newest tree: the route runs back through a new diff, commit and edit, and the file is read again first", async () => {
+    expect((await run([...CHAIN, scope(NOW)], REFUSED)).path)
+      .toEqual({ call: "git_land", calls: ["fs_edit", "fs_read", "git_commit", "git_diff", "git_land"], next: ["fs_read"] })
+  })
+
+  test("[MUST-FAIL] with the file read since the refusal, the edit is the step callable now", async () => {
+    expect((await run([...CHAIN, scope(NOW)], [...REFUSED, read("r2", 19)])).path?.next).toEqual(["fs_edit"])
+  })
+
+  test("[GUARD] a diff of a fresh tree made after the refusal: the route runs through its verdict, and no new edit is on it", async () => {
+    expect((await run([...CHAIN, scope(NOW)], [...REFUSED, commit("c2", 20, U), diff("d2", 21, U)])).path)
+      .toEqual({ call: "git_land", calls: ["git_land"], next: [] })
+  })
+
+  test("[MUST-FAIL] the newest refusal sets the cutoff: a fresh tree refused in turn needs another edit", async () => {
+    const twice = [...REFUSED, commit("c2", 20, U), diff("d2", 21, U), verdict("v2", 22, U, 0)]
+    expect((await run([...CHAIN, scope(NOW)], twice)).path?.next).toEqual(["fs_read"])
+  })
+
+  test("[GUARD] a verdict of 1 on the newest tree: the landing is callable now", async () => {
+    const ok = [...TODAY, commit("c1", 15, T), diff("d1", 16, T), verdict("v1", 17, T, 1)]
+    expect((await run([...CHAIN, scope(NOW)], ok)).path).toEqual({ call: "git_land", calls: ["git_land"], next: ["git_land"] })
+  })
+})
+
+describe("which owner rows the route reads", () => {
+  test("[GUARD] the newest of the owner's credits rows for the root's kind names the call: an older one, or one for another kind, does not", async () => {
+    const older = owner("cr0", -9, { shape: "credits", target: "gap", by_call: "git_diff" })
+    const other = owner("cr2", -1, { shape: "credits", target: "change_wanted", by_call: "git_commit" })
+    expect((await run([older, ...CHAIN, other, scope(NOW)], TODAY)).path?.call).toBe("git_land")
+  })
+
+  test("[GUARD] only the owner's list row is the list: a newer one from another writer protecting the site changes nothing", async () => {
+    const theirs = { ...scope(BEFORE, "sc-x", 0), writer: "walk-test", role: "walk" }
+    expect((await run([...CHAIN, scope(NOW), theirs], TODAY)).path?.next).toEqual(["git_commit"])
+  })
+
+  test("[GUARD] a field holding a list is out of reach when any of its paths is covered; a directory entry covers the directory itself", async () => {
+    const at = async (site: unknown, list: string[]) => {
+      const note: any = { root: "g1" }
+      await applicable([...CHAIN, scope(list), gapRow({ edit_site: site }), ...TODAY].sort((a, b) => a.seq - b.seq), [], 1_000, note, ANSWERS)
+      return note.path
+    }
+    expect((await at(["repos/y-vessel/src/a.ts", SITE], BEFORE))?.broken?.length).toBe(1)
+    expect((await at(["repos/y-vessel/src/a.ts"], BEFORE))?.next).toEqual(["git_commit"])
+    expect((await at("repos/x-vessel/src", ["repos/x-vessel/src/"]))?.broken?.length).toBe(1)
+  })
+
+  test("[GUARD] a broken link names only what failed: a field out of the list's reach is never named as wanting a value", async () => {
+    // the list's field first in the where, so it is read before the field the gap fails
+    const owners = [...CHAIN.filter((r) => r.id !== "rq-land-g"),
+      owner("rq-land-g", 2, { shape: "requires", for: "git_land", needs: "gap", where: { "meta.edit_site": OUT, status: "open" }, latest_by: "gap_id", group: "gap" })]
+    const note: any = { root: "g1" }
+    await applicable([...owners, scope(NOW), { ...gapRow(), status: "closed" }, ...TODAY].sort((a, b) => a.seq - b.seq), [], 1_000, note, ANSWERS)
+    expect(note.path?.broken?.length).toBe(1)
+    expect(note.path.broken[0]).toContain("status")
+    expect(note.path.broken[0]).not.toContain("edit_site")
+  })
+})
+
 describe("what the route is read from", () => {
   test("[GUARD] only the owner's credits row names the call: a newer one from another writer changes nothing", async () => {
     const other = { id: "cr-x", seq: 40, writer: "walk-test", role: "walk", shape: "credits", target: "gap", by_call: "git_diff" }
@@ -224,6 +299,14 @@ describe("calls on no route are offered, marked", () => {
     expect(offPath(cands)).toEqual(["call/code_search"])
   })
 
+  test("[GUARD] a read, an ok edit after it, then a request for another edit: the commit is next, and the edit asked for is off the route", async () => {
+    const read = walkRow("fileContent", "r1", 11.5, { cwd: "/trees/x", path: "/trees/x/src/index.ts" })
+    const again = { ...request("q3", 20, "fs_edit"), pointer: { type: "fs_edit", cwd: "/trees/x", path: "/trees/x/src/index.ts" } }
+    const { path, cands } = await run([...CHAIN, scope(NOW)], [tree, read, edit, again])
+    expect(path?.next).toEqual(["git_commit"])
+    expect(offPath(cands)).toContain("call/fs_edit")
+  })
+
   test("[GUARD] a call the chain offers on its own, off the route, is marked too", async () => {
     const owners = [...CHAIN, scope(NOW),
       owner("rq-list", 31, { shape: "requires", for: "fs_list", needs: "dirIndex", where: { fresh: true } }),
@@ -248,7 +331,7 @@ describe("the route on the rows a producer and a reader see", () => {
     const mine = options.filter((o) => o.root === "g1")
     expect(mine.length).toBeGreaterThan(0)
     const out: any[] = []
-    await actsFactRow([gapRow(), ...TODAY], "g1", async (row) => { out.push(row); return { id: "f1" } }, "s1", mine[0].gated, mine[0].frontier, mine[0].path)
+    await factOf(mine[0], async (row) => { out.push(row); return { id: "f1" } }, "s1")
     expect(out[0]?.path).toEqual({ call: "git_land", calls: ["git_commit", "git_diff", "git_land"], next: ["git_commit"] })
     expect(out[0]?.no_path).toBeUndefined()
   })
@@ -258,12 +341,14 @@ describe("the route on the rows a producer and a reader see", () => {
     const i = options.findIndex((o) => o.root === "g1")
     expect(i).toBeGreaterThanOrEqual(0)
     const out: any[] = []
-    await actsFactRow([gapRow(), ...TODAY], "g1", async (row) => { out.push(row); return { id: "f1" } }, "s1", options[i].gated, options[i].frontier, options[i].path)
+    await factOf(options[i], async (row) => { out.push(row); return { id: "f1" } }, "s1")
     expect(out[0]?.no_path?.call).toBe("git_land")
     expect(out[0]?.path).toBeUndefined()
-    const sel = selectionRow("arm", options, { at_seq: 1, posts: options.map(() => ({ alpha: 1, beta: 1 })) }, 7, i, {}, 0.25)
-    expect(sel.no_path).toBe(true)
-    expect(sel.root_weight).toBe(0.25)
+    const rule = owner("sr", -6, { shape: "stall_rule", after_rows: 50, no_path_weight: 0.25 })
+    const mineOnly = options.filter((o) => o.root === "g1")
+    const { row } = drawn("arm", [...SHARED, rule], mineOnly, { at_seq: 1, posts: mineOnly.map(() => ({ alpha: 1, beta: 1 })) }, 7, {})
+    expect(row.no_path).toBe(true)
+    expect(row.root_weight).toBe(0.25)
   })
 })
 
@@ -280,6 +365,18 @@ describe("a change of route alone is a change of what the request is shown", () 
     expect(out.length).toBe(2)
     expect(out[1].no_path).toEqual({ call: "git_land", broken: ["gap for git_land"] })
   })
+
+  test("[GUARD] a route that changes, or a broken link that changes, each writes a new row", async () => {
+    const out: any[] = []
+    const write = async (row: object) => { const r = { ...row, id: `f${out.length}`, seq: 100 + out.length, role: "walk", root: "g1" }; out.push(r); return r }
+    const pool = [gapRow(), ...TODAY]
+    await actsFactRow(pool, "g1", write, "s1", {}, undefined, { call: "git_land", calls: ["git_commit", "git_land"], next: ["git_commit"] })
+    await actsFactRow([...pool, ...out], "g1", write, "s2", {}, undefined, { call: "git_land", calls: ["fs_edit", "git_commit", "git_land"], next: ["fs_edit"] })
+    expect(out.length).toBe(2)
+    await actsFactRow([...pool, ...out], "g1", write, "s3", {}, undefined, { call: "git_land", broken: ["gap for git_land"] })
+    await actsFactRow([...pool, ...out], "g1", write, "s4", {}, undefined, { call: "git_land", broken: ["gap for git_worktree"] })
+    expect(out.length).toBe(4)
+  })
 })
 
 describe("a root with no route is drawn at the owner's weight, never held", () => {
@@ -293,6 +390,20 @@ describe("a root with no route is drawn at the owner's weight, never held", () =
     const a = share(0.1)
     expect(a).toBeGreaterThan(0.06)
     expect(a).toBeLessThan(0.14)
+  })
+
+  test("[MUST-FAIL] the tick's own draw (drawn) is made at the owner's weight, and its row says the move was off the route", () => {
+    const rule = owner("sr", 1, { shape: "stall_rule", after_rows: 50, no_path_weight: 0.1 })
+    const opts = [
+      { root: "a", path: NONE, cand: { id: "call/x", kind: "call", off_path: true }, pool: [], context: [], cell: "a", skipped: [] },
+      { root: "b", path: ROUTE, cand: { id: "call/y", kind: "call" }, pool: [], context: [], cell: "b", skipped: [] },
+    ]
+    const rows = Array.from({ length: 2000 }, (_, s) => drawn("arm", [rule], opts, { at_seq: 1, posts }, s, {}).row)
+    const a = rows.filter((r) => r.root === "a")
+    expect(a.length / 2000).toBeLessThan(0.14)
+    expect(a.length).toBeGreaterThan(0)
+    expect(a.every((r) => r.off_path === true && r.no_path === true && r.root_weight === 0.1)).toBe(true)
+    expect(rows.filter((r) => r.root === "b").every((r) => r.off_path === undefined && r.no_path === undefined)).toBe(true)
   })
 
   test("[GUARD] at weight 1 the draw is the uniform one", () => {

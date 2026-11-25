@@ -130,7 +130,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
 // A root with no route to what reaches it (its path names only links nothing here makes) is drawn less often: the
 // owner's stall_rule may name no_path_weight w, in (0, 1], and such a root weighs w against 1 for every other. Never 0:
 // no route is no hold, so a root with none still moves, and a value outside (0, 1] is no weight. With every root of
-// weight 1 the draw is the uniform one, from the same seed.
+// weight 1, each root is equally likely.
 const noRoute = (o: { path?: Path }): boolean => o.path !== undefined && "broken" in o.path
 export const noPathWeight = (shared: Row[]): number => {
   const w = shared.filter((r) => r.role === OWNER && r.shape === STALL_RULE).sort((a, b) => a.seq - b.seq).at(-1)?.no_path_weight
@@ -150,7 +150,7 @@ export const choose = (seed: number, options: Array<{ root: string; path?: Path 
   const weights = roots.map((r) => rootWeight(options, r, w))
   const total = weights.reduce((a, b) => a + b, 0)
   let x = (pick(seed, SCALE) / SCALE) * total
-  const root = weights.every((v) => v === 1) ? roots[pick(seed, roots.length)] : roots.find((_, j) => (x -= weights[j]) < 0) ?? roots[roots.length - 1]
+  const root = roots.find((_, j) => (x -= weights[j]) < 0) ?? roots[roots.length - 1]
   const its = options.flatMap((o, j) => (o.root === root ? [j] : []))
   return its[draw(seed, its.map((j) => posts[j]))]
 }
@@ -399,6 +399,19 @@ export const stalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, 
 export const tickStalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] }>, options: Array<{ root: string }>, held: Held, at: number, now: number): Array<Record<string, unknown>> =>
   stalls(shared, roots, [...options, ...[...held.moving].map((root) => ({ root }))], at, now)
 
+// The tick's draw and the row recording it, at the owner's no-route weight: what chain() writes, so the wiring of the
+// weight into the draw and of the route marks into the row is the one tested.
+// The draw's own time is counted from drawStart, after the draw.
+export const drawn = (arm: string, shared: Row[], options: Option[], post: { at_seq: number; posts: Post[] }, seed: number,
+  timing: Omit<Timing, "draw_ms">, drawStart = performance.now()): { i: number; row: Record<string, unknown> } => {
+  const w = noPathWeight(shared)
+  const i = choose(seed, options, post.posts, w)
+  return { i, row: selectionRow(arm, options, post, seed, i, { ...timing, draw_ms: Math.round(performance.now() - drawStart) }, w) }
+}
+// What a drawn produce is shown of its request (acts.ts), from the option the draw took: its gates, frontier and route.
+export const factOf = (o: Option, write: (row: object) => Promise<Row>, sel: string): Promise<string | undefined> =>
+  actsFactRow(o.pool, o.root, write, sel, o.gated, o.frontier, o.path)
+
 export const chain = async (): Promise<void> => {
   const armRow = (await readUntil(() => loopCall(RECORD_WAIT_EXACT, { shapes: [ARM], after_seq: 0, where: { vessel_id: VESSEL_ID } }), isArm, "arm row")) as Row | undefined
   if (armRow === undefined) return
@@ -445,19 +458,18 @@ export const chain = async (): Promise<void> => {
     const posteriorMs = ms(t2)
     const t3 = performance.now()
     const seed = Date.now() >>> 0
-    const w = noPathWeight(shared)
-    const i = choose(seed, options, post.posts, w)
-    const { cand: a, pool, skipped } = options[i]
-    const sel = await writeRow(selectionRow(arm, options, post, seed, i, {
+    const { i, row } = drawn(arm, shared, options, post, seed, {
       episodes_ms: episodesMs, episodes_reads: episodesReads, choices_ms: choicesMs, posterior_ms: posteriorMs,
-      posterior_reads: posteriorReads, draw_ms: ms(t3), cands: options.length, cells: new Set(cells).size,
-    }, w))
+      posterior_reads: posteriorReads, cands: options.length, cells: new Set(cells).size,
+    }, t3)
+    const { cand: a, pool, skipped } = options[i]
+    const sel = await writeRow(row)
     await recordSkipped(pool, skipped, sel)
     // No selection_ref on a stall row: the tick's selection is another root's move, and records reads a walk failure's
     // selection_ref as that move having failed. A root with any move, a wait included, is not stalled.
     for (const row of tickStalls(shared, roots, options, held, Number(sel.seq), now)) await writeRow(row)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
-    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated, options[i].frontier, options[i].path) : undefined
+    const fact = a.kind === PRODUCE ? await factOf(options[i], writeRow, sel.id) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
   }
 }
