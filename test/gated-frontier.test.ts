@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-// What a producer is shown as gated agrees with the frontier it is shown. A precondition bound to the call's own pointer
-// (a commit needs an edit in its clone) is judged for the target the root's newest made row names: an edit in the clone
-// meets it, and the commit is not shown as gated beside a frontier whose calls name it. An edit in another clone, or no
-// edit yet, leaves it gated, its reasons read against that target.
+// A precondition bound to the call's own pointer (a commit needs an edit in its clone) is judged at the root's newest made
+// row that can bind the call's pointer, taken whole: an edit in the clone meets it, though explanations were made after
+// it, and the commit is not shown as gated. An edit in another clone, or no edit yet, leaves it gated, its reasons read
+// against that target.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 
 const realFetch = globalThis.fetch
@@ -122,5 +122,59 @@ describe("a call gated by a plain group beside one bound to its pointer is named
     expect(gated?.filter((x) => x.startsWith("git_commit (requires land_verdict") && !x.includes("for the frontier's")).length).toBe(1)
     expect(gated?.filter((x) => x.startsWith("git_commit (requires fileEditResult") && x.endsWith(`for the frontier's cwd "/trees/z"`)).length).toBe(1)
     expect(gated?.some((x) => x.endsWith("for the frontier's "))).toBe(false)
+  })
+})
+
+describe("the target is the newest made row that can bind the pointer, though explanations were made after it", () => {
+  // an attempt's explanation is a made row (a schema's target) that carries no pointer field
+  const EXPLAINS = owner("sx", -3, { shape: "shape_schema", target: "attempt_explanation", inputs: ["gap"] })
+  const why = (id: string, seq: number) => ({ shape: "attempt_explanation", id, seq, role: "described", text: "why it went as it did", input_refs: ["g1"] })
+
+  test("[MUST-FAIL] an ok edit, then explanations: git_commit is judged at the edit's clone and is not gated, though the frontier shown is the explanation", async () => {
+    const note: any = { root: "g1" }
+    await applicable([...COMMIT, EXPLAINS, gap, tree, edit("/trees/x"), why("x1", 13), why("x2", 14)], [], Date.now(), note, ANSWERS)
+    expect(note.frontier?.id).toBe("x2")
+    expect(note.gated?.git_commit).toBeUndefined()
+  })
+
+  test("[MUST-FAIL] an edit found already made (applied false, no cwd) after the edit that changed the file, then explanations: not gated", async () => {
+    // local-tools names the clone (cwd) only on an edit that changed a file; asked again, the same edit answers ok with no cwd
+    const again = { shape: "fileEditResult", id: "e2", seq: 13, role: "walk", path: "/trees/x/src/a.ts", ok: true, applied: false, input_refs: ["g1"] }
+    const note: any = { root: "g1" }
+    await applicable([...COMMIT, EXPLAINS, gap, tree, edit("/trees/x"), again, why("x1", 14)], [], Date.now(), note, ANSWERS)
+    expect(note.gated?.git_commit).toBeUndefined()
+  })
+
+  test("[MUST-FAIL] through choices(), the request_acts row written after explanations does not list git_commit as gated", async () => {
+    const rows = [gap, tree, edit("/trees/x"), why("x1", 13), why("x2", 14)]
+    const shared = [owner("ch1", -5, { shape: "channel", calls: [] }), owner("sr", -4, { shape: "shape_schema", target: "request", inputs: ["gap"] }), EXPLAINS, ...COMMIT]
+    const options = await choices(shared, [{ root: gap, rows }], Date.now(), ANSWERS)
+    const mine = options.filter((o) => o.root === "g1")
+    expect(mine.length).toBeGreaterThan(0)
+    for (const o of mine) {
+      const out: any[] = []
+      await actsFactRow(rows, "g1", async (row) => { out.push(row); return { id: "f1" } }, "s1", o.gated, o.frontier)
+      expect(out[0]?.gated?.git_commit).toBeUndefined()
+    }
+  })
+
+  test("[MUST-FAIL] a newer made row with another clone wins over the older edit, explanations after it or not", async () => {
+    const note: any = { root: "g1" }
+    await applicable([...COMMIT, EXPLAINS, gap, tree, edit("/trees/x"), why("x1", 13), { ...tree, id: "w2", seq: 14, cwd: "/trees/z" }, why("x2", 15)],
+      [], Date.now(), note, ANSWERS)
+    expect(note.gated?.git_commit?.length).toBe(1)
+    expect(note.gated?.git_commit?.[0]).toEndWith(`for the frontier's cwd "/trees/z"`)
+  })
+
+  test("[MUST-FAIL] a group binding two fields takes both from one row: a newer row holding only one of them is not merged in", async () => {
+    const both = [
+      owner("rq-read", 1, { shape: "requires", for: "fs_patch", needs: "fileContent", where: { path: { "x-pointer": "path" } }, group: "here" }),
+      owner("rq-clone", 2, { shape: "requires", for: "fs_patch", needs: "gitWorktree", where: { cwd }, group: "here" }),
+    ]
+    const note: any = { root: "g1" }
+    await applicable([...both, EXPLAINS, gap, tree, edit("/trees/x"), { ...tree, id: "w2", seq: 13, cwd: "/trees/z" }, why("x1", 14)], [], Date.now(), note, ANSWERS)
+    const named = note.gated?.fs_patch as string[] | undefined
+    expect(named?.length).toBe(1)
+    expect(named?.[0]).toContain(`for the frontier's path "/trees/x/src/a.ts", cwd "/trees/x"`)
   })
 })

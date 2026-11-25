@@ -320,18 +320,20 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // What a producer is shown before it promises a call (request_acts' gated, acts.ts): each call the owner's requires rows
   // gate, with the groups this same reading finds unmet here, worded as a skip words them. A group bound to the call's
   // own pointer (x-pointer: an edit needs a read of the file it edits, a commit an edit in its clone) is judged for the
-  // target the root's frontier names: the next step takes what the root last made, so its pointer's fields are that
-  // row's. Met there, the call is not gated; unmet, the reasons are read against that target, never against a literal of
-  // another alternative. A frontier lacking a field the group binds names no target, and the group is named as needed
-  // for the target the call names. Shown, not refused: a promise of a gated call stays allowed.
+  // target the root's newest made row that can bind it names: the newest of its own made rows holding every field the
+  // group binds, taken whole, so a pointer is never pieced together from two rows. A row made after it that binds none
+  // of them (an explanation of an attempt) does not move the target, though it is the frontier shown, so the target's
+  // calls and the frontier's may differ. Met there, the call is not gated; unmet, the reasons are read against that
+  // target, never against a literal of another alternative. With no such row, the group is named as needed for the
+  // target the call names. Shown, not refused: a promise of a gated call stays allowed.
   const pointerFields = (rs: Row[]): string[] => [...new Set(rs.flatMap((q) => Object.values((q.where ?? {}) as Record<string, unknown>)
     .flatMap((v) => typeof v === "object" && v !== null && "x-pointer" in v ? [String((v as { "x-pointer": unknown })["x-pointer"])] : [])))]
   const pointerBound = (rs: Row[]): boolean => pointerFields(rs).length > 0
-  const frontierNow = frontierBefore(Number.POSITIVE_INFINITY)
   const frontierTarget = (rs: Row[]): Record<string, unknown> | undefined => {
     const fields = pointerFields(rs)
-    if (frontierNow === undefined || fields.some((f) => frontierNow[f] === undefined)) return undefined
-    return Object.fromEntries(fields.map((f) => [f, frontierNow[f]]))
+    const at = pool.filter((r) => made.has(String(r.shape)) && note.shared?.has(r.id) !== true && fields.every((f) => r[f] !== undefined))
+      .sort((a, b) => a.seq - b.seq).at(-1)
+    return at === undefined ? undefined : Object.fromEntries(fields.map((f) => [f, at[f]]))
   }
   const groupOf = (rs: Row[]): string => String(rs[0]?.group ?? "")
   const gatedFor = (t: string): string[] => {
