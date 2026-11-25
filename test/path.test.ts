@@ -193,6 +193,56 @@ describe("after a refusal, the route runs through what is made after it", () => 
   })
 })
 
+// The cutoff's own rules, each on the smallest owner graph that shows it: a root reached by a call "land", whose
+// verdict-like need V was refused (r 0) at seq 13.
+describe("how a refusal's cutoff is carried down the route", () => {
+  const LAND = owner("cr", -2, { shape: "credits", target: "gap", by_call: "land" })
+  const needs = (id: string, seq: number, call: string, shape: string, more: object = {}) =>
+    owner(id, seq, { shape: "requires", for: call, needs: shape, group: shape, ...more })
+  const REFUSED_V = walkRow("V", "v1", 13, { r: 0 })
+  const route = async (owners: any[], rows: any[], answers: Record<string, string>) => {
+    const note: any = { root: "g1" }
+    await applicable([LAND, ...owners, gapRow(), ...rows].sort((a, b) => a.seq - b.seq), [], 1_000, note, answers)
+    return note.path
+  }
+
+  test("[MUST-FAIL] a cutoff carried down is kept when the need below was refused earlier: the later of the two holds", async () => {
+    // C was refused at 12, under V's refusal at 13. C is made from an E: one made at 12.5 is before 13, so a new E is
+    // made first.
+    const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }), needs("rq-c", 2, "dcall", "C", { where: { ok: true } }),
+      owner("s-c", 3, { shape: "shape_schema", target: "C", inputs: [{ shape: "E", where: { fresh: true } }] })]
+    const rows = [walkRow("C", "c1", 12, { ok: false }), walkRow("E", "e1", 12.5, { fresh: true }), REFUSED_V]
+    expect(await route(owners, rows, { land: "Lout", dcall: "V", ncall: "E" }))
+      .toEqual({ call: "land", calls: ["dcall", "land", "ncall"], next: ["ncall"] })
+  })
+
+  test("[MUST-FAIL] a group with one where is cut whole: its where-less alternative met only before the refusal does not meet it", async () => {
+    const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }),
+      needs("rq-c", 2, "dcall", "C", { where: { ok: true }, group: "g" }), needs("rq-k", 3, "dcall", "K", { group: "g" })]
+    const rows = [walkRow("K", "k1", 11), REFUSED_V]
+    expect(await route(owners, rows, { land: "Lout", dcall: "V", ccall: "C" }))
+      .toEqual({ call: "land", calls: ["ccall", "dcall", "land"], next: ["ccall"] })
+  })
+
+  test("[MUST-FAIL] one call reached both uncut and under a cutoff: each is read on its own, and it is callable now under either", async () => {
+    // land needs a W (uncut: nothing refused it) and a V (refused at 13). Both come through xcall, which needs an R: the
+    // R made at 11 meets xcall uncut, so xcall is callable now for the W. Under V's cutoff it does not, and a new R
+    // (rcall) is on the route too.
+    const owners = [needs("rq-b", 1, "land", "W", { where: { ok: true } }), needs("rq-a", 2, "land", "V", { where: { r: 1 } }),
+      needs("rq-w", 3, "vcall", "W", { where: { ok: true } }), needs("rq-r", 4, "xcall", "R", { where: { ok: true } })]
+    const rows = [walkRow("R", "r1", 11, { ok: true }), REFUSED_V]
+    expect(await route(owners, rows, { land: "Lout", vcall: "V", xcall: "W", rcall: "R" }))
+      .toEqual({ call: "land", calls: ["land", "rcall", "vcall", "xcall"], next: ["rcall", "xcall"] })
+  })
+
+  test("[GUARD] an empty where names nothing: such a group is never cut", async () => {
+    const owners = [needs("rq-v", 1, "land", "V", { where: { r: 1 } }), needs("rq-c", 2, "dcall", "C", { where: {} })]
+    const rows = [walkRow("C", "c1", 11), REFUSED_V]
+    expect(await route(owners, rows, { land: "Lout", dcall: "V", ccall: "C" }))
+      .toEqual({ call: "land", calls: ["dcall", "land"], next: ["dcall"] })
+  })
+})
+
 describe("which owner rows the route reads", () => {
   test("[GUARD] the newest of the owner's credits rows for the root's kind names the call: an older one, or one for another kind, does not", async () => {
     const older = owner("cr0", -9, { shape: "credits", target: "gap", by_call: "git_diff" })

@@ -418,9 +418,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // AFTER A REFUSAL, THE ROUTE RUNS THROUGH WHAT IS MADE AFTER IT. A need whose newest row here fails what is required (a
   // verdict of 0 on the newest tree) is not reached by making it again from the rows that row was made from: the route
   // takes only rows made after it, through the maker's inputs and back through each call it then needs (a diff of a new
-  // tree needs a new commit, a new commit a new edit, a new edit a read made since the file was committed). A
-  // precondition naming no where asks only that its shape be here (a clone, the gap), so no refusal uses it up: it is
-  // never cut. The newest failing row sets the cutoff, so a refusal already followed by a fresh attempt does not hold.
+  // tree needs a new commit, a new commit a new edit, a new edit a read made since the file was committed). A group
+  // none of whose preconditions names a where (an empty one names nothing) asks only that its shape be here (a clone,
+  // the gap), so no refusal uses it up: it is never cut. A group with one that does is cut whole, its where-less
+  // alternatives too, or a row made before the refusal would meet it with nothing new made. The newest failing row
+  // sets the cutoff, so a refusal already followed by a fresh attempt does not hold.
   const hasWhere = (x: unknown): boolean => {
     const w = typeof x === "object" && x !== null ? (x as { where?: unknown }).where : undefined
     return typeof w === "object" && w !== null && Object.keys(w).length > 0
