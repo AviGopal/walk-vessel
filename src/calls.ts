@@ -232,7 +232,9 @@ const recordRefreshed = async (sel: Row, called: string, body: Record<string, un
 const HOP_OUTPUT_MAX = 16 * 1024
 // The same bound described-shape shows an input row whole by: a gitDiff capped at 64 KiB of text, JSON-escaped.
 const RECORDED_MAX = 96 * 1024
-const bounded = (value: unknown, max: number): unknown => {
+// A class a tool names for its own failure is a key, not a text: past this length it is not kept.
+const CLASS_MAX = 64
+const bounded =(value: unknown, max: number): unknown => {
   const whole = JSON.stringify(value ?? null)
   return whole.length <= max ? value : { cut: true, bytes: whole.length, start: whole.slice(0, max) }
 }
@@ -313,6 +315,14 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       const sent = r.ok ? {} : ((): Record<string, unknown> => { try { return JSON.parse(r.text) as Record<string, unknown> } catch { return {} } })()
       const unserved = str((sent.failure as { unserved?: unknown } | undefined)?.unserved) ?? str(sent.unserved)
         ?? str(answer.unserved) ?? str(inner.unserved)
+      // What a tool's failure was about, as fields a where can read by equality: the call made and the path it named, from
+      // the pointer sent; and the class of failure the tool named for itself (fs_edit: which kind of miss), from its answer,
+      // never from the body cut below. Only a tool's (a call, or a template's call in a run): a produce's answer is a model's.
+      const tool = kind === CALL || kind === RUN
+      const call = tool ? str(pointer.type) : undefined
+      const path = tool ? str(pointer.path) : undefined
+      const named = str(answer.class) ?? str(inner.class)
+      const klass = named !== undefined && named.length <= CLASS_MAX ? named : undefined
       // How a produce's model answer ended (stop_reason, output_tokens), as described-shape put them on the failure it built
       // itself: read from a non-200 envelope only, so a model's own text never sets them. Kept on the row, so a reader
       // tells an answer cut at the output limit from a complete one that was wrong.
@@ -351,6 +361,9 @@ const once = async (sel: Row, kind: string, pointer: Record<string, unknown>, ca
       await writeRow({
         shape: FAILURE, call_id: callId, selection_ref: sel.id, status: r.status,
         body: r.ok ? JSON.stringify(r.body).slice(0, 1000) : r.text, input_refs: refs,
+        ...(call !== undefined ? { call } : {}),
+        ...(path !== undefined ? { path } : {}),
+        ...(klass !== undefined ? { class: klass } : {}),
         ...(typeof refused === "string" ? { refused } : {}),
         ...(waits ? { waits_for: "person" } : {}),
         ...(unserved !== undefined ? { unserved } : {}),
