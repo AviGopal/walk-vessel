@@ -42,5 +42,7 @@ export const NEWS_KEY = "news_key"
 export const CLONE_BINDING = "clone_binding"
 // The owner's word on when a root that has no move is said to be stalled: after how many store rows since its newest.
 export const STALL_RULE = "stall_rule"
+// The owner's word on what reaches a root of a kind (target) and by which call (by_call): a gap by a landing.
+export const CREDITS = "credits"
 // The walk's word (a failure's kind) for a root that sat with no move for the stall_rule's count: its own, as skip is.
 export const STALL = "stall"

@@ -29,6 +29,8 @@ export type Cand = {
   seen_key?: string
   /** For a call: no call the request's frontier is taken by is this one (applicable.ts), kept on its selection. */
   out_of_scope?: true
+  // a call that is on no route back from the call reaching its root (applicable.ts, Path): offered all the same
+  off_path?: true
   /** A move the owner's rhythm made due (a scheduled template's run, a paced produce): offered beside open roots too. */
   rhythm?: true
 }

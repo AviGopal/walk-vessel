@@ -6,7 +6,7 @@ import { callProblem, shownValue } from "./inputs"
 import { repeatKeysOf, stable } from "./acts"
 import { VESSEL_ID } from "./config"
 import {
-  ACTIVITY_TEMPLATE, ARM, CHANNEL, CLONE_BINDING, DUE, FAILURE, HOP, INFRA_WINDOW, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
+  ACTIVITY_TEMPLATE, ARM, CHANNEL, CLONE_BINDING, CREDITS, DUE, FAILURE, HOP, INFRA_WINDOW, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
   DESCRIBED, OWNER, PERSON, WALK,
 } from "./shapes"
 
@@ -46,7 +46,10 @@ export type Skipped = { id: string; unserved: string[]; of?: "request"; unbound?
 // gated (out): each call the owner's requires rows gate, with what it still needs here (see where it is set).
 // frontier (out): the root's newest made row and the calls that take it (see where it is set).
 export type Frontier = { id?: string; shape?: string; calls: string[]; widened: boolean }
-export type Seen = { overdue?: boolean; awaits?: boolean; dues?: number[]; shared?: ReadonlySet<string>; root?: string; head?: number; gated?: Record<string, string[]>; frontier?: Frontier }
+// The route back from the call that reaches a root (the owner's credits row for the root's kind): the calls on it, those
+// of them callable now, or, with no route, the links nothing here can make.
+export type Path = { call: string; calls: string[]; next: string[] } | { call: string; broken: string[] }
+export type Seen = { overdue?: boolean; awaits?: boolean; dues?: number[]; shared?: ReadonlySet<string>; root?: string; head?: number; gated?: Record<string, string[]>; frontier?: Frontier; path?: Path }
 
 // What an owner's install row installed: each entry's repo and vessel.
 const installedBy = (x: Row): Array<{ repo?: unknown; vessel?: unknown }> =>
@@ -148,6 +151,39 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const field = typeof v === "object" && v !== null ? (v as { "x-pointer"?: unknown })["x-pointer"] : undefined
     return typeof field === "string" ? pointer?.[field] : v
   }
+  // A where value may say the row's field lies outside a list ({"x-outside": {shape, field}}): no entry of the list in the
+  // newest owner row of that shape covers it, an entry ending "/" covering the tree under it, any other only itself (as
+  // the gate reads its protected list). The row's field may be dotted (meta.edit_site) and a string or a list of them.
+  // Not judged, so met, when the row names no such field (a gap not yet localized is not out of reach) or no owner row
+  // holds the list: the gate stays the guard. The shape, the field and the list are the owner's; the walk names none.
+  type Outside = { shape: string; field: string }
+  const outsideSpec = (v: unknown): Outside | undefined => {
+    const o = typeof v === "object" && v !== null ? (v as { "x-outside"?: unknown })["x-outside"] : undefined
+    if (typeof o !== "object" || o === null) return undefined
+    const { shape, field } = o as Record<string, unknown>
+    return typeof shape === "string" && typeof field === "string" ? { shape, field } : undefined
+  }
+  const dotted = (r: Row, k: string): unknown => k.split(".").reduce<unknown>((x, step) =>
+    typeof x === "object" && x !== null ? (x as Record<string, unknown>)[step] : undefined, r)
+  const entryCovering = (rel: string, list: string[]): string | undefined => list.find((e) => e.endsWith("/") ? rel === e.slice(0, -1) || rel.startsWith(e) : rel === e)
+  // the value of the row's field and the entry covering it, or undefined when nothing covers it or it is not judged
+  const coveredBy = (r: Row, k: string, spec: Outside): [string, string] | undefined => {
+    const list = pool.filter((x) => x.shape === spec.shape && x.role === OWNER).sort((a, b) => a.seq - b.seq).at(-1)?.[spec.field]
+    if (!Array.isArray(list)) return undefined
+    const entries = list.filter((e): e is string => typeof e === "string")
+    for (const value of [dotted(r, k)].flat()) {
+      const e = typeof value === "string" ? entryCovering(value, entries) : undefined
+      if (e !== undefined) return [String(value), e]
+    }
+    return undefined
+  }
+  // whether one field of a row meets one where value: every reader of a where reads it here
+  const fieldMeets = (r: Row, k: string, v: unknown, pointer: Record<string, unknown> | undefined): boolean => {
+    const spec = outsideSpec(v)
+    if (spec !== undefined) return coveredBy(r, k, spec) === undefined
+    const want = boundValue(v, pointer)
+    return want !== undefined && JSON.stringify(r[k]) === JSON.stringify(want)
+  }
   // an input entry {shape, where} is here only when a row of its shape meets its where (an older tree's diff is not a
   // diff of the clone's newest tree); an entry naming no where is here when its shape is, as before. With latest_by, only
   // the latest row per value of that field is read, and where is met by it or not at all: what a thing stands at now, as
@@ -163,10 +199,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const where = typeof e === "object" && e !== null ? (e as { where?: unknown }).where : undefined
     if (typeof where !== "object" || where === null) return have.has(shapeOf(e))
     const by = (e as { latest_by?: unknown }).latest_by
-    return latestPer(pool.filter((r) => r.shape === shapeOf(e)), by).some((r) => Object.entries(where as Record<string, unknown>).every(([k, v]) => {
-      const want = boundValue(v, undefined)
-      return want !== undefined && JSON.stringify(r[k]) === JSON.stringify(want)
-    }))
+    return latestPer(pool.filter((r) => r.shape === shapeOf(e)), by).some((r) => Object.entries(where as Record<string, unknown>).every(([k, v]) => fieldMeets(r, k, v, undefined)))
   }
   const ready = schemas.filter((s) => [s.inputs].flat().every(entryHere))
   // The owner's preconditions on calls: a shape some requires row names is called (on its own or in a template) only when
@@ -193,8 +226,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     .filter((r) => made.has(String(r.shape)) && note.shared?.has(r.id) !== true && r.seq < at).sort((a, b) => a.seq - b.seq).at(-1)
   const takenBy = (q: Row, f: Row): boolean => Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => {
     if (typeof v === "object" && v !== null && "x-pointer" in v) return true
-    const want = boundValue(v, undefined)
-    return want !== undefined && JSON.stringify(f[k]) === JSON.stringify(want)
+    return fieldMeets(f, k, v, undefined)
   })
   const takers = (f: Row | undefined): string[] =>
     f === undefined ? [] : [...new Set(reqs.filter((q) => String(q.needs) === String(f.shape) && takenBy(q, f)).map((q) => String(q.for)))].sort()
@@ -219,10 +251,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   }
   const meets = (q: Row, pointer?: Record<string, unknown>): boolean => {
     return latestOf(q).some((x) =>
-      Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => {
-        const want = ofCall(v, pointer)
-        return want !== undefined && JSON.stringify(x[k]) === JSON.stringify(want)
-      }))
+      Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => fieldMeets(x, k, v, pointer)))
   }
   // Rows may name a group: rows of one group are alternatives (any one met meets the group), and every group must be met.
   // A row naming none is in the one group every row was in before groups. The group is the owner's to name, as the
@@ -285,6 +314,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // latest rows failing the same field the same way give one reason and two rows, and both are named (qa).
   const against = (q: Row, pointer?: Record<string, unknown>): Array<[string, string]> => latestOf(q).flatMap((x): Array<[string, string]> => {
     for (const [k, v] of Object.entries((q.where ?? {}) as Record<string, unknown>)) {
+      const spec = outsideSpec(v)
+      if (spec !== undefined) {
+        const hit = coveredBy(x, k, spec)
+        if (hit !== undefined) return [[`${k}: ${val(hit[0])} is under ${spec.shape}'s ${val(hit[1])}`, x.id]]
+        continue
+      }
       const toCall = typeof v === "object" && v !== null && "x-pointer" in v
       const newest = latestSpec(v) !== undefined
       const want = ofCall(v, pointer)
@@ -355,6 +390,64 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   note.gated = Object.fromEntries([...new Set(reqs.map((q) => String(q.for)))].sort()
     .map((t) => [t, gatedFor(t)])
     .filter(([, needs]) => needs.length > 0))
+  // THE ROUTE BACK FROM WHAT REACHES THE ROOT. The owner's credits row for the root's kind names the call whose ending
+  // reaches it (by_call: a gap is reached by a landing). From that call the route goes back through each group of its
+  // requires rows not met here (any one alternative reachable reaches the group), to the shape the group needs, to what
+  // makes the shape (a schema whose inputs are here or reachable) or a call that answers with it, and on to that call's
+  // own requires, as the chain a skip names goes, but past the call. A group bound to the call's pointer is judged at the
+  // target the root's newest made row that can bind it names, as the gate judges it. A shape some group needs that
+  // nothing makes and no call answers with (a gap is only a detector's) is a link the root cannot make: if the call
+  // reaching the root needs one through every alternative, there is no route, and those links are named. With a route,
+  // the calls on it and those of them callable now (every group met) are named, for the producer to take the next step
+  // toward the root rather than any open call. A root kind with no credits row has no route named, as before.
+  const groupsFor = (c: string): Row[][] => {
+    const groups = new Map<string, Row[]>()
+    for (const q of reqs.filter((x) => String(x.for) === c)) groups.set(String(q.group ?? ""), [...(groups.get(String(q.group ?? "")) ?? []), q])
+    return [...groups.values()]
+  }
+  const groupMet = (rs: Row[]): boolean => {
+    if (!pointerBound(rs)) return rs.some((q) => meets(q))
+    const p = frontierTarget(rs)
+    return p !== undefined && rs.some((q) => meets(q, p))
+  }
+  const pathFor = (by: string): Path => {
+    const onRoute = new Set<string>()
+    const broken: string[] = []
+    const callMemo = new Map<string, boolean>()
+    const shapeMemo = new Map<string, boolean>()
+    const reachShape = (shape: string, why: string): boolean => {
+      const known = shapeMemo.get(shape)
+      if (known !== undefined) return known
+      // a shape in progress is not a break: the route that needs it is still being read
+      shapeMemo.set(shape, true)
+      const makers = schemas.filter((x) => String(x.target) === shape)
+      const callers = Object.keys(answers).filter((c) => answers[c] === shape).sort()
+      const ok = makers.some((x) => [x.inputs].flat().every((e) => entryHere(e) || reachShape(shapeOf(e), `${shapeOf(e)} for ${shape}`)))
+        || callers.some((c) => reachCall(c))
+      if (makers.length === 0 && callers.length === 0) broken.push(why)
+      shapeMemo.set(shape, ok)
+      return ok
+    }
+    const reachCall = (c: string): boolean => {
+      const known = callMemo.get(c)
+      if (known !== undefined) return known
+      callMemo.set(c, true)
+      const ok = groupsFor(c).every((rs) => groupMet(rs) || rs.some((q) => {
+        const reasons = [...new Set(against(q).map(([reason]) => reason))]
+        return reachShape(String(q.needs), `${String(q.needs)} for ${c}${reasons.length > 0 ? `: ${reasons.join("; ")}` : ""}`)
+      }))
+      callMemo.set(c, ok)
+      if (ok) onRoute.add(c)
+      return ok
+    }
+    if (!reachCall(by)) return { call: by, broken: [...new Set(broken)] }
+    const calls = [...onRoute].sort()
+    return { call: by, calls, next: calls.filter((c) => groupsFor(c).every(groupMet)) }
+  }
+  const rootKind = note.root === undefined ? undefined : byId.get(note.root)?.shape
+  const reachedBy = rootKind === undefined ? undefined : pool.filter((r) => r.shape === CREDITS && r.role === OWNER && String(r.target) === String(rootKind))
+    .sort((a, b) => a.seq - b.seq).at(-1)?.by_call
+  if (typeof reachedBy === "string" && reachedBy !== "") note.path = pathFor(reachedBy)
   // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
   // came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that ended, it
   // is new information for a schema that reads failures, and it settles the request that made the call: the same pointer
@@ -944,5 +1037,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     }))
     : []
 
-  return [...produce.flat(), ...call.flat(), ...chained.flat(), ...run, ...waitFor]
+  // A call on no route is offered all the same, marked, for the producer and the grades to read: no route is no reason
+  // to hold a root.
+  const route = note.path
+  const offRoute = (c: Cand): Cand => route === undefined || c.kind !== CALL || ("calls" in route && route.calls.includes(String(c.pointer.type)))
+    ? c : { ...c, off_path: true }
+  return [...produce.flat(), ...call.flat().map(offRoute), ...chained.flat().map(offRoute), ...run, ...waitFor]
 }

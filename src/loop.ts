@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 import { actsFactRow, frontierFields } from "./acts"
-import { type Frontier, type Seen, type Skipped, applicable, installsRepoOrWalk } from "./applicable"
+import { type Frontier, type Path, type Seen, type Skipped, applicable, installsRepoOrWalk } from "./applicable"
 import { type Cand, READ_AGAIN_MS, READ_WAIT_MS, type Row, execute, loopCall, recordSkipped, shapeAnswers, stopped, writeRow } from "./calls"
 import { VESSEL_ID } from "./config"
 import { type Post, draw, pick } from "./draw"
 import { ARM, DESCRIBED, DUE, FAILURE, INFRA_WINDOW, OWNER, POSTERIOR, PRODUCE, RECORD_READ, RECORD_WAIT_EXACT, RHYTHM, SELECTION, STALL, STALL_RULE, WAIT_FOR, WALK } from "./shapes"
 
 type Episodes = { shared: Row[]; roots: Array<{ root: Row; rows: Row[]; awaits?: boolean; dues?: number[] }> }
-type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]>; frontier?: Frontier; rootCell?: string }
+type Option = { cand: Cand; pool: Row[]; context: string[]; cell: string; skipped: Skipped[]; root: string; gated?: Record<string, string[]>; frontier?: Frontier; path?: Path; rootCell?: string }
 
 // How long a root has waited, coarsely: 0 for its first minute, then one more per doubling of minutes. Context for
 // selection to learn from, never an order.
@@ -76,6 +76,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     overdue = overdue || seen.overdue === true
     const gated = seen.gated
     const frontier = seen.frontier
+    const path = seen.path
     // A move's cell is the move in what it reads: the shapes of rows the walk did not write itself that the move consumes
     // (cand.reads), then the root's asker and age. Keyed on every shape in the pool, as it was, any new shape anywhere (an
     // owner's new row kind, a grade nothing here reads) made every cell of every root new and its learning start over.
@@ -86,7 +87,7 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
     const rootCell = `root:${String(root.shape)}|asker:${String(root.role)},id:${root.id}`
     for (const cand of cands) {
       const context = [...[...new Set(cand.reads ?? [])].filter((s) => present.has(s)).sort(), ...tail]
-      const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id, gated, frontier,
+      const o: Option = { cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped, root: root.id, gated, frontier, path,
         ...(cand.kind !== WAIT_FOR ? { rootCell } : {}) }
       if (cand.kind !== WAIT_FOR) { out.push(o); continue }
       const seen = waits.get(cand.id)
@@ -126,14 +127,30 @@ export const choices = async (shared: Row[], roots: Array<{ root: Row; rows: Row
   return [capped({ cand, pool, context, cell: [cand.id, context.join(",")].join("|"), skipped: [], root: arm.id })]
 }
 
+// A root with no route to what reaches it (its path names only links nothing here makes) is drawn less often: the
+// owner's stall_rule may name no_path_weight w, in (0, 1], and such a root weighs w against 1 for every other. Never 0:
+// no route is no hold, so a root with none still moves, and a value outside (0, 1] is no weight. With every root of
+// weight 1 the draw is the uniform one, from the same seed.
+const noRoute = (o: { path?: Path }): boolean => o.path !== undefined && "broken" in o.path
+export const noPathWeight = (shared: Row[]): number => {
+  const w = shared.filter((r) => r.role === OWNER && r.shape === STALL_RULE).sort((a, b) => a.seq - b.seq).at(-1)?.no_path_weight
+  return typeof w === "number" && w > 0 && w <= 1 ? w : 1
+}
+export const rootWeight = (options: Array<{ root: string; path?: Path }>, root: string, w: number): number =>
+  options.some((o) => o.root === root && noRoute(o)) ? w : 1
+const SCALE = 2 ** 30
 /**
- * Which option to take: a root first, uniformly among the roots with a move, then a move within it by its posterior. A
+ * Which option to take: a root first, uniformly among the roots with a move (one with no route at its weight, above),
+ * then a move within it by its posterior. A
  * root whose many cells score well cannot take every draw from one with a single move, and every root is drawn. Both
  * from the seed the selection records, so the choice can be replayed.
  */
-export const choose = (seed: number, options: Array<{ root: string }>, posts: Post[]): number => {
+export const choose = (seed: number, options: Array<{ root: string; path?: Path }>, posts: Post[], w = 1): number => {
   const roots = [...new Set(options.map((o) => o.root))]
-  const root = roots[pick(seed, roots.length)]
+  const weights = roots.map((r) => rootWeight(options, r, w))
+  const total = weights.reduce((a, b) => a + b, 0)
+  let x = (pick(seed, SCALE) / SCALE) * total
+  const root = weights.every((v) => v === 1) ? roots[pick(seed, roots.length)] : roots.find((_, j) => (x -= weights[j]) < 0) ?? roots[roots.length - 1]
   const its = options.flatMap((o, j) => (o.root === root ? [j] : []))
   return its[draw(seed, its.map((j) => posts[j]))]
 }
@@ -192,7 +209,7 @@ export type Timing = { episodes_ms: number; episodes_reads: number; choices_ms: 
  * records compares reads it (the cell and its context, pool_refs, input_refs, a, from, root), so two ticks that differ
  * only in how long they took make the same choice look the same.
  */
-export const selectionRow = (arm: string, options: Option[], post: { at_seq: number; posts: Post[] }, seed: number, i: number, timing: Timing): Record<string, unknown> => {
+export const selectionRow = (arm: string, options: Option[], post: { at_seq: number; posts: Post[] }, seed: number, i: number, timing: Timing, w = 1): Record<string, unknown> => {
   const { cand: a, context, root } = options[i]
   return {
     shape: SELECTION,
@@ -206,12 +223,15 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
     a: a.id,
     ...(a.from ? { from: a.from } : {}),
     ...(a.out_of_scope ? { out_of_scope: true } : {}),
+    ...(a.off_path ? { off_path: true } : {}),
     cell: options[i].cell,
     context,
     // Which way the cell was keyed: "reads" (the move's own inputs). Before it, every shape in the root's pool.
     cell_scheme: "reads",
     root,
     ...(options[i].rootCell !== undefined ? { root_cell: options[i].rootCell } : {}),
+    // A root with no route, and the weight it was drawn under, so the lean is on the row it changed.
+    ...(noRoute(options[i]) ? { no_path: true, root_weight: rootWeight(options, root, w) } : {}),
     // The root's newest made row and the calls that take it (applicable.ts), so what a request was allowed is on the row.
     ...(options[i].frontier !== undefined ? frontierFields(options[i].frontier!) : {}),
     // What the selection is about: its root. The rows the move had are handed to its call (a produce, a run) and not
@@ -425,18 +445,19 @@ export const chain = async (): Promise<void> => {
     const posteriorMs = ms(t2)
     const t3 = performance.now()
     const seed = Date.now() >>> 0
-    const i = choose(seed, options, post.posts)
+    const w = noPathWeight(shared)
+    const i = choose(seed, options, post.posts, w)
     const { cand: a, pool, skipped } = options[i]
     const sel = await writeRow(selectionRow(arm, options, post, seed, i, {
       episodes_ms: episodesMs, episodes_reads: episodesReads, choices_ms: choicesMs, posterior_ms: posteriorMs,
       posterior_reads: posteriorReads, draw_ms: ms(t3), cands: options.length, cells: new Set(cells).size,
-    }))
+    }, w))
     await recordSkipped(pool, skipped, sel)
     // No selection_ref on a stall row: the tick's selection is another root's move, and records reads a walk failure's
     // selection_ref as that move having failed. A root with any move, a wait included, is not stalled.
     for (const row of tickStalls(shared, roots, options, held, Number(sel.seq), now)) await writeRow(row)
     // A produce is also shown what its request has done (acts.ts): a row recomputed from the pool, written on change.
-    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated, options[i].frontier) : undefined
+    const fact = a.kind === PRODUCE ? await actsFactRow(pool, options[i].root, writeRow, sel.id, options[i].gated, options[i].frontier, options[i].path) : undefined
     await execute(a, sel, [...pool.map((r) => r.id), ...(fact !== undefined && !pool.some((r) => r.id === fact) ? [fact] : [])])
   }
 }
