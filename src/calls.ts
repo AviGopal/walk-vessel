@@ -232,9 +232,11 @@ const recordRefreshed = async (sel: Row, called: string, body: Record<string, un
 const HOP_OUTPUT_MAX = 16 * 1024
 // The same bound described-shape shows an input row whole by: a gitDiff capped at 64 KiB of text, JSON-escaped.
 const RECORDED_MAX = 96 * 1024
-// A class a tool names for its own failure is a key, not a text: past this length it is not kept.
+// A class a tool names for its own failure is a key, not a text: past this length it is not kept. Any tool's answer is
+// read for it, and the detector keys gaps by it, so a tool that put a sentence there would split one failure into as
+// many classes as it has wordings. A key of a few words fits (fs_edit's longest, anchor_mismatch, is 15).
 const CLASS_MAX = 64
-const bounded =(value: unknown, max: number): unknown => {
+const bounded = (value: unknown, max: number): unknown => {
   const whole = JSON.stringify(value ?? null)
   return whole.length <= max ? value : { cut: true, bytes: whole.length, start: whole.slice(0, max) }
 }

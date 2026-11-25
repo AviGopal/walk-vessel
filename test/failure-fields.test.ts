@@ -52,8 +52,12 @@ describe("what a tool's failure was about", () => {
   test("[GUARD] a class that is no key (not a string, empty, or longer than 64) is not kept; a call naming no path has none", async () => {
     for (const c of [7, "", "k".repeat(65)]) expect((await run(200, { error: "no", class: c }))?.class).toBeUndefined()
     const status = { id: "call/git_status", kind: "call", pointer: { type: "git_status", cwd: "/t" } }
-    const f = await run(200, { error: "no" }, status)
-    expect(f?.call).toBe("git_status")
-    expect(f?.path).toBeUndefined()
+    expect((await run(200, { error: "no" }, status))?.path).toBeUndefined()
+  })
+
+  test("[MUST-FAIL] a class of exactly 64 is kept; a call naming no path still names its call", async () => {
+    expect((await run(200, { error: "no", class: "k".repeat(64) }))?.class).toBe("k".repeat(64))
+    const status = { id: "call/git_status", kind: "call", pointer: { type: "git_status", cwd: "/t" } }
+    expect((await run(200, { error: "no" }, status))?.call).toBe("git_status")
   })
 })
