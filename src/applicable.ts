@@ -839,7 +839,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     skipped.push({ id: req.id, of: "request", against_refs: [was.id],
       unserved: [`${type}: it answered as row ${was.seq} did, so it changed nothing the walk can tell apart; the same call again answers the same, and a different pointer is a different call`] })
   }
-  // A call refused for the request's state (its failure blames the request, as records stamps it) settles that call on
+  // A call refused for the request's state (its failure blames the request, as records stamps it), or whose answer was
+  // too_big to record (stamped blames: "walk" by records, yet deterministic over the same inputs), settles that call on
   // this root, one rule for a request's call and a template's run: over the same inputs the same call gets the same
   // answer, so neither is made again until something new comes. The call is its shape and its arguments as sent (a run's,
   // as its hop recorded them; a request's pointer less the walk's forwarding keys), keys in order, so five templates or
@@ -849,7 +850,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // fields), so rewording buys one call, and the refusal it repeats is in the producer's view. New: a walk result that is
   // news (brought: a commit made in the clone is), a row from outside the walk a producer reads (learned), or, for a run,
   // a row of a shape it takes in from outside the walk.
-  const refusedHere = (f: Row): boolean => f.shape === FAILURE && f.role === WALK && f.blames === "request"
+  const refusedHere = (f: Row): boolean => f.shape === FAILURE && f.role === WALK && (f.blames === "request" || f.kind === "too_big")
   const canon = (v: unknown): unknown => Array.isArray(v) ? v.map(canon) : typeof v === "object" && v !== null
     ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])])) : v
   const callKey = (shape: string, args: unknown): string => JSON.stringify([shape, canon(args)])
@@ -858,18 +859,20 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     return args
   }
   const startedOf = new Map(pool.filter((h) => h.shape === HOP && h.phase === STARTED).map((h) => [String(h.call_id), h]))
-  const refused = pool.filter(refusedHere).flatMap((f) => {
+  const refused = pool.filter(refusedHere).sort((a, b) => a.seq - b.seq).flatMap((f) => {
     const sel = byId.get(String(f.selection_ref))
     const a = String(sel?.a ?? "")
     if (a.startsWith(`${RUN}/`)) {
       const h = startedOf.get(String(f.call_id))
-      return h === undefined ? [] : [{ seq: f.seq, key: callKey(String(h.pointer_type), h.args) }]
+      return h === undefined ? [] : [{ seq: f.seq, kind: f.kind, key: callKey(String(h.pointer_type), h.args) }]
     }
     // a call no request asked for (the chain step, below) is held by its frontier row instead: there is no request
     // pointer to key it by
-    if (a.startsWith(`${CALL}/`) && typeof sel?.from === "string") {
-      const p = (byId.get(String(sel?.from))?.pointer ?? {}) as Record<string, unknown>
-      return [{ seq: f.seq, key: callKey(String(p.type ?? a.slice(CALL.length + 1)), argsOf(p)) }]
+    const reqId = typeof sel?.from === "string" ? sel.from : sel === undefined && typeof f.request_ref === "string" ? f.request_ref : undefined
+    if (reqId !== undefined && (a.startsWith(`${CALL}/`) || sel === undefined)) {
+      const p = (byId.get(reqId)?.pointer ?? {}) as Record<string, unknown>
+      const type = typeof p.type === "string" ? p.type : a.startsWith(`${CALL}/`) ? a.slice(CALL.length + 1) : undefined
+      return type === undefined ? [] : [{ seq: f.seq, kind: f.kind, key: callKey(type, argsOf(p)) }]
     }
     return []
   })
@@ -892,7 +895,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const prior = reopened ? undefined : settled(asKey)
     const over = frontierOf(frontierBefore(r.seq))
     const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
-      ...(prior !== undefined ? [`${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
+      ...(prior !== undefined ? [prior.kind === "too_big"
+        ? `${type}: this same call answered too_big here (row ${prior.seq}) and nothing new has come since; read or change it in parts (a call answering a line range)`
+        : `${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
     const behind = refsOfReasons(gate)
     if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request", ...(behind.length > 0 ? { against_refs: behind } : {}) })
     return [r].filter(() => served && !answered.has(r.id) && gate.length === 0).map((): Cand => ({
