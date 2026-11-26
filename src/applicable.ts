@@ -1066,11 +1066,36 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const key = callKey(first.shape, b.value)
     return settled(key, takesIn(r)) !== undefined
   }
+  // A completed non-failing run settles every sibling template making the exact same bound call sequence until a
+  // non-walk row of a shape it takes in arrives (mirroring ran(r) and sameRefused(r, i)).
+  const endedCallIds = new Set(pool.filter((h) => h.shape === HOP && h.phase === ENDED).map((h) => String(h.call_id)))
+  const failedSelIds = new Set(pool
+    .filter((x) => x.shape === FAILURE && x.role === WALK && typeof x.selection_ref === "string" && x.kind !== "skip" && x.ends === undefined)
+    .map((x) => String(x.selection_ref)))
+  const answeredRuns = new Map<string, number>()
+  for (const s of pool.filter((x) => x.shape === SELECTION && String(x.a).startsWith(`${RUN}/`) && !failedSelIds.has(x.id)).sort((a, b) => a.seq - b.seq)) {
+    const starts = pool.filter((h) => h.shape === HOP && h.phase === STARTED && String(h.selection_ref) === s.id).sort((a, b) => a.seq - b.seq)
+    if (starts.length > 0 && starts.every((h) => endedCallIds.has(String(h.call_id)))) {
+      answeredRuns.set(JSON.stringify(starts.map((h) => callKey(String(h.pointer_type), h.args))), s.seq)
+    }
+  }
+  const sameAnswered = (r: Row, i: number): boolean => {
+    const calls = r.calls as Inner[]
+    if (calls.length === 0) return false
+    const bound = calls.map((c) => bind(c.pointer, { sig: { in: inputs[i] }, calls: [] }))
+    if (bound.some((b) => b.unbound.length > 0)) return false
+    const lastSeq = answeredRuns.get(JSON.stringify(calls.map((c, k) => callKey(c.shape, bound[k].value))))
+    return lastSeq !== undefined && !pool.some((x) => x.seq > lastSeq && takesIn(r)(x))
+  }
+  // On a routed root (note.path carries route.calls), unscheduled templates are offered only when their calls touch
+  // the route; scheduled rhythm templates and unrouted roots stay governed by their existing rules.
+  const route = note.path
+  const onRoute = (r: Row): boolean => !(route !== undefined && "calls" in route) || (r.calls as Inner[]).some((c) => route.calls.includes(c.shape))
   const run = templates
     .map((r, i) => ({ r, i }))
     .filter(({ i }) => unserved[i].length === 0 && unbound[i].length === 0)
     // a scheduled template's re-run is its rhythm's (due, above), not this rule's
-    .filter(({ r, i }) => scheduled.has(r.id) || (!ran(r) && !sameRefused(r, i)))
+    .filter(({ r, i }) => scheduled.has(r.id) || (onRoute(r) && !ran(r) && !sameRefused(r, i) && !sameAnswered(r, i)))
     .map(({ r, i }): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in], inputs: inputs[i],
       ...(scheduled.has(r.id) ? { rhythm: true as const } : {}) }))
 
@@ -1115,7 +1140,6 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
 
   // A call on no route is offered all the same, marked, for the producer and the grades to read: no route is no reason
   // to hold a root.
-  const route = note.path
   const offRoute = (c: Cand): Cand => route === undefined || c.kind !== CALL || ("calls" in route && route.calls.includes(String(c.pointer.type)))
     ? c : { ...c, off_path: true }
   return [...produce.flat(), ...call.flat().map(offRoute), ...chained.flat().map(offRoute), ...run, ...waitFor]
