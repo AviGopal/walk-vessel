@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto"
 import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
-import { type Cand, ENDED, STARTED, type Inner, type Row, declaredInputs, exists, servers } from "./calls"
+import { type Cand, type ChildTemplate, ENDED, MAX_RUN_DEPTH, STARTED, type Inner, type Row, declaredInputs, exists, servers } from "./calls"
 import { callProblem, shownValue } from "./inputs"
 import { repeatKeysOf, stable } from "./acts"
 import { VESSEL_ID } from "./config"
@@ -970,24 +970,64 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const ran = pool.filter((x) => x.shape === SELECTION && String(x.a) === `${RUN}/${t.id}`).reduce((m, x) => Math.max(m, x.seq), 0)
     return head - Math.max(ran, r.seq) >= Number(r.every_rows)
   }
+  const byTplId = new Map(pool.filter((x) => TEMPLATES.has(x.shape)).map((x) => [x.id, x]))
   const templates = pool.filter((r) => TEMPLATES.has(r.shape)).filter((r) => !scheduled.has(r.id) || due(r))
     .filter((r) => (r.sig as { in: string[] }).in.every((x) => have.has(x)))
+  const tplRefOf = (c: Inner): string | undefined => {
+    const ref = (c.pointer as { template_ref?: unknown } | undefined)?.template_ref
+    return typeof ref === "string" && ref.length > 0 ? ref : undefined
+  }
+  const INVALID_TPL_REF = "activity_template (invalid, cyclic, or max-depth template_ref)"
+  const walkTpl = (
+    calls: Inner[],
+    seen: ReadonlySet<string>,
+    depth: number,
+  ): { leaves: Inner[]; invalid: boolean; refs: Set<string> } => {
+    const leaves: Inner[] = []
+    const refs = new Set<string>()
+    let invalid = false
+    for (const c of calls) {
+      if (c.shape === ACTIVITY_TEMPLATE) {
+        const ref = tplRefOf(c)
+        const child = ref !== undefined ? byTplId.get(ref) : undefined
+        if (ref === undefined || child === undefined || seen.has(ref) || depth >= MAX_RUN_DEPTH) {
+          invalid = true
+          continue
+        }
+        refs.add(ref)
+        const sub = walkTpl(child.calls as Inner[], new Set([...seen, ref]), depth + 1)
+        leaves.push(...sub.leaves)
+        if (sub.invalid) invalid = true
+        for (const k of sub.refs) refs.add(k)
+      } else {
+        leaves.push(c)
+      }
+    }
+    return { leaves, invalid, refs }
+  }
+  const walked = templates.map((r) => walkTpl(r.calls as Inner[], new Set([r.id]), 0))
   // A call to a shape the owner's schemas produce (an answer, a due) goes through a channel: one that names none (a
   // template that replayed a stored answer row as its pointer) is refused every time, so it is not run either, and is
   // named the same way, as "<shape> (no channel)".
   const produced = new Set(schemas.map((s) => String(s.target)))
-  const unserved = await Promise.all(templates.map(async (r) => {
-    const calls = r.calls as Inner[]
-    const shapes = [...new Set(calls.map((c) => c.shape))]
+  const unserved = await Promise.all(templates.map(async (_r, i) => {
+    const { leaves, invalid } = walked[i]
+    const shapes = [...new Set(leaves.map((c) => c.shape))]
     const served = await Promise.all(shapes.map(exists))
-    const channelless = [...new Set(calls.filter((c) => produced.has(c.shape) && !(c.pointer as { via_ref?: unknown } | undefined)?.via_ref)
+    const channelless = [...new Set(leaves.filter((c) => produced.has(c.shape) && !(c.pointer as { via_ref?: unknown } | undefined)?.via_ref)
       .map((c) => `${c.shape} (no channel)`))]
     // each call of the template is held to its own pointer; a tool call (not a produce through a channel) only to a tool
     // that declared its inputs (its pointer, once bound, is checked when forwarded)
     const vocab = declaredInputs()
-    const undeclared = vocab === undefined ? [] : [...new Set(calls.filter((c) => !produced.has(c.shape))
+    const undeclared = vocab === undefined ? [] : [...new Set(leaves.filter((c) => !produced.has(c.shape))
       .filter((c) => vocab === null || !(c.shape in vocab)).map((c) => vocab === null ? `${c.shape}: the declared inputs could not be read, so no call is made` : `${c.shape}: no declared inputs`))]
-    return [...shapes.filter((_, i) => !served[i]), ...channelless, ...new Set(calls.flatMap((c) => unmet(c.shape, c.pointer))), ...undeclared]
+    return [
+      ...(invalid ? [INVALID_TPL_REF] : []),
+      ...shapes.filter((_, j) => !served[j]),
+      ...channelless,
+      ...new Set(leaves.flatMap((c) => unmet(c.shape, c.pointer))),
+      ...undeclared,
+    ]
   }))
   // A template whose calls name a field of one of its inputs is run only where this request has that field: its
   // placeholders are filled from the request's own rows (bind.ts). One that cannot be filled here is not run, and the
@@ -1019,11 +1059,48 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const fallback = Object.fromEntries([...targets].filter(([, t]) => t.repo !== undefined).map(([of, t]) => [of, String(t.repo)]))
   const inputs = templates.map((r) => note.root === undefined ? [] : inputsOf(pool, continued(continuesBy), (r.sig as { in: string[] }).in, VESSEL_ID, repoOf(r.calls as Inner[]),
     fallback))
-  const unbound = templates.map((r, i) => {
-    const scope: Scope = { sig: { in: inputs[i] }, calls: [] }
-    return [...new Set((r.calls as Inner[]).flatMap((c) => placeholders(c.pointer)))]
-      .filter((p) => !/^calls[.[]/.test(p) && bind(`{{${p}}}`, scope).unbound.length > 0)
+  const childInputsOf = (child: Row): Array<Row | undefined> | undefined => {
+    if (note.root === undefined) return undefined
+    const sigIn = Array.isArray((child.sig as { in?: unknown } | undefined)?.in) ? (child.sig as { in: string[] }).in : []
+    if (sigIn.length === 0) return undefined
+    return inputsOf(pool, continued(continuesBy), sigIn, VESSEL_ID, repoOf(child.calls as Inner[]), fallback)
+  }
+  const childrenOf = templates.map((_r, i): Record<string, ChildTemplate> | undefined => {
+    if (walked[i].refs.size === 0) return undefined
+    const out: Record<string, ChildTemplate> = {}
+    for (const ref of walked[i].refs) {
+      const child = byTplId.get(ref)
+      if (!child) continue
+      const cInputs = childInputsOf(child)
+      out[ref] = { calls: child.calls as Inner[], ...(cInputs !== undefined ? { inputs: cInputs } : {}) }
+    }
+    return Object.keys(out).length > 0 ? out : undefined
   })
+  const unboundIn = (
+    calls: Inner[],
+    scopeInputs: Array<Row | undefined>,
+    seen: ReadonlySet<string>,
+    depth: number,
+  ): string[] => {
+    const scope: Scope = { sig: { in: scopeInputs }, calls: [] }
+    const out: string[] = []
+    for (const c of calls) {
+      for (const p of placeholders(c.pointer)) {
+        if (!/^calls[.[]/.test(p) && bind(`{{${p}}}`, scope).unbound.length > 0) out.push(p)
+      }
+      if (c.shape === ACTIVITY_TEMPLATE) {
+        const ref = tplRefOf(c)
+        const child = ref !== undefined ? byTplId.get(ref) : undefined
+        const explicitInputs = (c.pointer as { inputs?: unknown } | undefined)?.inputs !== undefined
+        if (ref !== undefined && child !== undefined && !seen.has(ref) && depth < MAX_RUN_DEPTH && !explicitInputs) {
+          const cInputs = childInputsOf(child) ?? scopeInputs
+          out.push(...unboundIn(child.calls as Inner[], cInputs, new Set([...seen, ref]), depth + 1))
+        }
+      }
+    }
+    return [...new Set(out)]
+  }
+  const unbound = templates.map((r, i) => unboundIn(r.calls as Inner[], inputs[i], new Set([r.id]), 0))
   templates.forEach((r, i) => {
     // A request holding clones of more than one repo binds only a template that names which (bind.ts inputsOf).
     const which = (p: string): string => {
@@ -1088,15 +1165,17 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     return lastSeq !== undefined && !pool.some((x) => x.seq > lastSeq && takesIn(r)(x))
   }
   // On a routed root (note.path carries route.calls), unscheduled templates are offered only when their calls touch
-  // the route; scheduled rhythm templates and unrouted roots stay governed by their existing rules.
+  // the route (recursing into nested activity_template children); scheduled rhythm templates and unrouted roots stay
+  // governed by their existing rules.
   const route = note.path
-  const onRoute = (r: Row): boolean => !(route !== undefined && "calls" in route) || (r.calls as Inner[]).some((c) => route.calls.includes(c.shape))
+  const onRoute = (_r: Row, i: number): boolean => !(route !== undefined && "calls" in route) || walked[i].leaves.some((c) => route.calls.includes(c.shape))
   const run = templates
     .map((r, i) => ({ r, i }))
     .filter(({ i }) => unserved[i].length === 0 && unbound[i].length === 0)
     // a scheduled template's re-run is its rhythm's (due, above), not this rule's
-    .filter(({ r, i }) => scheduled.has(r.id) || (onRoute(r) && !ran(r) && !sameRefused(r, i) && !sameAnswered(r, i)))
+    .filter(({ r, i }) => scheduled.has(r.id) || (onRoute(r, i) && !ran(r) && !sameRefused(r, i) && !sameAnswered(r, i)))
     .map(({ r, i }): Cand => ({ ...base, id: [RUN, r.id].join("/"), kind: RUN, calls: r.calls as Inner[], reads: [...(r.sig as { in: string[] }).in], inputs: inputs[i],
+      ...(childrenOf[i] !== undefined ? { children: childrenOf[i] } : {}),
       ...(scheduled.has(r.id) ? { rhythm: true as const } : {}) }))
 
   // When to wait follows the request's own deadlines (law 5). The walk's arm row is in the pool only when the walk is

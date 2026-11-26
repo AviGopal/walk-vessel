@@ -4,11 +4,13 @@ import { type Scope, type Source, bind } from "./bind"
 import { DISCOVERY_URL, KEY, VESSEL_ID } from "./config"
 import { AUTH_SCHEME, RESOLVE } from "./routes"
 import {
-  CALL, FAILURE, HOP, PRODUCE, RECORD_WAIT, RECORD_WRITE, RUN, SHAPE_DESCRIPTIONS, VESSEL_CAPABILITY, WAIT_FOR, WALK,
+  ACTIVITY_TEMPLATE, CALL, FAILURE, HOP, PRODUCE, RECORD_WAIT, RECORD_WRITE, RUN, SHAPE_DESCRIPTIONS, VESSEL_CAPABILITY, WAIT_FOR, WALK,
 } from "./shapes"
 
+export const MAX_RUN_DEPTH = 4
 export type Row = { shape: string; id: string; seq: number; [k: string]: unknown }
 export type Inner = { shape: string; pointer: Record<string, unknown> }
+export type ChildTemplate = { calls: Inner[]; inputs?: Array<Row | undefined> }
 export type Cand = {
   id: string
   kind: string
@@ -19,6 +21,8 @@ export type Cand = {
   from?: string
   /** For a run: its inputs, the request's rows its placeholders are filled from (bind.ts), by sig.in order. */
   inputs?: Array<Row | undefined>
+  /** For a run with nested activity_template steps: resolved child descriptors keyed by template id. */
+  children?: Record<string, ChildTemplate>
   /**
    * The shapes this move consumes: a produce its schema's inputs and context, a call its request's shape, a run its
    * template's inputs, a wait none. Its cell context is the pool's shapes among these, so a shape it does not read (a new
@@ -426,27 +430,74 @@ const waitForRunner: Runner = async (c, sel) => {
 // Each call's placeholders are filled from the run's inputs and the answers of its calls so far (bind.ts). A call with a
 // placeholder that cannot be filled is not made: a placeholder sent as text reaches the tool as a path that is not
 // there. The run stops at it with a failure row naming the placeholder (kind unbound, no call made), which records
-// counts against the template's writer, not the run.
-const runRunner: Runner = async (c, sel, pool) => {
-  const scope: Scope = { sig: { in: c.inputs ?? [] }, calls: [] }
-  for (const inner of c.calls) {
+// counts against the template's writer, not the run. Nested activity_template calls execute recursively up to
+// MAX_RUN_DEPTH, recording started/ended hops with pointer_type "activity_template" and template_ref.
+const execTemplate = async (
+  calls: Inner[],
+  scope: Scope,
+  templateId: string,
+  sel: Row,
+  pool: string[],
+  children: Record<string, ChildTemplate> | undefined,
+  depth: number,
+): Promise<{ ok: boolean; output?: unknown }> => {
+  let lastOutput: unknown
+  for (const inner of calls) {
     const callId = crypto.randomUUID()
     const b = bind(inner.pointer, scope)
     if (b.unbound.length > 0) {
       await writeRow({
-        shape: FAILURE, kind: "unbound", selection_ref: sel.id, template_ref: c.id.slice(RUN.length + 1), unbound: b.unbound,
+        shape: FAILURE, kind: "unbound", selection_ref: sel.id, template_ref: templateId, unbound: b.unbound,
         body: `unbound ${b.unbound.map((p) => `{{ ${p} }}`).join(", ")}: no such field in this run`, input_refs: [sel.id],
       })
-      return
+      return { ok: false }
     }
     const args = b.value as Record<string, unknown>
-    const pointer = { ...args, type: inner.shape, input_refs: pool, selection_ref: sel.id, call_id: callId }
-    const res = await once(sel, RUN, pointer, callId, { args, bound: b.sources })
-    if (!res.ok) {
-      return
+    if (inner.shape === ACTIVITY_TEMPLATE) {
+      const ref = typeof args.template_ref === "string" ? args.template_ref : undefined
+      const child = ref !== undefined ? children?.[ref] : undefined
+      if (depth >= MAX_RUN_DEPTH || ref === undefined || !child) {
+        await writeRow({
+          shape: FAILURE, kind: depth >= MAX_RUN_DEPTH ? "max_depth" : "unbound", call_id: callId,
+          selection_ref: sel.id, template_ref: ref ?? templateId,
+          body: depth >= MAX_RUN_DEPTH
+            ? `max nesting depth (${MAX_RUN_DEPTH}) exceeded calling template ${ref ?? templateId}`
+            : `unbound template_ref ${String(args.template_ref ?? "")}: child template not resolved`,
+          input_refs: [sel.id],
+        })
+        return { ok: false }
+      }
+      await writeRow({
+        shape: HOP, call_id: callId, phase: STARTED, kind: RUN, selection_ref: sel.id,
+        pointer_type: ACTIVITY_TEMPLATE, template_ref: ref, input_refs: [sel.id],
+        args: bounded(args, HOP_OUTPUT_MAX), bound: b.sources,
+      })
+      const childScope: Scope = {
+        sig: { in: Array.isArray(args.inputs) ? args.inputs as Array<Row | undefined> : (child.inputs ?? scope.sig.in) },
+        calls: [],
+      }
+      const sub = await execTemplate(child.calls, childScope, ref, sel, pool, children, depth + 1)
+      if (!sub.ok) return { ok: false }
+      await writeRow({
+        shape: HOP, call_id: callId, phase: ENDED, kind: RUN, selection_ref: sel.id,
+        pointer_type: ACTIVITY_TEMPLATE, template_ref: ref, output: bounded(sub.output, HOP_OUTPUT_MAX), input_refs: [sel.id],
+      })
+      scope.calls.push({ output: sub.output, call_id: callId })
+      lastOutput = sub.output
+    } else {
+      const pointer = { ...args, type: inner.shape, input_refs: pool, selection_ref: sel.id, call_id: callId }
+      const res = await once(sel, RUN, pointer, callId, { args, bound: b.sources })
+      if (!res.ok) return { ok: false }
+      scope.calls.push({ output: res.body, call_id: callId })
+      lastOutput = res.body
     }
-    scope.calls.push({ output: res.body, call_id: callId })
   }
+  return { ok: true, output: lastOutput }
+}
+
+const runRunner: Runner = async (c, sel, pool) => {
+  const scope: Scope = { sig: { in: c.inputs ?? [] }, calls: [] }
+  await execTemplate(c.calls, scope, c.id.slice(RUN.length + 1), sel, pool, c.children, 0)
 }
 
 const RUNNERS = new Map<string, Runner>([
