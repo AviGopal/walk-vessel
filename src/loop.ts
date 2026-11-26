@@ -214,7 +214,9 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
   return {
     shape: SELECTION,
     arm,
-    cands: options.map((o) => ({ id: o.cand.id, kind: o.cand.kind, root: o.root })),
+    // Each option's context, so a composition offered and not chosen can be found again by its cell (id|ctx). Options
+    // span roots, each root with its own asker and age, so no option's context is the row's.
+    cands: options.map((o) => ({ id: o.cand.id, kind: o.cand.kind, root: o.root, ctx: o.context.join(",") })),
     // Each draw's posterior as records gave it, with the level of evidence it came from, so how a choice was made (its
     // own cell's record, or a coarser one's) can be judged later from the row.
     posts: post.posts.map((p) => ({ alpha: p.alpha, beta: p.beta, ...(typeof p.from === "string" ? { from: p.from } : {}) })),
