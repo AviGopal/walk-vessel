@@ -69,7 +69,18 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const variant = (r: Row): string => String(r.variant ?? "")
   const newest = new Map(pool.filter((r) => SCHEMAS.has(r.shape)).sort((a, b) => a.seq - b.seq).map((r) => [`${String(r.target)}|${variant(r)}`, r]))
   const schemas = [...newest.values()]
-  const channels = pool.filter((r) => CHANNELS.has(r.shape))
+  // The newest row per channel supersedes older ones, keyed by calls[0].pointer.model when a non-empty string and
+  // otherwise by its calls. A row marked retired drops the channel; a newer active row for the same key offers it again.
+  const channelKey = (r: Row): string => {
+    const first = Array.isArray(r.calls) ? r.calls[0] : undefined
+    const model = typeof first === "object" && first !== null
+      ? (first as { pointer?: { model?: unknown } }).pointer?.model
+      : undefined
+    return typeof model === "string" && model.length > 0 ? `model:${model}` : `calls:${JSON.stringify(r.calls ?? null)}`
+  }
+  const channels = [...new Map(
+    pool.filter((r) => CHANNELS.has(r.shape)).sort((a, b) => a.seq - b.seq).map((r) => [channelKey(r), r]),
+  ).values()].filter((r) => r.retired !== true)
 
   // A produce of T is not offered while the pool holds a T row that saw exactly what this produce would see and that no
   // outcome has graded yet: an ungraded duplicate cannot be useful, because the first one's grade has not come. "What it
