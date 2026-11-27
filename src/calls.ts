@@ -31,8 +31,6 @@ export type Cand = {
   reads?: string[]
   /** For a produce: the key of the rows it sees, kept on its selection so a refusal over the same rows is known again. */
   seen_key?: string
-  /** For a call: no call the request's frontier is taken by is this one (applicable.ts), kept on its selection. */
-  out_of_scope?: true
   // a call that is on no route back from the call reaching its root (applicable.ts, Path): offered all the same
   off_path?: true
   /** A move the owner's rhythm made due (a scheduled template's run, a paced produce): offered beside open roots too. */
@@ -129,13 +127,35 @@ export const writeRow = async (row: object): Promise<Row> =>
 // undefined (a test that never reads applies no check; the loop reads it before every choice).
 let declared: Record<string, unknown> | null | undefined
 export const declaredInputs = (): Record<string, unknown> | null | undefined => declared
+// The same read keeps the rows each call takes, as its serving vessel declares them (shape_consumes): per call, the
+// shapes it consumes and the pointer fields each fills from that row's fields. It is the one list the walk reads for
+// which call takes the root's newest made row (applicable.ts): a call no declaration names is never chained from a row,
+// and a read that fails or declares none leaves null, so nothing is chained (fail closed). Not yet read: undefined.
+export type Consume = { shape: string; binds: Record<string, string> }
+let consumes: Record<string, Consume[]> | null | undefined
+export const declaredConsumes = (): Record<string, Consume[]> | null | undefined => consumes
+const consumesOf = (raw: unknown): Record<string, Consume[]> | null => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+  const out: Record<string, Consume[]> = {}
+  for (const [call, list] of Object.entries(raw as Record<string, unknown>)) {
+    const kept = (Array.isArray(list) ? list : []).flatMap((e): Consume[] => {
+      const { shape, binds } = (e ?? {}) as { shape?: unknown; binds?: unknown }
+      if (typeof shape !== "string" || shape === "") return []
+      const pairs = binds && typeof binds === "object" && !Array.isArray(binds) ? Object.entries(binds as Record<string, unknown>) : []
+      return [{ shape, binds: Object.fromEntries(pairs.filter(([, from]) => typeof from === "string")) as Record<string, string> }]
+    })
+    if (kept.length > 0) out[call] = kept
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
 /** Tests only: as if the vocabulary had not been read (each test reads its own, or none). */
-export const forgetDeclaredInputs = (): void => { declared = undefined }
+export const forgetDeclaredInputs = (): void => { declared = undefined; consumes = undefined }
 export const shapeAnswers = async (): Promise<Record<string, string>> => {
   try {
     const res = await resolve({ type: SHAPE_DESCRIPTIONS })
-    if (!res.ok) { declared = null; return {} }
-    const r = res.body as { shape_answers?: unknown; shape_inputs?: unknown; content?: { shape_answers?: unknown; shape_inputs?: unknown } } | null
+    if (!res.ok) { declared = null; consumes = null; return {} }
+    const r = res.body as { shape_answers?: unknown; shape_inputs?: unknown; shape_consumes?: unknown; content?: { shape_answers?: unknown; shape_inputs?: unknown; shape_consumes?: unknown } } | null
+    consumes = consumesOf(r?.shape_consumes ?? r?.content?.shape_consumes)
     const i = r?.shape_inputs ?? r?.content?.shape_inputs
     declared = i && typeof i === "object" && !Array.isArray(i) && Object.keys(i).length > 0 ? i as Record<string, unknown> : null
     const a = r?.shape_answers ?? r?.content?.shape_answers
@@ -143,6 +163,7 @@ export const shapeAnswers = async (): Promise<Record<string, string>> => {
     return Object.fromEntries(Object.entries(a as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
   } catch {
     declared = null
+    consumes = null
     return {}
   }
 }

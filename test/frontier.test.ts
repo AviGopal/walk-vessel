@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
-// The next step takes what the root last made (the activity lattice), as an offer: the calls that take the root's newest
-// made row (a tool's answer or a produce) are those whose owner requires rows need its shape and whose where it meets; a
-// call outside them stays callable, its candidate and selection marked out_of_scope; a frontier nothing takes says it
-// was widened. The request is judged by the frontier it was made over. The scope is shown to the producer
-// (request_acts) and kept on the selection row. Read over the owner seed's own requires rows too, whose rows are
-// preconditions: every step of a change stays callable over them.
+// The next step takes what the root last made (the activity lattice): the calls that take the root's newest made row (a
+// tool's answer or a produce) are those whose serving vessel declares it consumes the row's shape (shape_consumes, as
+// discovery answers it: the live answer in fixtures/shape-consumes-live.json). The owner's requires rows are
+// preconditions only: one naming the row's shape makes no call take it. With no declaration read, nothing takes it
+// (fail closed). A frontier nothing takes says it was widened. A request is called as asked, whatever takes the frontier.
+// The frontier is shown to the producer (request_acts) and kept on the selection row. Read over the owner seed's own
+// requires rows too: every step of a change stays callable over them.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -13,6 +14,10 @@ const realFetch = globalThis.fetch
 const keys = ["WALK_VESSEL_ID", "WALK_PORT", "DISCOVERY_URL", "WALK_ENDPOINT", "METABOB_API_KEY"] as const
 const was = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
 type Cand = { id: string; kind: string; out_of_scope?: true }
+const LIVE = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "shape-consumes-live.json"), "utf8"))
+// what discovery answers a shapeDescriptions resolve with: the live answer, unless a test reads another
+let described: unknown = LIVE
+let calls: { shapeAnswers: () => Promise<unknown> }
 type Frontier = { id?: string; shape?: string; calls: string[]; widened: boolean }
 let applicable: (pool: any[], skipped?: any[], now?: number, note?: any, answers?: Record<string, string>) => Promise<Cand[]>
 let actsFactRow: (pool: any[], root: string, write: (row: object) => Promise<any>, sel?: string, gated?: Record<string, string[]>, frontier?: Frontier) => Promise<string | undefined>
@@ -21,17 +26,25 @@ beforeAll(async () => {
   Object.assign(process.env, {
     WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test", WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: "k",
   })
-  globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+  globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
+    const { pointer } = JSON.parse(String(init?.body ?? "{}")) as { pointer?: { type?: string } }
+    if (pointer?.type === "shapeDescriptions") return described === undefined ? new Response("down", { status: 503 }) : Response.json(described)
+    return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+  }) as typeof fetch
   applicable = (await import("../src/applicable")).applicable as never
+  calls = (await import("../src/calls")) as never
+  await calls.shapeAnswers()
   actsFactRow = (await import("../src/acts")).actsFactRow as never
   selectionRow = (await import("../src/loop")).selectionRow as never
 })
-afterAll(() => {
+afterAll(async () => {
+  ;(await import("../src/calls")).forgetDeclaredInputs()
   globalThis.fetch = realFetch
   for (const k of keys) if (was[k] === undefined) delete process.env[k]; else process.env[k] = was[k]
 })
 
-const ANSWERS = { fs_edit: "fileEditResult", fs_read: "fileContent", fs_list: "dirListing", git_worktree: "gitWorktree", git_commit: "gitCommitResult" }
+// the live answers, and the reads the tests make rows of (fs_list's dirListing is a row no call is declared to consume)
+const ANSWERS = { ...LIVE.content.shape_answers, fs_read: "fileContent", code_read_lines: "codeReadResult", fs_list: "dirListing" }
 const owner = (id: string, seq: number, row: object) => ({ id, seq, writer: "owner", role: "owner", ...row })
 const OWNER_ROWS = [
   owner("rq-commit", 1, { shape: "requires", for: "git_commit", needs: "fileEditResult" }),
@@ -45,8 +58,16 @@ const gap = { shape: "gap", id: "g1", seq: 10, writer: "detector", role: "detect
 const walkRow = (shape: string, id: string, seq: number, more: object = {}) => ({ shape, id, seq, writer: "walk-test", role: "walk", input_refs: ["g1"], ...more })
 const edit = walkRow("fileEditResult", "e1", 11, { path: "src/a.ts" })
 const verdict = (id: string, seq: number, r: number) => ({ shape: "land_verdict", id, seq, writer: "person", role: "described", r, input_refs: ["g1"] })
+// pointers that meet each call's declared inputs, so only the frontier decides what a test sees
+const POINTERS: Record<string, object> = { git_worktree: { repo: "demo" }, git_commit: { cwd: "/c", message: "fix" } }
 const request = (id: string, seq: number, type: string) =>
-  ({ shape: "request", id, seq, writer: "described", role: "described", pointer: { type, cwd: "/c" }, input_refs: ["g1"] })
+  ({ shape: "request", id, seq, writer: "described", role: "described", pointer: { type, ...POINTERS[type] }, input_refs: ["g1"] })
+// reads another shapeDescriptions answer for one test, then the live one again
+const reading = async <T>(body: unknown, f: () => Promise<T>): Promise<T> => {
+  described = body
+  await calls.shapeAnswers()
+  try { return await f() } finally { described = LIVE; await calls.shapeAnswers() }
+}
 const run = async (rows: any[], shared: string[] = []) => {
   const note: any = { root: "g1", shared: new Set(shared) }
   const skipped: any[] = []
@@ -55,48 +76,50 @@ const run = async (rows: any[], shared: string[] = []) => {
   return { frontier: note.frontier as Frontier | undefined, calls: calls.map((c) => c.id).sort(), marked: calls.filter((c) => c.out_of_scope === true).map((c) => c.id).sort(), skipped }
 }
 
-describe("the calls that take the root's newest made row: an offer, never a refusal", () => {
-  test("[MUST-FAIL] after an edit, git_commit (whose requires needs fileEditResult) takes it; git_worktree does not", async () => {
+describe("the calls that take the root's newest made row: those declared to consume its shape", () => {
+  test("[MUST-FAIL] after an edit, git_commit (declared to consume fileEditResult) takes it; git_worktree does not", async () => {
     const got = await run([edit])
     expect(got.frontier).toEqual({ id: "e1", shape: "fileEditResult", calls: ["git_commit"], widened: false })
   })
 
-  test("[MUST-FAIL] a request naming git_worktree over the edit is still called, its candidate marked out_of_scope; git_commit's is not", async () => {
+  test("[MUST-FAIL] read by call: a row two calls are declared to consume is taken by both, and a call's own answer is not what it takes", async () => {
+    expect((await run([walkRow("codeReadResult", "r1", 11, { path: "src/a.ts" })])).frontier?.calls).toEqual(["code_insert_after_line", "code_replace_lines"])
+    // git_worktree answers gitWorktree; git_commit is the call declared to consume it
+    expect((await run([walkRow("gitWorktree", "w1", 11, { cwd: "/c" })])).frontier?.calls).toEqual(["git_commit"])
+  })
+
+  test("[MUST-FAIL] an owner requires row naming the row's shape makes no call take it: git_land needs a land verdict, and is declared to consume a diff", async () => {
+    const got = await run([edit, verdict("v1", 12, 1)])
+    expect(got.frontier).toEqual({ id: "v1", shape: "land_verdict", calls: [], widened: true })
+    expect((await run([edit, walkRow("gitDiff", "d1", 12, { cwd: "/c" })])).frontier?.calls).toEqual(["git_land"])
+  })
+
+  test("[GUARD] fail closed: an answer with no shape_consumes, or no answer, takes nothing, though an owner requires row needs the edit's shape", async () => {
+    const { shape_consumes: _c, ...rest } = LIVE.content
+    for (const body of [{ content: rest }, { content: { ...rest, shape_consumes: {} } }, undefined]) {
+      const got = await reading(body, () => run([edit]))
+      expect(got.frontier).toEqual({ id: "e1", shape: "fileEditResult", calls: [], widened: true })
+    }
+  })
+
+  test("[MUST-FAIL] a request naming a call that does not take the frontier is called as asked, unmarked, beside one that does", async () => {
     const got = await run([edit, request("q1", 12, "git_worktree"), request("q2", 13, "git_commit")])
     expect(got.calls).toEqual(["call/git_commit", "call/git_worktree"])
-    expect(got.marked).toEqual(["call/git_worktree"])
+    expect(got.marked).toEqual([])
     expect(got.skipped).toEqual([])
   })
 
-  test("[MUST-FAIL] a request is judged by the frontier it was made over, not by a row made after it", async () => {
-    // a listing (fs_list's answer) after the request: nothing takes it, so the frontier now is widened, but the request
-    // was made over the edit
-    const got = await run([edit, request("q1", 12, "git_worktree"), walkRow("dirListing", "c1", 13)])
-    expect(got.frontier?.widened).toBe(true)
-    expect(got.marked).toEqual(["call/git_worktree"])
-  })
-
-  test("[MUST-FAIL] a request is never the frontier: one made after another keeps the edit's scope", async () => {
+  test("[MUST-FAIL] a request is never the frontier: one made after another keeps the edit as the frontier", async () => {
     const got = await run([edit, request("q1", 12, "git_worktree"), request("q2", 13, "git_worktree")])
     expect(got.frontier).toEqual({ id: "e1", shape: "fileEditResult", calls: ["git_commit"], widened: false })
   })
 
-  test("[MUST-FAIL] a produced row is a frontier, whoever wrote it: after a person's land verdict at r 1, git_land takes it", async () => {
-    const got = await run([edit, verdict("v1", 12, 1)])
-    expect(got.frontier).toEqual({ id: "v1", shape: "land_verdict", calls: ["git_land"], widened: false })
-  })
-
-  test("[MUST-FAIL] a requires row's where is read against the row: a verdict at r 0 is taken by nothing (git_land needs r 1)", async () => {
-    const got = await run([edit, verdict("v0", 12, 0)])
-    expect(got.frontier).toEqual({ id: "v0", shape: "land_verdict", calls: [], widened: true })
-  })
-
-  test("[MUST-FAIL] a where field bound to the call's own pointer cannot be judged before the call, so it counts as met", async () => {
+  test("[MUST-FAIL] a file read is taken by fs_edit, as declared, before any pointer names a path", async () => {
     const got = await run([walkRow("fileContent", "c1", 11, { path: "src/a.ts" })])
     expect(got.frontier).toEqual({ id: "c1", shape: "fileContent", calls: ["fs_edit"], widened: false })
   })
 
-  test("[GUARD] a frontier nothing takes scopes nothing: any call is open and unmarked, as before", async () => {
+  test("[GUARD] a frontier nothing takes leaves any request callable and unmarked, as before", async () => {
     const got = await run([walkRow("dirListing", "c1", 11), request("q1", 12, "git_worktree")])
     expect(got.calls).toEqual(["call/git_worktree"])
     expect(got.marked).toEqual([])
@@ -119,7 +142,7 @@ describe("the calls that take the root's newest made row: an offer, never a refu
   })
 })
 
-describe("the scope is shown to the producer and kept on the selection row", () => {
+describe("the frontier is shown to the producer and kept on the selection row", () => {
   const scoped: Frontier = { id: "e1", shape: "fileEditResult", calls: ["git_commit"], widened: false }
   const widened: Frontier = { id: "c1", shape: "dirListing", calls: [], widened: true }
   const factOf = async (f: Frontier, pool: any[] = []) => {
@@ -155,11 +178,11 @@ describe("the scope is shown to the producer and kept on the selection row", () 
     expect([w.frontier, w.calls, w.frontier_widened]).toEqual([{ id: "c1", shape: "dirListing" }, undefined, true])
   })
 
-  test("[MUST-FAIL] the selection of a call outside its request's scope is marked out_of_scope; one inside is not", async () => {
+  test("[GUARD] a selection of a call is not marked for what takes the frontier, whichever call it is", async () => {
     const cands = await applicable([...OWNER_ROWS, gap, edit, request("q1", 12, "git_worktree"), request("q2", 13, "git_commit")], [], 1_000,
       { root: "g1", shared: new Set() }, ANSWERS)
     const pick = (id: string) => selectionRow("treated", [opt(scoped, cands.find((c) => c.id === id)!)], post, 1, 0, {})
-    expect([pick("call/git_worktree").out_of_scope, pick("call/git_commit").out_of_scope]).toEqual([true, undefined])
+    expect(["call/git_worktree", "call/git_commit"].map((id) => "out_of_scope" in pick(id))).toEqual([false, false])
   })
 })
 
@@ -194,11 +217,11 @@ describe("over the seed's own requires rows, every step of a change stays callab
     await step([], 201, { type: "git_worktree", repo: "demo" }),
     await step([clone], 203, { type: "fs_read", path: P, cwd: CWD }),
     await step([clone, read1], 205, { type: "fs_read", path: P, cwd: CWD }),
-    await step([clone, read1, read2], 207, { type: "fs_edit", path: P, cwd: CWD, old: "a", new: "b" }),
+    await step([clone, read1, read2], 207, { type: "fs_edit", path: P, cwd: CWD, old_string: "a", new_string: "b" }),
     await step([clone, read1, read2, edited], 209, { type: "git_commit", cwd: CWD, message: "fix" }),
     await step([clone, read1, read2, edited, commit], 211, { type: "git_diff", cwd: CWD }),
     await step([clone, read1, read2, edited, commit, diff, judged(1)], 214, { type: "git_land", cwd: CWD }),
-    await step([clone, read1, read2, edited, commit, diff, judged(0)], 214, { type: "fs_edit", path: P, cwd: CWD, old: "b", new: "c" }),
+    await step([clone, read1, read2, edited, commit, diff, judged(0)], 214, { type: "fs_edit", path: P, cwd: CWD, old_string: "b", new_string: "c" }),
   ]
 
   test("[GUARD] clone, read, read, edit, commit, diff, verdict, land; and a refused verdict, then an edit again: each is called", async () => {
@@ -206,13 +229,7 @@ describe("over the seed's own requires rows, every step of a change stays callab
       ["git_commit", true], ["git_diff", true], ["git_land", true], ["fs_edit", true]])
   })
 
-  test("[MUST-FAIL] a where value not known yet meets nothing: a clone handed out with no committed tree is not taken by git_diff", async () => {
-    const dirty = made("gitWorktree", 202, { cwd: CWD, repo: "demo", tree: T(1) })
-    expect((await step([dirty], 203, { type: "fs_read", path: P, cwd: CWD })).scope).toBe("code_add_import code_insert_after_line code_replace_lines fs_edit fs_write")
-  })
-
-  test("[MUST-FAIL] each step's scope is what takes the row before it, read with each requires row's where", async () => {
-    const WRITERS = "code_add_import code_insert_after_line code_replace_lines fs_edit fs_write git_diff"
-    expect((await chain()).map((x) => x.scope)).toEqual(["widened", WRITERS, "fs_edit", "fs_edit", "widened", "git_diff", "git_land", "widened"])
+  test("[MUST-FAIL] each step's frontier is taken by the calls declared to consume it, never by the seed's requires rows", async () => {
+    expect((await chain()).map((x) => x.scope)).toEqual(["widened", "git_commit", "fs_edit", "fs_edit", "git_commit", "git_diff", "widened", "widened"])
   })
 })

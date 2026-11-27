@@ -1,0 +1,35 @@
+{
+  "content": {
+    "shape_consumes": {
+      "fs_edit": [{"shape": "fileContent", "binds": {"path": "path"}}],
+      "code_replace_lines": [{"shape": "codeReadResult", "binds": {"path": "path"}}],
+      "code_insert_after_line": [{"shape": "codeReadResult", "binds": {"path": "path"}}],
+      "git_commit": [{"shape": "gitWorktree", "binds": {"cwd": "cwd"}}, {"shape": "fileWriteResult", "binds": {"cwd": "cwd"}}, {"shape": "fileEditResult", "binds": {"cwd": "cwd"}}, {"shape": "codeReplaceResult", "binds": {"cwd": "cwd"}}, {"shape": "codeInsertResult", "binds": {"cwd": "cwd"}}, {"shape": "codeAddImportResult", "binds": {"cwd": "cwd"}}],
+      "git_diff": [{"shape": "gitCommitResult", "binds": {"cwd": "cwd"}}],
+      "git_land": [{"shape": "gitDiff", "binds": {"cwd": "cwd"}}]
+    },
+    "shape_answers": {
+      "fs_edit": "fileEditResult",
+      "fs_write": "fileWriteResult",
+      "code_replace_lines": "codeReplaceResult",
+      "code_insert_after_line": "codeInsertResult",
+      "code_add_import": "codeAddImportResult",
+      "git_worktree": "gitWorktree",
+      "git_commit": "gitCommitResult",
+      "git_diff": "gitDiff",
+      "git_land": "gitLand"
+    },
+    "shape_inputs": {
+      "fs_read": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string", "minLength": 1, "description": "A file: absolute, repos/<vessel>/…, or relative to the workspace. To read a file you are changing, name it by its path in the clone git_worktree made for the change."}}},
+      "fs_edit": {"type": "object", "required": ["path", "old_string", "new_string"], "properties": {"path": {"type": "string", "minLength": 1, "description": "The file to change. Write in the clone git_worktree made for this change: an absolute path under the cwd its answer gave, never a path relative to the workspace or a repos/<vessel>/… path."}, "old_string": {"type": "string", "minLength": 1, "description": "Text copied character for character from the file as fs_read returned it (read the file first): the lines being replaced, never words about the change."}, "new_string": {"type": "string"}}},
+      "fs_write": {"type": "object", "required": ["path", "content"], "properties": {"path": {"type": "string", "minLength": 1, "description": "The file to change. Write in the clone git_worktree made for this change: an absolute path under the cwd its answer gave, never a path relative to the workspace or a repos/<vessel>/… path."}, "content": {"type": "string"}}},
+      "code_replace_lines": {"type": "object", "required": ["path", "start_line", "end_line", "text"], "properties": {"path": {"type": "string", "minLength": 1, "description": "The file to change. Write in the clone git_worktree made for this change: an absolute path under the cwd its answer gave, never a path relative to the workspace or a repos/<vessel>/… path."}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}, "text": {"type": "string", "description": "Replaces lines start_line..end_line."}}},
+      "code_insert_after_line": {"type": "object", "required": ["path", "after_line", "text"], "properties": {"path": {"type": "string", "minLength": 1, "description": "The file to change. Write in the clone git_worktree made for this change: an absolute path under the cwd its answer gave, never a path relative to the workspace or a repos/<vessel>/… path."}, "after_line": {"type": "integer", "minimum": 0, "description": "0 inserts at the top."}, "text": {"type": "string"}}},
+      "code_add_import": {"type": "object", "required": ["path", "module", "specifier"], "properties": {"path": {"type": "string", "minLength": 1, "description": "The file to change. Write in the clone git_worktree made for this change: an absolute path under the cwd its answer gave, never a path relative to the workspace or a repos/<vessel>/… path."}, "module": {"type": "string", "minLength": 1, "description": "The module to import from, as written in the statement, e.g. \"./calls\"."}, "specifier": {"type": "string", "minLength": 1, "description": "What to import, e.g. \"{ call }\"; merged into an existing { … } import of the module."}}},
+      "git_worktree": {"type": "object", "required": ["repo"], "properties": {"repo": {"type": "string", "minLength": 1, "description": "\"super\" for the super-repo, or a vessel's name, e.g. walk-vessel."}}},
+      "git_commit": {"type": "object", "required": ["cwd", "message"], "properties": {"cwd": {"type": "string", "minLength": 1, "description": "The clone git_worktree made for the change (its answer's cwd)."}, "message": {"type": "string", "minLength": 1, "description": "The commit message: a subject line, a blank line, then why."}}},
+      "git_diff": {"type": "object", "required": [], "properties": {"cwd": {"type": "string", "description": "The repository, or a clone git_worktree made; default the workspace."}}},
+      "git_land": {"type": "object", "required": ["cwd"], "properties": {"cwd": {"type": "string", "minLength": 1, "description": "The clone git_worktree made, with its change committed."}}}
+    }
+  }
+}

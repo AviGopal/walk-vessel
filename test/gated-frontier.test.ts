@@ -4,6 +4,8 @@
 // it, and the commit is not shown as gated. An edit in another clone, or no edit yet, leaves it gated, its reasons read
 // against that target.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 
 const realFetch = globalThis.fetch
 const keys = ["WALK_VESSEL_ID", "WALK_PORT", "DISCOVERY_URL", "WALK_ENDPOINT", "METABOB_API_KEY"] as const
@@ -15,12 +17,19 @@ beforeAll(async () => {
   Object.assign(process.env, {
     WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test", WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: "k",
   })
-  globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+  // which calls take the frontier is the calls' declared consumes, as discovery answers them
+  const live = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "shape-consumes-live.json"), "utf8"))
+  globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
+    const { pointer } = JSON.parse(String(init?.body ?? "{}")) as { pointer?: { type?: string } }
+    return Response.json(pointer?.type === "shapeDescriptions" ? live : { content: { vessels: [{ vesselId: "v" }] } })
+  }) as typeof fetch
   applicable = (await import("../src/applicable")).applicable as never
+  await (await import("../src/calls")).shapeAnswers()
   choices = (await import("../src/loop")).choices as never
   actsFactRow = (await import("../src/acts")).actsFactRow as never
 })
-afterAll(() => {
+afterAll(async () => {
+  ;(await import("../src/calls")).forgetDeclaredInputs()
   globalThis.fetch = realFetch
   for (const k of keys) if (was[k] === undefined) delete process.env[k]; else process.env[k] = was[k]
 })
@@ -52,7 +61,8 @@ describe("a commit's precondition bound to its clone is judged for the frontier'
   test("[MUST-FAIL] an edit in another clone than the frontier's leaves git_commit gated, its reason read against the frontier's clone", async () => {
     const newer = { ...tree, id: "w2", seq: 13, cwd: "/trees/z" }
     const { gated, calls } = await gatedOf([...COMMIT, gap, tree, edit("/trees/x"), newer])
-    expect(calls).not.toContain("git_commit")
+    // git_commit is declared to consume a clone, so it takes the frontier; whether it may be called is its gate's to say
+    expect(calls).toEqual(["git_commit"])
     expect(gated?.length).toBe(1)
     expect(gated?.[0]).toContain(`cwd: the call's "/trees/z"`)
     expect(gated?.[0]).toEndWith(`for the frontier's cwd "/trees/z"`)

@@ -2,6 +2,8 @@
 // What a tick hands a produce: the request_acts row it writes carries the root's frontier and the calls that take it, as
 // the tick computed them, so the producer is shown the offer at the moment it chooses (the activity lattice).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { type Fake, fake, freePort, healthy, run } from "./harness"
 
 describe("a tick's request_acts carries its root's frontier", () => {
@@ -23,7 +25,8 @@ describe("a tick's request_acts carries its root's frontier", () => {
       if (p.type === "record_wait_exact") return Response.json({ shape: "arm", id: "arm1", seq: 1, arm: "treated", as_of_seq: 99 })
       if (p.type === "record_read" && p.roots === "all") return Response.json({ shared, roots: [{ root: ask, rows: [ask, edit] }] })
       if (p.type === "vesselCapability") return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
-      if (p.type === "shapeDescriptions") return Response.json({ shape_answers: { fs_edit: "fileEditResult" } })
+      // discovery's live answer: git_commit is declared to consume fileEditResult
+      if (p.type === "shapeDescriptions") return Response.json(JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "shape-consumes-live.json"), "utf8")))
       if (p.type === "posterior") return Response.json({ at_seq: 7, posts: p.cells.map(() => ({ alpha: 2, beta: 1, from: "move" })) })
       if (p.type === "record_write" && p.row?.shape === "request_acts" && !acts) acts = p.row
       if (p.type === "record_write") return Response.json({ ...p.row, id: `r${Math.random()}`, seq: 8 })

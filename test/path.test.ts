@@ -5,6 +5,8 @@
 // under the owner's protected list has no route: its links are named, every call stays offered but marked off_path,
 // and the root is drawn at the owner's weight.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 
 const realFetch = globalThis.fetch
 const keys = ["WALK_VESSEL_ID", "WALK_PORT", "DISCOVERY_URL", "WALK_ENDPOINT", "METABOB_API_KEY"] as const
@@ -18,11 +20,18 @@ let actsFactRow: (pool: any[], root: string, write: (row: object) => Promise<any
 let selectionRow: (arm: string, options: any[], post: { at_seq: number; posts: any[] }, seed: number, i: number, timing: any, w?: number) => Record<string, unknown>
 let drawn: (arm: string, shared: any[], options: any[], post: { at_seq: number; posts: any[] }, seed: number, timing: any) => { i: number; row: Record<string, unknown> }
 let factOf: (o: any, write: (row: object) => Promise<any>, sel: string) => Promise<string | undefined>
+// discovery's shapeDescriptions answer, for the tests that read the calls' declared consumes; none read it otherwise
+const LIVE = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "shape-consumes-live.json"), "utf8"))
+let described: unknown
 beforeAll(async () => {
   Object.assign(process.env, {
     WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test", WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: "k",
   })
-  globalThis.fetch = (async () => Response.json({ content: { vessels: [{ vesselId: "v" }] } })) as typeof fetch
+  globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
+    const { pointer } = JSON.parse(String(init?.body ?? "{}")) as { pointer?: { type?: string } }
+    if (pointer?.type === "shapeDescriptions" && described !== undefined) return Response.json(described)
+    return Response.json({ content: { vessels: [{ vesselId: "v" }] } })
+  }) as typeof fetch
   applicable = (await import("../src/applicable")).applicable as never
   const loop = await import("../src/loop")
   choices = loop.choices as never
@@ -147,13 +156,6 @@ describe("the route back from the call that reaches the root", () => {
     expect((await run([...viaInput, scope(NOW)], TODAY)).path?.next).toEqual(["git_commit"])
     const none = (await run([...viaInput, scope(BEFORE)], TODAY)).path
     expect(none?.broken).toEqual(["gap for land_verdict"])
-  })
-
-  test("[MUST-FAIL] a list in a requires row's where is read where the frontier's takers are named", async () => {
-    const takes = owner("rq-search", 30, { shape: "requires", for: "code_search", needs: "attempt_explanation", where: { repo_path: OUT } })
-    const at = (p: string) => walkRow("attempt_explanation", "x3", 16, { repo_path: p })
-    expect((await run([...CHAIN, scope(NOW), takes], [...TODAY, at("repos/y-vessel/src/a.ts")])).frontier?.calls).toEqual(["code_search"])
-    expect((await run([...CHAIN, scope(["repos/y-vessel/"]), takes], [...TODAY, at("repos/y-vessel/src/a.ts")])).frontier?.calls).toEqual([])
   })
 })
 
@@ -410,15 +412,26 @@ describe("calls on no route are offered, marked", () => {
     expect(offPath(cands)).toContain("call/fs_edit")
   })
 
-  test("[GUARD] a call the chain offers on its own, off the route, is marked too", async () => {
-    const owners = [...CHAIN, scope(NOW),
-      owner("rq-list", 31, { shape: "requires", for: "fs_list", needs: "dirIndex", where: { fresh: true } }),
-      owner("rq-index", 32, { shape: "requires", for: "fs_index", needs: "attempt_explanation", binds: { path: "repo_path" } })]
-    const note: any = { root: "g1" }
-    const cands = await applicable([...owners, gapRow(), ...TODAY, walkRow("attempt_explanation", "x3", 16, { repo_path: "repos/y-vessel/src/a.ts" })]
-      .sort((a, b) => a.seq - b.seq), [], 1_000, note, { ...ANSWERS, fs_index: "dirIndex" })
-    expect(cands.filter((c) => c.kind === "call").map((c) => c.id)).toContain("call/fs_index")
-    expect(offPath(cands)).toEqual(["call/fs_index"])
+  // a commit in the clone after the edit: git_diff, declared to consume it, is on the route back from the landing;
+  // fs_index, declared here to consume it too, is on no step of that route
+  const commit = walkRow("gitCommitResult", "k1", 13, { cwd: "/trees/x", committed_tree: "t1" })
+  const chainedOver = async (consumes: object) => {
+    described = { content: { ...LIVE.content, shape_consumes: consumes } }
+    const calls = await import("../src/calls")
+    await calls.shapeAnswers()
+    try {
+      const { cands } = await run([...CHAIN, scope(NOW)], [tree, edit, commit])
+      return cands.filter((c) => c.kind === "call" && (c as { from?: string }).from === undefined).map((c) => c.id).sort()
+    } finally { described = undefined; calls.forgetDeclaredInputs() }
+  }
+
+  test("[MUST-FAIL] a call declared to consume the root's newest row, on the route back from the landing, is chained from it", async () => {
+    expect(await chainedOver(LIVE.content.shape_consumes)).toEqual(["call/git_diff"])
+  })
+
+  test("[GUARD] a call declared to consume that row but on no step of the route is not chained, so none is marked", async () => {
+    const off = { ...LIVE.content.shape_consumes, fs_index: [{ shape: "gitCommitResult", binds: { path: "cwd" } }] }
+    expect(await chainedOver(off)).toEqual(["call/git_diff"])
   })
 
   test("[MUST-FAIL] with no route, every call is offered and marked", async () => {

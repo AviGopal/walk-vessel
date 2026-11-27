@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto"
 import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
-import { type Cand, type ChildTemplate, ENDED, MAX_RUN_DEPTH, STARTED, type Inner, type Row, declaredInputs, exists, servers } from "./calls"
+import { type Cand, type ChildTemplate, ENDED, MAX_RUN_DEPTH, STARTED, type Inner, type Row, declaredConsumes, declaredInputs, exists, servers } from "./calls"
 import { callProblem, shownValue } from "./inputs"
 import { repeatKeysOf, stable } from "./acts"
 import { VESSEL_ID } from "./config"
@@ -230,24 +230,17 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // THE NEXT STEP TAKES WHAT THE ROOT LAST MADE (the activity lattice). The frontier is the root's newest made row: a
   // tool's answer (a shape some vessel declares a call answers with) or a produce (a shape the owner's schemas make,
   // whoever wrote the row: a person's verdict is one); rows every root shares are no root's. The calls that take it are
-  // those with an owner requires row (the latest per for and needs, retired dropped: reqs) needing its shape whose where
-  // the row meets: a field bound to the call's own pointer cannot be judged before a call names one, so it counts as
-  // met; every other field is read as meets reads it. This is an offer, not a gate: the owner's requires rows are
-  // preconditions, so a call outside the scope stays callable and its candidate says it is outside (out_of_scope), for
-  // the producer and the grades to read. A frontier no requires row takes, or none at all, says it was widened. A
-  // request is an ask, not something made for a next step to take, so it is never the frontier. A request is judged by
-  // the frontier it was made over (the newest made row before it), so a row made after it does not change its scope.
+  // those whose serving vessel declares it consumes the row's shape (shape_consumes, read with the vocabulary): one
+  // reader per fact, so which call takes which row is never also listed here or in the owner's rows, whose requires
+  // rows stay preconditions. With no declaration read, no call takes it. A frontier no call takes, or none at all, says
+  // it was widened. A request is an ask, not something made for a next step to take, so it is never the frontier.
   const made = new Set([...Object.values(answers), ...schemas.map((s) => String(s.target))].filter((x) => !REQUESTS.has(x)))
   const frontierBefore = (at: number): Row | undefined => pool
     .filter((r) => made.has(String(r.shape)) && note.shared?.has(r.id) !== true && r.seq < at).sort((a, b) => a.seq - b.seq).at(-1)
-  const takenBy = (q: Row, f: Row): boolean => Object.entries((q.where ?? {}) as Record<string, unknown>).every(([k, v]) => {
-    if (typeof v === "object" && v !== null && "x-pointer" in v) return true
-    return fieldMeets(f, k, v, undefined)
-  })
-  const takers = (f: Row | undefined): string[] =>
-    f === undefined ? [] : [...new Set(reqs.filter((q) => String(q.needs) === String(f.shape) && takenBy(q, f)).map((q) => String(q.for)))].sort()
+  const consumersOf = (f: Row | undefined): string[] =>
+    f === undefined ? [] : Object.entries(declaredConsumes() ?? {}).filter(([, list]) => list.some((e) => e.shape === String(f.shape))).map(([c]) => c).sort()
   const frontierOf = (f: Row | undefined): Frontier => {
-    const calls = takers(f)
+    const calls = consumersOf(f)
     return { ...(f !== undefined ? { id: f.id, shape: String(f.shape) } : {}), calls, widened: calls.length === 0 }
   }
   note.frontier = frontierOf(frontierBefore(Number.POSITIVE_INFINITY))
@@ -894,7 +887,6 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const lastRefusal = refused.filter((x) => x.key === asKey).at(-1)
     const reopened = lastRefusal !== undefined && await bearsOn(pool.filter((x) => x.seq > lastRefusal.seq && x.seq < r.seq), type)
     const prior = reopened ? undefined : settled(asKey)
-    const over = frontierOf(frontierBefore(r.seq))
     const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
       ...(prior !== undefined ? [prior.kind === "too_big"
         ? `${type}: this same call answered too_big here (row ${prior.seq}) and nothing new has come since; read or change it in parts (a call answering a line range)`
@@ -909,36 +901,35 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       from: r.id,
       // The request it answers decides it; the owner's requires rows only gate whether it exists, so they are not read.
       reads: [r.shape],
-      ...(over.widened || over.calls.includes(type) ? {} : { out_of_scope: true }),
     }))
   }))
 
-  // THE STEP A GATED CALL'S CHAIN NAMES IS OFFERED (USER ruling 11-23, the walk offers the step a refusal's chain names).
-  // A call the owner's requires rows gate is told what it needs and where that comes from ("gitDiff comes from a git_diff
-  // call"); when the call so named takes the root's newest made row, it is offered
-  // without waiting for a producer to ask for it, as any call is: served, its inputs declared, nothing it requires
-  // unmet. Its pointer is bound from the frontier row by the owner's requires row that takes
-  // it (binds: {pointer field: row field}); a requires row naming no binds offers nothing, so which rows lead on to which
-  // call is the owner's to say, never the walk's. Once per frontier row: a selection of the call made over the same
-  // frontier (its frontier field) settles it, so it is offered again only over a newer made row. A request already
-  // asking for the call, or a decline, leaves it to the request. A failed offered call writes a failure, not a made row,
-  // so the same frontier is not offered again: the wait ends when the root makes a newer row (another commit, a refreshed
-  // clone) or a producer asks for the call. That holds for an outage too, which the offer does not retry on its own: a
-  // producer that sees the failure asks again. Records reads the frontier as the row an offered call consumed.
+  // THE NEXT STEP TAKES WHAT THE ROOT LAST MADE. A call whose serving vessel declares it consumes the shape of the root's
+  // newest made row (shape_consumes) is offered from that row, with no request asking for it, when the route back from
+  // the call reaching the root names it (chained backward to the root's target). A root kind with no route named, or a
+  // root with no route, offers every such call, as it offers any call: no route is no reason to hold a root, and a call
+  // off a route is marked (off_path) for the producer and the grades to read. Its pointer is bound from the row by the
+  // call's own declaration (binds: {pointer field: row field}); binds naming no field, or a field the row lacks, offer
+  // nothing, as does a call no declaration names (fail closed: with no declaration read, nothing is chained). The owner's
+  // requires rows never stand in for a declaration. Then it is offered as any call is: served, its
+  // pointer meeting its declared inputs, nothing the owner's requires rows ask of it unmet. Once per frontier row: a
+  // selection of the call made over the same frontier (its frontier field) settles it, so it is offered again only over
+  // a newer made row. A request already asking for the call, or a decline, leaves it to the request. A failed offered
+  // call writes a failure, not a made row, so the same frontier is not offered again: the wait ends when the root makes
+  // a newer row or a producer asks for the call. Records reads the frontier as the row an offered call consumed.
   const frontierRow = frontierBefore(Number.POSITIVE_INFINITY)
   const asked = new Set(call.flat().map((c) => c.id))
-  const chained = frontierRow === undefined || declined ? [] : await Promise.all([...new Set([...new Set(reqs.map((q) => String(q.for)))]
-    .flatMap((t) => unmetGroups(t, undefined, (rs) => !pointerBound(rs)).flat().flatMap((q) => chainOf(String(q.needs)).calls)))]
-    .sort()
-    .map(async (type): Promise<Cand[]> => {
+  const routed = (type: string): boolean => note.path === undefined || !("calls" in note.path) || note.path.calls.includes(type)
+  const chained = frontierRow === undefined || declined ? [] : await Promise.all(Object.entries(declaredConsumes() ?? {})
+    .filter(([type]) => routed(type)).sort(([a], [b]) => a.localeCompare(b))
+    .map(async ([type, list]): Promise<Cand[]> => {
       const id = [CALL, type].join("/")
       if (asked.has(id)) return []
-      const q = reqs.find((x) => String(x.for) === type && String(x.needs) === String(frontierRow.shape) && takenBy(x, frontierRow)
-        && typeof x.binds === "object" && x.binds !== null)
-      if (q === undefined) return []
-      const fields = Object.entries(q.binds as Record<string, unknown>).map(([k, from]) => [k, frontierRow[String(from)]] as const)
+      const e = list.find((x) => x.shape === String(frontierRow.shape))
+      if (e === undefined) return []
+      const fields = Object.entries(e.binds).map(([k, from]) => [k, frontierRow[from]] as const)
       if (fields.length === 0 || fields.some(([, v]) => v === undefined)) return []
-      // the call is the one the chain names: a binds naming type does not change it
+      // the call is the one declared: a binds naming type does not change it
       const pointer: Record<string, unknown> = { ...Object.fromEntries(fields), type }
       const before = pool.some((x) => x.shape === SELECTION && x.a === id && (x.frontier as { id?: unknown } | undefined)?.id === frontierRow.id)
       if (before || !(await exists(type))) return []

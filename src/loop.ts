@@ -224,7 +224,6 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
     seed,
     a: a.id,
     ...(a.from ? { from: a.from } : {}),
-    ...(a.out_of_scope ? { out_of_scope: true } : {}),
     ...(a.off_path ? { off_path: true } : {}),
     cell: options[i].cell,
     context,

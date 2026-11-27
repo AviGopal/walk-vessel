@@ -13,8 +13,8 @@ export const WRITTEN: Record<string, string> = {
     "keeps repeating with the same result over the same inputs (the same failure, or a tree graded the same), " +
     "n times, nothing new since: a person's or the owner's row, or an answer the step takes in. gated: each gated " +
     "call not yet allowed here and what it needs (a need \"for the target the call names\" holds per target). frontier: " +
-    "its newest made row {id, shape}; calls: the calls whose requires take it, an offer (another stays callable, its " +
-    "selection marked out_of_scope); frontier_widened: none takes it. path: its route " +
+    "its newest made row {id, shape}; calls: the calls whose serving vessel declares they consume its shape; " +
+    "frontier_widened: none takes it. path: its route " +
     "(calls; next: allowed now), or no_path (broken links). On change.",
   [HOP]: "The record of one call the walk made, not a shape to call. pointer_type is the shape it called; kind (produce, " +
     "call, run or wait-for; wait-until on older rows) is how the walk chose the call, never a shape to call. Also phase (started or " +
@@ -24,7 +24,7 @@ export const WRITTEN: Record<string, string> = {
     "its cell and context, arm (treated or control, which decides whether a grade credits it), pool_refs, the rows " +
     "it saw, and timing: how long the tick's parts took (ms) and how many tries each read needed. Timing is never a key. " +
     "frontier, calls and frontier_widened: the chosen root's newest made row and the calls that take it, as " +
-    "request_acts says them; out_of_scope: the call chosen is not one of the calls its request's frontier is taken by; " +
+    "request_acts says them; " +
     "no_path and root_weight: the chosen root has no route to what reaches it, and the weight it was drawn under.",
   [FAILURE]: "A call that did not end well, with the status and body the producer answered; or, with kind skip, a " +
     "template the walk did not run because a shape it calls (unserved) is served by nothing or not yet allowed " +

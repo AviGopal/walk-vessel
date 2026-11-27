@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-// The step a gated call's chain names is offered (USER ruling 11-23, the walk offers the step a refusal's chain names).
-// A landing gated on a verdict of the clone's newest tree is told "gitDiff comes from a git_diff call"; when that call
-// takes the root's newest made row (a commit), it is offered with its pointer bound from that row by the owner's
-// requires row (binds), once per frontier row, with no request asking for it. Read from a real root's rows (cut to
-// what each leg needs) and a commit after them: commit, then the diff the landing needs.
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
+// The next step takes what the root last made: a call whose serving vessel declares it consumes the shape of the root's
+// newest made row (shape_consumes, as discovery answers it: fixtures/shape-consumes-live.json) is offered from that row,
+// with no request asking for it, when the route back from the landing names it; its pointer is bound from the row by the
+// call's own declaration (binds), once per frontier row. The owner's requires rows are preconditions only. Read from a
+// real root's rows (cut to what each leg needs) and a commit after them: commit, then the diff the landing needs.
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
@@ -13,33 +13,46 @@ type Cand = { id: string; pointer: Record<string, unknown>; from?: string }
 const fx = (name: string) => JSON.parse(readFileSync(join(import.meta.dir, "fixtures", name), "utf8").replaceAll('"writer-3"', '"walk-test"')) as { root: Row; rows: Row[]; owner?: Row[] }
 const XL = { "x-latest": { shapes: ["gitCommitResult", "gitWorktree", "gitDiff"], moves: ["gitCommitResult", "gitWorktree"], same: "cwd", field: "tree" } }
 const CT = { "x-latest": { shapes: ["gitCommitResult", "gitWorktree", "codeReplaceResult"], moves: ["gitCommitResult", "codeReplaceResult"], at: ["gitWorktree"], same: "cwd", field: "committed_tree" } }
-// the owner's rows as the seed writes them: the landing's verdict, the verdict's diff, and git_diff's two preconditions,
-// the commit's naming which field of the commit row the call's pointer takes
-const owner = (binds: Row | null = { cwd: "cwd" }): Row[] => [
+// the owner's rows as the seed writes them: a gap is reached by a landing, the landing's verdict, the verdict's diff, and
+// git_diff's two preconditions
+const LIVE = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "shape-consumes-live.json"), "utf8"))
+const owner = (): Row[] => [
+  { shape: "credits", id: "o-cr", seq: 90000, role: "owner", target: "gap", by_call: "git_land" },
   { shape: "requires", id: "o-land", seq: 90001, role: "owner", for: "git_land", needs: "land_verdict", where: { r: 1, tree: XL }, latest_by: "tree", group: "verdict" },
-  { shape: "shape_schema", id: "o-lv", seq: 90002, role: "owner", target: "land_verdict", variant: "", inputs: ["world_changed", { shape: "gitDiff", latest_by: "shape", where: { tree: XL, role: "walk" } }] },
-  { shape: "requires", id: "o-dc", seq: 90003, role: "owner", for: "git_diff", needs: "gitCommitResult", where: { committed_tree: CT }, latest_by: "cwd", group: "committed", ...(binds ? { binds } : {}) },
+  { shape: "shape_schema", id: "o-lv", seq: 90002, role: "owner", target: "land_verdict", variant: "gap", inputs: ["gap", { shape: "gitDiff", latest_by: "shape", where: { tree: XL, role: "walk" } }] },
+  { shape: "requires", id: "o-dc", seq: 90003, role: "owner", for: "git_diff", needs: "gitCommitResult", where: { committed_tree: CT }, latest_by: "cwd", group: "committed" },
   { shape: "requires", id: "o-dw", seq: 90004, role: "owner", for: "git_diff", needs: "gitWorktree", where: { committed_tree: CT }, latest_by: "cwd", group: "committed" },
 ]
 const ANSWERS = { git_diff: "gitDiff", git_commit: "gitCommitResult", git_clone: "gitWorktree", code_replace_lines: "codeReplaceResult" }
 
-describe("the step a gated call's chain names", () => {
+describe("the next step a call is declared to take from the root's newest made row", () => {
   const served = new Set(["git_land", "git_diff", "git_commit", "land_verdict"])
   const realFetch = globalThis.fetch
   let applicable: (pool: Row[], skipped?: Row[], now?: number, note?: Row, answers?: Record<string, string>) => Promise<Cand[]>
   let calls: { shapeAnswers: () => Promise<unknown>; forgetDeclaredInputs: () => void }
   let declares: Record<string, unknown> | undefined
+  // what discovery declares each call consumes; undefined: an answer with no shape_consumes
+  let consumes: Record<string, unknown> | undefined = LIVE.content.shape_consumes
   beforeAll(async () => {
     Object.assign(process.env, { WALK_VESSEL_ID: "walk-test", WALK_PORT: "1", DISCOVERY_URL: "http://discovery.test", WALK_ENDPOINT: "http://walk.test", METABOB_API_KEY: "k" })
     globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
       const { pointer } = JSON.parse(String(init?.body)) as { pointer: Record<string, unknown> }
-      if (pointer.type === "shapeDescriptions") return Response.json({ shape_answers: {}, shape_inputs: declares })
+      if (pointer.type === "shapeDescriptions") {
+        const { shape_consumes: _c, ...rest } = LIVE.content
+        return Response.json({ content: { ...rest, shape_inputs: declares ?? LIVE.content.shape_inputs, ...(consumes ? { shape_consumes: consumes } : {}) } })
+      }
       return Response.json({ content: { vessels: served.has(String(pointer.shape)) ? [{ vesselId: "v", endpoint: "http://v.test" }] : [] } })
     }) as typeof fetch
     applicable = (await import("../src/applicable")).applicable as any
     calls = (await import("../src/calls")) as any
   })
-  afterEach(() => calls.forgetDeclaredInputs())
+  beforeEach(async () => { await calls.shapeAnswers() })
+  afterEach(() => { calls.forgetDeclaredInputs(); declares = undefined; consumes = LIVE.content.shape_consumes })
+  // reads git_diff's declaration as given, the other calls' as discovery answers them
+  const diffTakes = async (binds: Row | undefined, shape = "gitCommitResult") => {
+    consumes = { ...LIVE.content.shape_consumes, git_diff: [{ shape, ...(binds ? { binds } : {}) }] }
+    await calls.shapeAnswers()
+  }
   afterAll(() => { globalThis.fetch = realFetch })
 
   const f = fx("latest-82ac.json")
@@ -59,14 +72,22 @@ describe("the step a gated call's chain names", () => {
     expect(diffs.map((c) => (c as Cand & { reads?: unknown }).reads)).toEqual([["gitCommitResult"]])
   })
 
+  test("[MUST-FAIL] a root with no route (its verdict made from a shape nothing here makes) still has git_diff chained, marked off_path", async () => {
+    const broken = owner().map((r) => (r.id === "o-lv" ? { ...r, variant: "", inputs: ["world_changed", ...r.inputs.slice(1)] } : r))
+    const diffs = await run([commit], broken)
+    expect(diffs.map((c) => [c.pointer, (c as Cand & { off_path?: true }).off_path])).toEqual([[{ type: "git_diff", cwd }, true]])
+  })
+
   test("[MUST-FAIL] each pointer field is the row field binds names for it, not the row's field of the same name", async () => {
     const named = { ...commit, repo_name: "demo" }
-    const diffs = await run([named], owner({ cwd: "cwd", repo: "repo_name" }))
+    await diffTakes({ cwd: "cwd", repo: "repo_name" })
+    const diffs = await run([named])
     expect(diffs.map((c) => c.pointer)).toEqual([{ type: "git_diff", cwd, repo: "demo" }])
   })
 
   test("[MUST-FAIL] a binds naming type does not change the call", async () => {
-    expect((await run([commit], owner({ cwd: "cwd", type: "call_id" }))).map((c) => c.pointer)).toEqual([{ type: "git_diff", cwd }])
+    await diffTakes({ cwd: "cwd", type: "call_id" })
+    expect((await run([commit])).map((c) => c.pointer)).toEqual([{ type: "git_diff", cwd }])
   })
 
   test("[MUST-FAIL] only a selection of this call settles it: another move over the same commit, another call over it, or a row of another shape naming the call, does not", async () => {
@@ -79,20 +100,32 @@ describe("the step a gated call's chain names", () => {
   })
 
   test("[GUARD] binds that name no field, or are not an object, offer nothing", async () => {
-    expect(await run([commit], owner({}))).toEqual([])
-    const nulled = owner().map((r) => (r.id === "o-dc" ? { ...r, binds: null } : r))
-    expect(await run([commit], nulled)).toEqual([])
+    await diffTakes({})
+    expect(await run([commit])).toEqual([])
+    await diffTakes(undefined)
+    expect(await run([commit])).toEqual([])
+    consumes = { ...LIVE.content.shape_consumes, git_diff: [{ shape: "gitCommitResult", binds: ["cwd"] }] }
+    await calls.shapeAnswers()
+    expect(await run([commit])).toEqual([])
   })
 
-  test("[GUARD] only the offered call's own requires row binds it: another call's row taking the commit, with binds, does not", async () => {
-    const push = { shape: "requires", id: "o-push", seq: 90006, role: "owner", for: "git_push", needs: "gitCommitResult", where: { committed_tree: CT }, latest_by: "cwd", group: "c", binds: { cwd: "cwd" } }
-    expect(await run([commit], [...owner(null), push])).toEqual([])
+  test("[GUARD] only the offered call's own declaration binds it: another call declared to consume the commit does not", async () => {
+    const { git_diff: _d, ...rest } = LIVE.content.shape_consumes
+    consumes = { ...rest, git_push: [{ shape: "gitCommitResult", binds: { cwd: "cwd" } }] }
+    await calls.shapeAnswers()
+    expect(await run([commit])).toEqual([])
   })
 
-  test("[GUARD] a group bound to a call's own pointer names no chain step: it is judged for one target only", async () => {
-    // fs_edit's read-the-file gate, bound to the path it edits, is the only gate naming gitDiff here
-    const edit = { shape: "requires", id: "o-fe", seq: 90007, role: "owner", for: "fs_edit", needs: "gitDiff", where: { path: { "x-pointer": "path" } }, group: "read" }
-    expect(await run([commit], [edit, ...owner().filter((r) => r.for === "git_diff")])).toEqual([])
+  test("[GUARD] fail closed: an answer declaring no consumes, or none at all, chains nothing; the owner's requires rows never take its place", async () => {
+    consumes = undefined
+    await calls.shapeAnswers()
+    expect(await run([commit])).toEqual([])
+    // with binds on git_diff's requires row, as the seed writes them until the walk installs
+    const bound = owner().map((r) => (r.id === "o-dc" ? { ...r, binds: { cwd: "cwd" } } : r))
+    expect(await run([commit], bound)).toEqual([])
+    served.delete("shapeDescriptions")
+    calls.forgetDeclaredInputs()
+    expect(await run([commit], bound)).toEqual([])
   })
 
   test("[MUST-FAIL] the offered call's own pointer-bound gate is judged on its pointer: met for this clone, it is offered; unmet, it is not", async () => {
@@ -128,7 +161,7 @@ describe("the step a gated call's chain names", () => {
     expect(await run([commit, diff])).toEqual([])
   })
 
-  test("[GUARD] a clean clone with nothing committed since: no binds on the clone's row, so nothing is offered", async () => {
+  test("[GUARD] a clean clone with nothing committed since: git_diff is not declared to consume a clone, so it is not offered", async () => {
     const fresh = { shape: "gitWorktree", id: "w2", seq: 69600, role: "walk", call_id: "cw", cwd, tree: T(5), committed_tree: T(5), input_refs: [root] }
     expect(await run([fresh])).toEqual([])
   })
@@ -138,20 +171,22 @@ describe("the step a gated call's chain names", () => {
     expect(await run([commit, edit])).toEqual([])
   })
 
-  test("[GUARD] which row leads on to which call is the owner's: with no binds on git_diff's commit row, nothing is offered", async () => {
-    expect(await run([commit], owner(null))).toEqual([])
+  test("[GUARD] which row leads on to which call is the call's declaration: git_diff declared to consume a diff takes no commit", async () => {
+    await diffTakes({ cwd: "cwd" }, "gitDiff")
+    expect(await run([commit])).toEqual([])
   })
 
-  test("[GUARD] only a row the requires row takes leads on: a newer commit on a clone the root was not handed offers nothing", async () => {
+  test("[MUST-FAIL] what takes the row is the declaration, not a requires row's where: a newer commit in another clone is taken, bound to that clone", async () => {
     const other = { shape: "gitCommitResult", id: "k3", seq: 69700, role: "walk", call_id: "ck3", cwd: "/workspace/git/walk-trees/another", tree: T(9), committed_tree: T(9), input_refs: [root] }
-    expect(await run([commit, other])).toEqual([])
+    expect((await run([commit, other])).map((c) => c.pointer)).toEqual([{ type: "git_diff", cwd: "/workspace/git/walk-trees/another" }])
   })
 
   test("[GUARD] a pointer field the row does not carry: binds naming a field the commit lacks offers nothing", async () => {
-    expect(await run([commit], owner({ cwd: "cwd", repo: "repo" }))).toEqual([])
+    await diffTakes({ cwd: "cwd", repo: "repo" })
+    expect(await run([commit])).toEqual([])
   })
 
-  test("[GUARD] only a gated call's chain names it: with a verdict of the commit's tree here, the landing is not gated and no diff is offered", async () => {
+  test("[GUARD] chained backward to the root's target: with a verdict of the commit's tree here, the landing is not gated, git_diff is on no route back from it, and no diff is offered", async () => {
     // written before the commit, so the commit is still the newest made row and only the landing's verdict decides
     const verdict = { shape: "land_verdict", id: "v1", seq: 69550, role: "described", r: 1, tree: T(2), input_refs: [root] }
     expect(await run([commit, verdict])).toEqual([])
