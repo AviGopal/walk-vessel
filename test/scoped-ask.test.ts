@@ -103,6 +103,29 @@ describe("a request asked for one call the root's newest row meets in part", () 
     expect(scoped(await all([edit]))).toEqual([])
   })
 
+  // the owner's preconditions on a commit, as the seed writes them: an edit in the clone, or a clone carrying an
+  // uncommitted change
+  const uncommitted = (): Row[] => [
+    { shape: "requires", id: "o-ce", seq: 90010, role: "owner", for: "git_commit", needs: "fileEditResult", where: { cwd: { "x-pointer": "cwd" } }, latest_by: "cwd", group: "uncommitted" },
+    { shape: "requires", id: "o-cw", seq: 90011, role: "owner", for: "git_commit", needs: "gitWorktree", where: { carried: "uncommitted", cwd: { "x-pointer": "cwd" } }, latest_by: "cwd", group: "uncommitted" },
+  ]
+
+  test("[MUST-FAIL] the owner's preconditions on the call hold for its ask: a clean clone is not asked for a commit; an edit in it is", async () => {
+    // the clone (the fixture's gitWorktree) is the newest made row, and nothing in it is uncommitted
+    expect(scoped(await all(uncommitted())).filter((c) => c.pointer.scope.call === "git_commit")).toEqual([])
+    expect(scoped(await all([...uncommitted(), edit])).map((c) => c.pointer.scope)).toEqual([{ call: "git_commit", bound: { cwd } }])
+  })
+
+  test("[GUARD] a clone carrying an uncommitted change is asked for a commit", async () => {
+    const carrying = { shape: "gitWorktree", id: "w2", seq: 69700, role: "walk", call_id: "cw", cwd, carried: "uncommitted", input_refs: [root] }
+    expect(scoped(await all([...uncommitted(), carrying])).map((c) => c.pointer.scope)).toEqual([{ call: "git_commit", bound: { cwd } }])
+  })
+
+  test("[GUARD] a precondition on a field the ask is for the producer to write does not hold the ask", async () => {
+    const onMessage = { shape: "requires", id: "o-cm", seq: 90012, role: "owner", for: "git_commit", needs: "commit_note", where: { message: { "x-pointer": "message" } }, group: "noted" }
+    expect(scoped(await all([...uncommitted(), onMessage, edit])).map((c) => c.pointer.scope)).toEqual([{ call: "git_commit", bound: { cwd } }])
+  })
+
   test("[GUARD] a bound value that is not a string, number or boolean asks for nothing", async () => {
     expect(scoped(await all([{ ...edit, cwd: { at: cwd } }]))).toEqual([])
   })

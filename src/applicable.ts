@@ -927,7 +927,8 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // call requires fields it does not fill (a commit's message), a request is asked for scoped to that call (scope: the
   // call, and the fields bound from the row, as the row holds them): the producer writes the rest, or declines the call.
   // Only fields the call declares it takes, each a string, number or boolean, are bound; any other leaves nothing asked
-  // (fail closed), as does a vocabulary not read. Once per call and frontier row, as the call itself: a scoped ask made
+  // (fail closed), as does a vocabulary not read. What the owner's requires rows ask of the call is met first, as for
+  // the call itself, as far as the bound fields can judge it. Once per call and frontier row, as the call itself: a scoped ask made
   // over the row, answered, declined or refused, settles it, so it is asked again only over a newer made row.
   const scopedId = (type: string) => `${SCOPED}${type}`
   const scopedAsk = async (type: string, bound: Record<string, unknown>, vocab: Record<string, unknown>): Promise<Cand[]> => {
@@ -967,7 +968,12 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       if (before || !(await exists(type))) return []
       const vocab = declaredInputs()
       const { type: _t, ...args } = pointer
-      if (vocab !== undefined && vocab !== null && lacking(vocab, type, args).length > 0) return scopedAsk(type, args, vocab)
+      // the owner's preconditions on the call hold for an ask of it as for the call: a commit asked for in a clone with
+      // nothing in it to commit is not asked. Only those judged on what is bound: a group bound to a field the ask is
+      // for the producer to write cannot be judged before it is written, and is judged when the call is made.
+      if (vocab !== undefined && vocab !== null && lacking(vocab, type, args).length > 0) {
+        return unmet(type, pointer, (rs) => pointerFields(rs).every((k) => pointer[k] !== undefined)).length > 0 ? [] : scopedAsk(type, args, vocab)
+      }
       if (vocab !== undefined && callProblem(vocab, type, args) !== undefined) return []
       if (unmet(type, pointer).length > 0) return []
       return [{ ...base, id, kind: CALL, pointer, reads: [String(frontierRow.shape)] }]
