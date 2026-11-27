@@ -98,6 +98,21 @@ export const problem = (schema: unknown, value: unknown, at = ""): string | unde
   return undefined
 }
 
+/** The fields a call of this type requires that this pointer lacks, by its declared inputs: none when the tool declared
+ * no inputs or its declaration is not an object. */
+export const lacking = (inputs: Record<string, unknown>, type: string, pointer: Record<string, unknown>): string[] => {
+  const s = inputs[type]
+  if (typeof s !== "object" || s === null || Array.isArray(s)) return []
+  return [(s as Schema).required ?? []].flat().map(String).filter((k) => pointer[k] === undefined)
+}
+
+/** The fields a call of this type declares it takes (its declared inputs' properties). */
+export const takes = (inputs: Record<string, unknown>, type: string): Set<string> => {
+  const s = inputs[type]
+  const props = typeof s === "object" && s !== null ? (s as Schema).properties : undefined
+  return new Set(typeof props === "object" && props !== null ? Object.keys(props) : [])
+}
+
 /** Why a call of this type with this pointer may not be made, or undefined when it may: the tool must have declared its
  * inputs, and the pointer (less the walk's own forwarding keys) must meet them. inputs null: the vocabulary could not be
  * read, so no call is made. */

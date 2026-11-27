@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto"
 import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
 import { type Cand, type ChildTemplate, ENDED, MAX_RUN_DEPTH, STARTED, type Inner, type Row, declaredConsumes, declaredInputs, exists, servers } from "./calls"
-import { callProblem, shownValue } from "./inputs"
+import { callProblem, lacking, shownValue, takes } from "./inputs"
 import { repeatKeysOf, stable } from "./acts"
 import { VESSEL_ID } from "./config"
 import {
@@ -13,6 +13,8 @@ import {
 const SCHEMAS = new Set([SHAPE_SCHEMA])
 const CHANNELS = new Set([CHANNEL])
 const REQUESTS = new Set([REQUEST])
+// The last part of a scoped ask's id: a request asked for one call (scope), a cell apart from the request's own produce.
+const SCOPED = "scope:"
 const TEMPLATES = new Set([ACTIVITY_TEMPLATE])
 const DUES = new Set([DUE])
 // How the walk got here, not what a producer answers: its own records of choices and calls. A tool's answer the walk
@@ -809,9 +811,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const answered = new Set(pool.filter((r) => r.shape === SELECTION && r.from !== undefined && ended.has(r.id)).map((r) => String(r.from)))
   // A request row without a pointer to call is the producer saying no further call is needed (a decline). When the
   // newest request of the root is one, no call is offered for it, older ones included; one written later asks again.
+  // A request asked under a scope (one call, chained below) that declines declines that call only: it is not the root's
+  // decline, and the scoped ask is not made again over the same row (below).
   const requests = pool.filter((x) => REQUESTS.has(x.shape)).sort((a, b) => a.seq - b.seq)
   const callable = (r: Row): boolean => typeof (r.pointer as { type?: unknown } | undefined)?.type === "string"
-  const declined = requests.length > 0 && !callable(requests[requests.length - 1])
+  const scopedDecline = (r: Row): boolean => r.scope !== undefined && !callable(r)
+  const asks = requests.filter((r) => !scopedDecline(r))
+  const declined = asks.length > 0 && !callable(asks[asks.length - 1])
   const latest = new Map<string, Row>()
   for (const r of declined ? [] : requests.filter(callable)) {
     latest.set(String((r.pointer as { type: string }).type), r)
@@ -917,6 +923,32 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // a newer made row. A request already asking for the call, or a decline, leaves it to the request. A failed offered
   // call writes a failure, not a made row, so the same frontier is not offered again: the wait ends when the root makes
   // a newer row or a producer asks for the call. Records reads the frontier as the row an offered call consumed.
+  // A CALL THE ROW MEETS IN PART IS ASKED OF A PRODUCER. When the row binds what the call's declaration binds but the
+  // call requires fields it does not fill (a commit's message), a request is asked for scoped to that call (scope: the
+  // call, and the fields bound from the row, as the row holds them): the producer writes the rest, or declines the call.
+  // Only fields the call declares it takes, each a string, number or boolean, are bound; any other leaves nothing asked
+  // (fail closed), as does a vocabulary not read. Once per call and frontier row, as the call itself: a scoped ask made
+  // over the row, answered, declined or refused, settles it, so it is asked again only over a newer made row.
+  const scopedId = (type: string) => `${SCOPED}${type}`
+  const scopedAsk = async (type: string, bound: Record<string, unknown>, vocab: Record<string, unknown>): Promise<Cand[]> => {
+    const declares = takes(vocab, type)
+    if (!Object.entries(bound).every(([k, v]) => declares.has(k) && ["string", "number", "boolean"].includes(typeof v))) return []
+    const askedHere = pool.some((x) => x.shape === SELECTION && String(x.a).startsWith(`${PRODUCE}/${REQUEST}/`) &&
+      String(x.a).endsWith(`/${scopedId(type)}`) && (x.frontier as { id?: unknown } | undefined)?.id === frontierRow?.id)
+    if (askedHere) return []
+    return (await Promise.all(ready.filter((s) => String(s.target) === REQUEST).map(async (s) => {
+      if (!(await exists(REQUEST))) return []
+      const v = variant(s)
+      return channels.map((ch): Cand => ({
+        ...base,
+        id: [PRODUCE, REQUEST, ...(v ? [v] : []), ch.id, scopedId(type)].join("/"),
+        kind: PRODUCE,
+        pointer: { type: REQUEST, shape: REQUEST, via_ref: ch.id, ...(v ? { variant: v } : {}), scope: { call: type, bound } },
+        reads: [s.inputs, s.context ?? []].flat().map(shapeOf),
+        seen_key: key(pool.filter(seen(s)).map((r) => r.id)),
+      }))
+    }))).flat()
+  }
   const frontierRow = frontierBefore(Number.POSITIVE_INFINITY)
   const asked = new Set(call.flat().map((c) => c.id))
   const routed = (type: string): boolean => note.path === undefined || !("calls" in note.path) || note.path.calls.includes(type)
@@ -935,6 +967,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       if (before || !(await exists(type))) return []
       const vocab = declaredInputs()
       const { type: _t, ...args } = pointer
+      if (vocab !== undefined && vocab !== null && lacking(vocab, type, args).length > 0) return scopedAsk(type, args, vocab)
       if (vocab !== undefined && callProblem(vocab, type, args) !== undefined) return []
       if (unmet(type, pointer).length > 0) return []
       return [{ ...base, id, kind: CALL, pointer, reads: [String(frontierRow.shape)] }]
