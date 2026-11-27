@@ -28,6 +28,7 @@ export const WAIT_FOR = "wait-for"
 export const WALK = "walk"
 export const PERSON = "person"
 export const OWNER = "owner"
+export const DETECTOR = "detector"
 export const DESCRIBED = "described"
 // The owner's record of a span when a vessel was restarted; one that installed code names what it installed
 // (installed: [{repo, commit, vessel}]).

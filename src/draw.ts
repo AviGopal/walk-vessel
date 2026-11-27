@@ -50,14 +50,54 @@ export const draw = (seed: number, posts: Post[]): number => {
     const y = gamma(b)
     return x / (x + y)
   }
-  let best = 0
-  let top = -Infinity
-  posts.forEach((p, i) => {
-    const x = beta(p.alpha, p.beta)
-    if (x > top) {
-      best = i
-      top = x
+  if (posts.length <= 1) return 0
+  const M = 64
+  const n = posts.length
+  const samples: number[][] = []
+  const winCount = new Array<number>(n).fill(0)
+  let thetaStarSum = 0
+  for (let m = 0; m < M; m++) {
+    const row = new Array<number>(n)
+    let rowMax = -Infinity
+    let rowArg = 0
+    for (let i = 0; i < n; i++) {
+      const p = posts[i]
+      const x = beta(p.alpha, p.beta)
+      row[i] = x
+      if (x > rowMax) {
+        rowMax = x
+        rowArg = i
+      }
     }
-  })
+    samples.push(row)
+    winCount[rowArg]++
+    thetaStarSum += rowMax
+  }
+  const unanimous = winCount.indexOf(M)
+  if (unanimous >= 0) return unanimous
+  const thetaStarMean = thetaStarSum / M
+  const binEntropy = (p: number): number =>
+    p <= 1e-12 || p >= 1 - 1e-12 ? 0 : -p * Math.log(p) - (1 - p) * Math.log(1 - p)
+  let best = 0
+  let bestPsi = Number.POSITIVE_INFINITY
+  let bestMu = -Infinity
+  for (let i = 0; i < n; i++) {
+    let muSum = 0
+    let entSum = 0
+    for (let m = 0; m < M; m++) {
+      const x = samples[m][i]
+      muSum += x
+      entSum += binEntropy(x)
+    }
+    const mu = muSum / M
+    const delta = Math.max(0, thetaStarMean - mu)
+    const ig = Math.max(0, binEntropy(mu) - entSum / M)
+    const psi = delta <= 1e-12 ? 0 : ig <= 1e-12 ? Number.POSITIVE_INFINITY : (delta * delta) / ig
+    if (psi < bestPsi || (psi === bestPsi && mu > bestMu)) {
+      best = i
+      bestPsi = psi
+      bestMu = mu
+    }
+  }
   return best
 }

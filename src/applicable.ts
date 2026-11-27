@@ -7,7 +7,7 @@ import { repeatKeysOf, stable } from "./acts"
 import { VESSEL_ID } from "./config"
 import {
   ACTIVITY_TEMPLATE, ARM, CHANNEL, CLONE_BINDING, CREDITS, DUE, FAILURE, HOP, INFRA_WINDOW, NEWS_KEY, OUTCOME, PRODUCE, CALL, REQUEST, REQUIRES, RHYTHM, RUN, SELECTION, SHAPE_SCHEMA, STALL, WAIT_FOR,
-  DESCRIBED, OWNER, PERSON, WALK,
+  DESCRIBED, DETECTOR, OWNER, PERSON, WALK,
 } from "./shapes"
 
 const SCHEMAS = new Set([SHAPE_SCHEMA])
@@ -545,8 +545,13 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // failures, as a refusal is, so the request is produced again with the reason in view; otherwise nothing new would
   // come, and the walk, with no move, would wait for a row no one writes. The request itself stays callable: once the
   // precondition is met, its call is offered.
-  const spoke = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.blames === "request" &&
+  const toolSel = (r: Row): boolean =>
     [CALL, RUN].some((k) => String(byId.get(String(r.selection_ref))?.a ?? "").startsWith(`${k}/`))
+  const isUnservedFailure = (r: Row): boolean =>
+    r.shape === FAILURE && r.role === WALK && r.kind === undefined && r.waits_for !== "person" &&
+    typeof r.unserved === "string" && r.unserved !== "" && toolSel(r)
+  const spoke = (r: Row): boolean =>
+    isUnservedFailure(r) || (r.shape === FAILURE && r.role === WALK && r.blames === "request" && toolSel(r))
   // Only a reason the root has not been told since it last learned something is new: a held row giving a reason already
   // given (another request, still waiting on the same thing, however other holds interleave) says nothing new, so the
   // request is not produced again over it. Otherwise each request produced over a reason is held for it again, its row
@@ -870,7 +875,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // fields), so rewording buys one call, and the refusal it repeats is in the producer's view. New: a walk result that is
   // news (brought: a commit made in the clone is), a row from outside the walk a producer reads (learned), or, for a run,
   // a row of a shape it takes in from outside the walk.
-  const refusedHere = (f: Row): boolean => f.shape === FAILURE && f.role === WALK && (f.blames === "request" || f.kind === "too_big")
+  const refusedHere = (f: Row): boolean => isUnservedFailure(f) || (f.shape === FAILURE && f.role === WALK && (f.blames === "request" || f.kind === "too_big"))
   const canon = (v: unknown): unknown => Array.isArray(v) ? v.map(canon) : typeof v === "object" && v !== null
     ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])])) : v
   const callKey = (shape: string, args: unknown): string => JSON.stringify([shape, canon(args)])
@@ -882,9 +887,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const refused = pool.filter(refusedHere).sort((a, b) => a.seq - b.seq).flatMap((f) => {
     const sel = byId.get(String(f.selection_ref))
     const a = String(sel?.a ?? "")
+    const unserved = isUnservedFailure(f) ? String(f.unserved) : undefined
     if (a.startsWith(`${RUN}/`)) {
       const h = startedOf.get(String(f.call_id))
-      return h === undefined ? [] : [{ seq: f.seq, kind: f.kind, key: callKey(String(h.pointer_type), h.args) }]
+      return h === undefined ? [] : [{ seq: f.seq, kind: f.kind, unserved, key: callKey(String(h.pointer_type), h.args) }]
     }
     // a call no request asked for (the chain step, below) is held by its frontier row instead: there is no request
     // pointer to key it by
@@ -892,13 +898,16 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     if (reqId !== undefined && (a.startsWith(`${CALL}/`) || sel === undefined)) {
       const p = (byId.get(reqId)?.pointer ?? {}) as Record<string, unknown>
       const type = typeof p.type === "string" ? p.type : a.startsWith(`${CALL}/`) ? a.slice(CALL.length + 1) : undefined
-      return type === undefined ? [] : [{ seq: f.seq, kind: f.kind, key: callKey(type, argsOf(p)) }]
+      return type === undefined ? [] : [{ seq: f.seq, kind: f.kind, unserved, key: callKey(type, argsOf(p)) }]
     }
     return []
   })
+  const servedDetector = (u: string | undefined) => (x: Row): boolean =>
+    u !== undefined && x.role === DETECTOR && typeof x.served === "string" && x.served === u
   const newsSince = (seq: number, also: (x: Row) => boolean = () => false): boolean =>
     pool.some((x) => x.seq > seq && (brought(x) || learned(x) || also(x)))
-  const settled = (key: string, also?: (x: Row) => boolean) => refused.filter((x) => x.key === key && !newsSince(x.seq, also)).at(-1)
+  const settled = (key: string, also?: (x: Row) => boolean) =>
+    refused.filter((x) => x.key === key && !newsSince(x.seq, (row) => (also !== undefined && also(row)) || servedDetector(x.unserved)(row))).at(-1)
   const call = await Promise.all([...latest.entries()].map(async ([type, r]) => {
     const served = await exists(type)
     // a call is offered only when its callee declared what it takes and this request's pointer meets it (inputs.ts):
@@ -911,12 +920,17 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     // latest refusal is asked: an install after it is after every earlier one too.
     const asKey = callKey(type, argsOf(asked))
     const lastRefusal = refused.filter((x) => x.key === asKey).at(-1)
-    const reopened = lastRefusal !== undefined && await bearsOn(pool.filter((x) => x.seq > lastRefusal.seq && x.seq < r.seq), type)
+    const reopened = lastRefusal !== undefined && (
+      await bearsOn(pool.filter((x) => x.seq > lastRefusal.seq && x.seq < r.seq), type) ||
+      pool.some((x) => x.seq > lastRefusal.seq && x.seq < r.seq && servedDetector(lastRefusal.unserved)(x))
+    )
     const prior = reopened ? undefined : settled(asKey)
     const gate = [...unmet(type, r.pointer as Record<string, unknown> | undefined), ...(takes !== undefined ? [takes] : []),
       ...(prior !== undefined ? [prior.kind === "too_big"
         ? `${type}: this same call answered too_big here (row ${prior.seq}) and nothing new has come since; read or change it in parts (a call answering a line range)`
-        : `${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
+        : prior.unserved !== undefined
+          ? `${type}: ${prior.unserved} was unserved here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`
+          : `${type}: this same call was refused here (row ${prior.seq}) and nothing new has come since; a different pointer is a different call`] : [])]
     const behind = refsOfReasons(gate)
     if (served && !answered.has(r.id) && gate.length > 0) skipped.push({ id: r.id, unserved: gate, of: "request", ...(behind.length > 0 ? { against_refs: behind } : {}) })
     return [r].filter(() => served && !answered.has(r.id) && gate.length === 0).map((): Cand => ({
@@ -1182,7 +1196,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     if (last === undefined) return false
     const failed = pool.filter((x) => x.shape === FAILURE && x.role === WALK && String(x.selection_ref) === last.id && x.kind === undefined)
     if (failed.length > 0 && !failed.some(refusedHere)) return false
-    if (failed.some(refusedHere)) return !newsSince(Math.max(...failed.map((f) => f.seq)), takesIn(r))
+    if (failed.some(refusedHere)) {
+      const unserveds = [...new Set(failed.filter(isUnservedFailure).map((f) => String(f.unserved)))]
+      const recovered = (x: Row): boolean => takesIn(r)(x) || unserveds.some((u) => servedDetector(u)(x))
+      return !newsSince(Math.max(...failed.map((f) => f.seq)), recovered)
+    }
     const takes = new Set((r.sig as { in: string[] }).in)
     return !pool.some((x) => x.seq > last.seq && takes.has(x.shape) && x.role !== WALK)
   }
