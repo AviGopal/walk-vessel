@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto"
 import { type Scope, bind, inputsOf, placeholders, repoOf } from "./bind"
-import { type Cand, type ChildTemplate, ENDED, MAX_RUN_DEPTH, STARTED, type Inner, type Row, declaredConsumes, declaredInputs, exists, servers } from "./calls"
+import { type Cand, type ChildTemplate, type Consume, ENDED, MAX_RUN_DEPTH, STARTED, type Inner, type Row, declaredConsumes, declaredInputs, exists, servers } from "./calls"
 import { callProblem, lacking, shownValue, takes } from "./inputs"
 import { repeatKeysOf, stable } from "./acts"
 import { VESSEL_ID } from "./config"
@@ -234,18 +234,22 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // whoever wrote the row: a person's verdict is one); rows every root shares are no root's. The calls that take it are
   // those whose serving vessel declares it consumes the row's shape (shape_consumes, read with the vocabulary): one
   // reader per fact, so which call takes which row is never also listed here or in the owner's rows, whose requires
-  // rows stay preconditions. With no declaration read, no call takes it. A frontier no call takes, or none at all, says
-  // it was widened. A request is an ask, not something made for a next step to take, so it is never the frontier.
+  // rows stay preconditions: a declared call takes the row only where they hold on it (heldOn, below). With no declaration
+  // read, no call takes it. A frontier no call takes, or none at all, says it was widened. A request is an ask, not
+  // something made for a next step to take, so it is never the frontier.
   const made = new Set([...Object.values(answers), ...schemas.map((s) => String(s.target))].filter((x) => !REQUESTS.has(x)))
   const frontierBefore = (at: number): Row | undefined => pool
     .filter((r) => made.has(String(r.shape)) && note.shared?.has(r.id) !== true && r.seq < at).sort((a, b) => a.seq - b.seq).at(-1)
-  const consumersOf = (f: Row | undefined): string[] =>
-    f === undefined ? [] : Object.entries(declaredConsumes() ?? {}).filter(([, list]) => list.some((e) => e.shape === String(f.shape))).map(([c]) => c).sort()
+  // the pointer a declared call's binds fill from the row, each field the row carries
+  const boundFrom = (e: Consume, f: Row): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(e.binds).flatMap(([k, from]) => f[from] === undefined ? [] : [[k, f[from]]]))
+  const consumersOf = (f: Row | undefined): string[] => f === undefined ? [] : Object.entries(declaredConsumes() ?? {})
+    .filter(([c, list]) => list.some((e) => e.shape === String(f.shape) && heldOn(c, String(f.shape), boundFrom(e, f))))
+    .map(([c]) => c).sort()
   const frontierOf = (f: Row | undefined): Frontier => {
     const calls = consumersOf(f)
     return { ...(f !== undefined ? { id: f.id, shape: String(f.shape) } : {}), calls, widened: calls.length === 0 }
   }
-  note.frontier = frontierOf(frontierBefore(Number.POSITIVE_INFINITY))
   // A requirement is met by the root's LATEST row of the shape it needs, so a later judgment revokes an earlier one. When
   // rows of that shape each speak for something different (one gap or another), the requires row names the field that
   // tells them apart (latest_by), and the latest row of each counts: any one meeting where meets it. The field is the
@@ -376,6 +380,15 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const pointerFields = (rs: Row[]): string[] => [...new Set(rs.flatMap((q) => Object.values((q.where ?? {}) as Record<string, unknown>)
     .flatMap((v) => typeof v === "object" && v !== null && "x-pointer" in v ? [String((v as { "x-pointer": unknown })["x-pointer"])] : [])))]
   const pointerBound = (rs: Row[]): boolean => pointerFields(rs).length > 0
+  // WHETHER A CALL TAKES A ROW OF ITS SHAPE NOW. The tools' consumes say which call takes a row; the owner's requires
+  // rows say when. A call takes the row only when every group of its requires rows naming the row's shape is met, judged
+  // on the pointer bound from the row: a group bound to a field the row does not fill (one a producer writes) is judged
+  // when the call is made, not here. One reading for the frontier's calls and for an ask scoped to a call, so a call is
+  // never listed as taking a row it would be refused an ask for: a refused verdict is no landing's, a clean clone no
+  // commit's.
+  const heldOn = (call: string, shape: string, pointer: Record<string, unknown>): boolean =>
+    unmet(call, pointer, (rs) => rs.some((q) => String(q.needs) === shape) && pointerFields(rs).every((k) => pointer[k] !== undefined)).length === 0
+  note.frontier = frontierOf(frontierBefore(Number.POSITIVE_INFINITY))
   const frontierTarget = (rs: Row[]): Record<string, unknown> | undefined => {
     const fields = pointerFields(rs)
     const at = pool.filter((r) => made.has(String(r.shape)) && note.shared?.has(r.id) !== true && fields.every((f) => r[f] !== undefined))
@@ -968,11 +981,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       if (before || !(await exists(type))) return []
       const vocab = declaredInputs()
       const { type: _t, ...args } = pointer
-      // the owner's preconditions on the call hold for an ask of it as for the call: a commit asked for in a clone with
-      // nothing in it to commit is not asked. Only those judged on what is bound: a group bound to a field the ask is
-      // for the producer to write cannot be judged before it is written, and is judged when the call is made.
+      // the owner's preconditions on the call hold for an ask of it as for its taking the row (heldOn): a commit asked
+      // for in a clone with nothing in it to commit is not asked
       if (vocab !== undefined && vocab !== null && lacking(vocab, type, args).length > 0) {
-        return unmet(type, pointer, (rs) => pointerFields(rs).every((k) => pointer[k] !== undefined)).length > 0 ? [] : scopedAsk(type, args, vocab)
+        return heldOn(type, String(frontierRow.shape), pointer) ? scopedAsk(type, args, vocab) : []
       }
       if (vocab !== undefined && callProblem(vocab, type, args) !== undefined) return []
       if (unmet(type, pointer).length > 0) return []

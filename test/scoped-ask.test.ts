@@ -122,8 +122,10 @@ describe("a request asked for one call the root's newest row meets in part", () 
   })
 
   test("[GUARD] a precondition on a field the ask is for the producer to write does not hold the ask", async () => {
-    const onMessage = { shape: "requires", id: "o-cm", seq: 90012, role: "owner", for: "git_commit", needs: "commit_note", where: { message: { "x-pointer": "message" } }, group: "noted" }
-    expect(scoped(await all([...uncommitted(), onMessage, edit])).map((c) => c.pointer.scope)).toEqual([{ call: "git_commit", bound: { cwd } }])
+    // a precondition on the read the edit is asked over, so it is one the ask is judged by, bound to the text the
+    // producer writes
+    const onText = { shape: "requires", id: "o-et", seq: 90012, role: "owner", for: "fs_edit", needs: "fileContent", where: { content: { "x-pointer": "old_string" } }, latest_by: "path", group: "read" }
+    expect(scoped(await all([onText, read])).map((c) => c.pointer.scope)).toEqual([{ call: "fs_edit", bound: { path } }])
   })
 
   test("[GUARD] a bound value that is not a string, number or boolean asks for nothing", async () => {

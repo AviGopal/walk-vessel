@@ -61,8 +61,9 @@ describe("a commit's precondition bound to its clone is judged for the frontier'
   test("[MUST-FAIL] an edit in another clone than the frontier's leaves git_commit gated, its reason read against the frontier's clone", async () => {
     const newer = { ...tree, id: "w2", seq: 13, cwd: "/trees/z" }
     const { gated, calls } = await gatedOf([...COMMIT, gap, tree, edit("/trees/x"), newer])
-    // git_commit is declared to consume a clone, so it takes the frontier; whether it may be called is its gate's to say
-    expect(calls).toEqual(["git_commit"])
+    // git_commit is declared to consume a clone, but its precondition on the clone the frontier names is not met there
+    // (nothing uncommitted in it), so it does not take the frontier; why is its gate's to say
+    expect(calls).toEqual([])
     expect(gated?.length).toBe(1)
     expect(gated?.[0]).toContain(`cwd: the call's "/trees/z"`)
     expect(gated?.[0]).toEndWith(`for the frontier's cwd "/trees/z"`)
