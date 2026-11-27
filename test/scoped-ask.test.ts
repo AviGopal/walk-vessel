@@ -128,6 +128,32 @@ describe("a request asked for one call the root's newest row meets in part", () 
     expect(scoped(await all([onText, read])).map((c) => c.pointer.scope)).toEqual([{ call: "fs_edit", bound: { path } }])
   })
 
+  // the owner's preconditions on every change tool, as the seed writes them: one group, met by a wanted change or an open
+  // gap; neither is judged on a field of the row the ask is made over. The root is a gap: a later row of its gap_id
+  // closes it.
+  const wanted = (call: string): Row[] => [
+    { shape: "requires", id: `q-cw-${call}`, seq: 89996, role: "owner", for: call, needs: "change_wanted", where: { wanted: true } },
+    { shape: "requires", id: `q-gp-${call}`, seq: 89997, role: "owner", for: call, needs: "gap", where: { status: "open" }, latest_by: "gap_id" },
+  ]
+  const want = (w: boolean) => ({ shape: "change_wanted", id: `cw-${w}`, seq: 69505, role: "described", wanted: w, repo: "x", input_refs: [root] })
+  const gap = (status: string) => ({ ...f.root, id: `gp-${status}`, seq: 69506, status, input_refs: [root] })
+
+  test("[MUST-FAIL] a file read on a root that wants no change asks for no edit: no change wanted, or wanted false", async () => {
+    expect(scoped(await all([...wanted("fs_edit"), gap("closed"), read])).map((c) => c.pointer.scope.call)).toEqual([])
+    expect(scoped(await all([...wanted("fs_edit"), gap("closed"), want(false), read])).map((c) => c.pointer.scope.call)).toEqual([])
+    expect(scoped(await all([...wanted("code_replace_lines"), gap("closed"), lines])).map((c) => c.pointer.scope.call)).toEqual([])
+  })
+
+  test("[GUARD] a file read on a root that wants a change, or holds an open gap, is asked for the edit", async () => {
+    expect(scoped(await all([...wanted("fs_edit"), gap("closed"), want(true), read])).map((c) => c.pointer.scope.call)).toEqual(["fs_edit"])
+    expect(scoped(await all([...wanted("fs_edit"), gap("open"), read])).map((c) => c.pointer.scope.call)).toEqual(["fs_edit"])
+  })
+
+  test("[GUARD] an edit on a root whose gap is closed asks for no commit; while it is open, it does", async () => {
+    expect(scoped(await all([...wanted("git_commit"), gap("closed"), edit]))).toEqual([])
+    expect(scoped(await all([...wanted("git_commit"), gap("open"), edit])).map((c) => c.pointer.scope)).toEqual([{ call: "git_commit", bound: { cwd } }])
+  })
+
   test("[GUARD] a bound value that is not a string, number or boolean asks for nothing", async () => {
     expect(scoped(await all([{ ...edit, cwd: { at: cwd } }]))).toEqual([])
   })

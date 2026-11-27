@@ -380,14 +380,21 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   const pointerFields = (rs: Row[]): string[] => [...new Set(rs.flatMap((q) => Object.values((q.where ?? {}) as Record<string, unknown>)
     .flatMap((v) => typeof v === "object" && v !== null && "x-pointer" in v ? [String((v as { "x-pointer": unknown })["x-pointer"])] : [])))]
   const pointerBound = (rs: Row[]): boolean => pointerFields(rs).length > 0
+  // Which of a call's requires groups a question judges, over the one unmet reader. A group bound to a field the pointer
+  // does not fill (one a producer writes) is judged by no question here, only when the call is made.
+  // - judgedOnBound: every group whose pointer fields are all bound, so a group naming no field (a change wanted, an
+  //   open gap) is judged too. Whether a call is ASKED for: an ask is a model's spend for a call, never made for a call
+  //   the root does not want made.
+  // - judgedOnRow: only those of them naming the row's shape. Whether a call TAKES a row: a group on another shape (the
+  //   verdict a landing waits for, when the row is its diff) says when the call is made, not which row it takes.
+  const judgedOnBound = (pointer: Record<string, unknown>) => (rs: Row[]): boolean => pointerFields(rs).every((k) => pointer[k] !== undefined)
+  const judgedOnRow = (shape: string, pointer: Record<string, unknown>) => (rs: Row[]): boolean =>
+    rs.some((q) => String(q.needs) === shape) && judgedOnBound(pointer)(rs)
   // WHETHER A CALL TAKES A ROW OF ITS SHAPE NOW. The tools' consumes say which call takes a row; the owner's requires
-  // rows say when. A call takes the row only when every group of its requires rows naming the row's shape is met, judged
-  // on the pointer bound from the row: a group bound to a field the row does not fill (one a producer writes) is judged
-  // when the call is made, not here. One reading for the frontier's calls and for an ask scoped to a call, so a call is
-  // never listed as taking a row it would be refused an ask for: a refused verdict is no landing's, a clean clone no
-  // commit's.
+  // rows say when: every group judgedOnRow is met, on the pointer bound from the row. A refused verdict is no landing's,
+  // a clean clone no commit's.
   const heldOn = (call: string, shape: string, pointer: Record<string, unknown>): boolean =>
-    unmet(call, pointer, (rs) => rs.some((q) => String(q.needs) === shape) && pointerFields(rs).every((k) => pointer[k] !== undefined)).length === 0
+    unmet(call, pointer, judgedOnRow(shape, pointer)).length === 0
   note.frontier = frontierOf(frontierBefore(Number.POSITIVE_INFINITY))
   const frontierTarget = (rs: Row[]): Record<string, unknown> | undefined => {
     const fields = pointerFields(rs)
@@ -981,10 +988,11 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       if (before || !(await exists(type))) return []
       const vocab = declaredInputs()
       const { type: _t, ...args } = pointer
-      // the owner's preconditions on the call hold for an ask of it as for its taking the row (heldOn): a commit asked
-      // for in a clone with nothing in it to commit is not asked
+      // the owner's preconditions on the call hold for an ask of it, every group judgedOnBound (more than heldOn judges,
+      // so an ask is made only over a row the call takes): a commit asked for in a clone with nothing in it to commit is
+      // not asked, nor an edit on a root that wants no change
       if (vocab !== undefined && vocab !== null && lacking(vocab, type, args).length > 0) {
-        return heldOn(type, String(frontierRow.shape), pointer) ? scopedAsk(type, args, vocab) : []
+        return unmet(type, pointer, judgedOnBound(pointer)).length === 0 ? scopedAsk(type, args, vocab) : []
       }
       if (vocab !== undefined && callProblem(vocab, type, args) !== undefined) return []
       if (unmet(type, pointer).length > 0) return []
