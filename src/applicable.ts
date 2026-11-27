@@ -197,6 +197,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const spec = outsideSpec(v)
     if (spec !== undefined) return coveredBy(r, k, spec) === undefined
     const want = boundValue(v, pointer)
+    if (want === null) return r[k] === undefined || r[k] === null
     return want !== undefined && JSON.stringify(r[k]) === JSON.stringify(want)
   }
   // an input entry {shape, where} is here only when a row of its shape meets its where (an older tree's diff is not a
@@ -699,7 +700,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     // next choice (law 8). Once that produce has seen it, it is old; the next is said only after N more store rows.
     const takes = (r: Row): boolean => entries.some((e) => admits(e, r) &&
       Object.entries(((typeof e === "object" && e !== null ? (e as { where?: unknown }).where : undefined) ?? {}) as Record<string, unknown>)
-        .every(([k, v]) => JSON.stringify(r[k]) === JSON.stringify(v)))
+        .every(([k, v]) => fieldMeets(r, k, v, undefined)))
     const stalled = (r: Row): boolean => r.shape === FAILURE && r.role === WALK && r.kind === STALL && r.selection_ref === undefined && takes(r)
     // A restart row is news only as an install bearing on a held request (pending, below): read as any row of its shape,
     // every restart would make every root that reads it due again.
