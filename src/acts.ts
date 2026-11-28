@@ -16,7 +16,8 @@ export type Act = { tool: string; at_seq: number; ok: boolean; status?: number; 
 // A step this request keeps repeating with the same result over the same inputs: a call failing the same way, or a
 // produce judging the same thing the same way. n is how many times in a row, with nothing new in between or since.
 export type Repeat = { call?: string; produce?: string; on: string; outcome: string; n: number; since_seq: number }
-export type Acts = { root: string; acts: Act[]; not_called: string[]; repeats: Repeat[]; gated?: Record<string, string[]>
+export type TraceProjection = { sig: { in: string[]; out: string[] }; calls: Array<{ shape: string; pointer: Record<string, unknown> }> }
+export type Acts = { root: string; acts: Act[]; not_called: string[]; repeats: Repeat[]; gated?: Record<string, string[]>; trace_projection?: TraceProjection
   frontier?: { id: string; shape: string }; calls?: string[]; frontier_widened?: true
   path?: { call: string; calls: string[]; next: string[] }; no_path?: { call: string; broken: string[] } }
 // The route back from the call reaching the root, as a row says it: its calls and those callable now, or the links no
@@ -32,6 +33,92 @@ const pick = (r: Row | undefined): Partial<Act> => {
   if (r === undefined) return {}
   const s = (k: string): string | undefined => typeof r[k] === "string" && r[k] !== "" ? String(r[k]) : undefined
   return { ...(s("path") ? { path: s("path") } : {}), ...(s("repo") ? { repo: s("repo") } : {}), ...(s("sha") ?? s("commit") ? { sha: s("sha") ?? s("commit") } : {}) }
+}
+
+const TRACE_ROOT_GATES = new Set(["outcome", "land_verdict", "world_changed", "gap", "change_wanted", "request_acts"])
+const TRACE_OUT_FIELDS = ["cwd", "tree", "sha", "commit", "path", "repo"]
+const CALL_STRIP_KEYS = new Set(["type", "writer", "role", "selection_ref", "input_refs", "call_id"])
+
+// Mechanical trace projection for an open/closing root: turns >= 2 successful call steps into a clean,
+// placeholder-parameterized activity_template skeleton (replacing scratch /walk-trees/ paths via prior outputs).
+export const projectTraceTemplate = (pool: Row[], root: string): TraceProjection | undefined => {
+  const byId = new Map(pool.map((r) => [r.id, r]))
+  const rootRow = byId.get(root)
+  const mine = new Set(pool.filter((r) => r.shape === SELECTION && r.role === WALK && String(r.root) === root).map((r) => r.id))
+  const failedCalls = new Set(pool.filter((r) => r.shape === FAILURE && r.role === WALK && typeof r.call_id === "string").map((r) => String(r.call_id)))
+  const endedByCall = new Map(pool.filter((r) => r.shape === HOP && r.role === WALK && r.phase === ENDED && typeof r.call_id === "string").map((r) => [String(r.call_id), r]))
+  const answerByCall = new Map(pool.filter((r) => r.role === WALK && r.shape !== HOP && r.shape !== FAILURE && typeof r.call_id === "string").map((r) => [String(r.call_id), r]))
+  const starts = pool
+    .filter((r) => r.shape === HOP && r.role === WALK && r.phase === STARTED && (r.kind === CALL || r.kind === RUN) && mine.has(String(r.selection_ref)))
+    .filter((h) => !failedCalls.has(String(h.call_id)) && endedByCall.has(String(h.call_id)))
+    .sort((a, b) => a.seq - b.seq)
+  if (starts.length < 2) return undefined
+
+  const callArgsOf = (h: Row): Record<string, unknown> => {
+    if (typeof h.args === "object" && h.args !== null && !Array.isArray(h.args)) {
+      return h.args as Record<string, unknown>
+    }
+    const sel = byId.get(String(h.selection_ref))
+    const req = sel !== undefined && typeof sel.from === "string" ? byId.get(sel.from) : undefined
+    const ptr = req?.pointer
+    if (typeof ptr !== "object" || ptr === null || Array.isArray(ptr)) return {}
+    return Object.fromEntries(Object.entries(ptr as Record<string, unknown>).filter(([k]) => !CALL_STRIP_KEYS.has(k)))
+  }
+
+  const rootShape = typeof rootRow?.shape === "string" && rootRow.shape !== "" ? rootRow.shape : undefined
+  const sigIn = rootShape !== undefined ? [rootShape] : []
+  const rootRepo = typeof rootRow?.repo === "string" && rootRow.repo !== "" ? rootRow.repo : undefined
+  const sigOut: string[] = []
+  const outRecords: Array<Record<string, unknown>> = []
+  const calls: Array<{ shape: string; pointer: Record<string, unknown> }> = []
+
+  const replaceStr = (s: string, stepIdx: number): string => {
+    for (let k = stepIdx - 1; k >= 0; k--) {
+      const rec = outRecords[k]
+      const cwd = rec?.cwd
+      if (typeof cwd === "string" && cwd !== "") {
+        if (s === cwd) return `{{ calls.${k}.output.cwd }}`
+        if (s.startsWith(`${cwd}/`)) return `{{ calls.${k}.output.cwd }}${s.slice(cwd.length)}`
+      }
+      for (const f of TRACE_OUT_FIELDS) {
+        const val = rec?.[f]
+        if (typeof val === "string" && val !== "" && s === val) return `{{ calls.${k}.output.${f} }}`
+      }
+    }
+    if (sigIn.length > 0 && rootRepo !== undefined && s === rootRepo) return "{{ sig.in[0].repo }}"
+    return s
+  }
+  const replaceVal = (v: unknown, stepIdx: number): unknown => {
+    if (typeof v === "string") return replaceStr(v, stepIdx)
+    if (Array.isArray(v)) return v.map((x) => replaceVal(x, stepIdx))
+    if (typeof v === "object" && v !== null) {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, val]) => [k, replaceVal(val, stepIdx)]))
+    }
+    return v
+  }
+
+  for (let i = 0; i < starts.length; i++) {
+    const h = starts[i]
+    const cid = String(h.call_id)
+    const endH = endedByCall.get(cid)
+    const ans = answerByCall.get(cid)
+    const rawArgs = callArgsOf(h)
+    const boundPtr = replaceVal(rawArgs, i) as Record<string, unknown>
+    calls.push({ shape: String(h.pointer_type), pointer: boundPtr })
+    const outObj = {
+      ...(typeof endH?.output === "object" && endH.output !== null && !Array.isArray(endH.output) ? (endH.output as Record<string, unknown>) : {}),
+      ...(ans ?? {}),
+    }
+    outRecords.push(outObj)
+    const ansShape = typeof ans?.shape === "string" ? ans.shape : undefined
+    if (ansShape !== undefined && !TRACE_ROOT_GATES.has(ansShape) && !sigOut.includes(ansShape)) sigOut.push(ansShape)
+  }
+
+  if (sigOut.length === 0) return undefined
+  // Reject if unparameterizable scratch paths remain after projection
+  const serialized = JSON.stringify(calls)
+  if (serialized.includes("/walk-trees/") || serialized.includes("/tmp/")) return undefined
+  return { sig: { in: sigIn, out: sigOut }, calls }
 }
 
 // The acts on `root`, from its pool. Which tools are acts is the owner's word: the tools its requires rows gate on a
@@ -54,7 +141,8 @@ export const actsOf = (pool: Row[], root: string): Acts => {
     return { tool: String(h.pointer_type), at_seq: h.seq, ok, ...(failed && typeof failed.status === "number" ? { status: failed.status } : {}), ...pick(answer) }
   })
   const called = new Set(acts.map((a) => a.tool))
-  return { root, acts, not_called: tools.filter((t) => !called.has(t)), repeats: repeatsOf(pool, mine) }
+  const projection = projectTraceTemplate(pool, root)
+  return { root, acts, not_called: tools.filter((t) => !called.has(t)), repeats: repeatsOf(pool, mine), ...(projection !== undefined ? { trace_projection: projection } : {}) }
 }
 
 // The fact row to hand a produce on `root`: the latest one the walk wrote for it, when it still says the same; else a
@@ -67,7 +155,7 @@ export const actsOf = (pool: Row[], root: string): Acts => {
 export const actsFactRow = async (pool: Row[], root: string, write: (row: object) => Promise<Row>, sel?: string, gated: Record<string, string[]> = {}, frontier?: Frontier, path?: Path): Promise<string | undefined> => {
   const now = { ...actsOf(pool, root), gated, ...(frontier !== undefined ? frontierFields(frontier) : {}), ...(path !== undefined ? pathFields(path) : {}) }
   const last = pool.filter((r) => r.shape === REQUEST_ACTS && r.role === WALK && String(r.root) === root).sort((a, b) => a.seq - b.seq).at(-1)
-  const scope = (x: Partial<Acts>) => ({ frontier: x.frontier ?? null, calls: x.calls ?? null, widened: x.frontier_widened ?? null, path: x.path ?? null, no_path: x.no_path ?? null })
+  const scope = (x: Partial<Acts>) => ({ frontier: x.frontier ?? null, calls: x.calls ?? null, widened: x.frontier_widened ?? null, path: x.path ?? null, no_path: x.no_path ?? null, trace_projection: x.trace_projection ?? null })
   const same = last !== undefined && JSON.stringify({ acts: last.acts, not_called: last.not_called, repeats: last.repeats ?? [], gated: last.gated ?? {}, ...scope(last as Partial<Acts>) }) ===
     JSON.stringify({ acts: now.acts, not_called: now.not_called, repeats: now.repeats, gated: now.gated, ...scope(now) })
   if (same) return last.id

@@ -532,9 +532,14 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       groupsFor(c).every((rs) => groupMet(rs, rs.some(hasWhere) ? since : undefined)))) }
   }
   const rootKind = note.root === undefined ? undefined : byId.get(note.root)?.shape
+  const newestCw = pool
+    .filter((r) => r.shape === "change_wanted" && (note.root === undefined || r.root === undefined || String(r.root) === note.root))
+    .sort((a, b) => a.seq - b.seq)
+    .at(-1)
+  const suppressGapLandRoute = rootKind === "gap" && newestCw?.wanted === false
   const reachedBy = rootKind === undefined ? undefined : pool.filter((r) => r.shape === CREDITS && r.role === OWNER && String(r.target) === String(rootKind))
     .sort((a, b) => a.seq - b.seq).at(-1)?.by_call
-  if (typeof reachedBy === "string" && reachedBy !== "") note.path = pathFor(reachedBy)
+  if (typeof reachedBy === "string" && reachedBy !== "" && !suppressGapLandRoute) note.path = pathFor(reachedBy)
   // A call whose failure records stamped as blaming the request (the vessel refused what was asked) also carries what
   // came back: the reason, often the fact the next try needs ("the closest real text is ..."). Like a call that ended, it
   // is new information for a schema that reads failures, and it settles the request that made the call: the same pointer
@@ -1075,7 +1080,7 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
   // template that replayed a stored answer row as its pointer) is refused every time, so it is not run either, and is
   // named the same way, as "<shape> (no channel)".
   const produced = new Set(schemas.map((s) => String(s.target)))
-  const unserved = await Promise.all(templates.map(async (_r, i) => {
+  const unservedParts = await Promise.all(templates.map(async (_r, i) => {
     const { leaves, invalid } = walked[i]
     const shapes = [...new Set(leaves.map((c) => c.shape))]
     const served = await Promise.all(shapes.map(exists))
@@ -1086,14 +1091,19 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const vocab = declaredInputs()
     const undeclared = vocab === undefined ? [] : [...new Set(leaves.filter((c) => !produced.has(c.shape))
       .filter((c) => vocab === null || !(c.shape in vocab)).map((c) => vocab === null ? `${c.shape}: the declared inputs could not be read, so no call is made` : `${c.shape}: no declared inputs`))]
-    return [
+    const nonPrecondition = [
       ...(invalid ? [INVALID_TPL_REF] : []),
       ...shapes.filter((_, j) => !served[j]),
       ...channelless,
-      ...new Set(leaves.flatMap((c) => unmet(c.shape, c.pointer))),
       ...undeclared,
     ]
+    const reasons = [
+      ...nonPrecondition,
+      ...new Set(leaves.flatMap((c) => unmet(c.shape, c.pointer))),
+    ]
+    return { reasons, hasNonPrecondition: nonPrecondition.length > 0 }
   }))
+  const unserved = unservedParts.map((u) => u.reasons)
   // A template whose calls name a field of one of its inputs is run only where this request has that field: its
   // placeholders are filled from the request's own rows (bind.ts). One that cannot be filled here is not run, and the
   // skip says which placeholder and which field is missing, so its writer can see it. A placeholder naming an earlier
@@ -1165,6 +1175,27 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     }
     return [...new Set(out)]
   }
+  const route = note.path
+  const routeShapes = route !== undefined && "calls" in route
+    ? new Set<string>([
+      ...route.calls.map((c) => answers[c]).filter((x): x is string => typeof x === "string" && x !== ""),
+      ...reqs.filter((q) => route.calls.includes(String(q.for))).map((q) => String(q.needs)).filter((s) => s !== ""),
+      ...schemas.flatMap((s) => [s.inputs].flat().map(shapeOf)).filter((s) => s !== ""),
+    ])
+    : new Set<string>()
+  const sigOutMatchesRoute = (r: Row): boolean => {
+    const out = Array.isArray((r.sig as { out?: unknown } | undefined)?.out) ? ((r.sig as { out: string[] }).out) : []
+    if (out.length === 0 || routeShapes.size === 0) return true
+    return out.some((s) => routeShapes.has(s))
+  }
+  const onRoute = (r: Row, i: number): boolean =>
+    !(route !== undefined && "calls" in route) || (walked[i].leaves.some((c) => route.calls.includes(c.shape)) && sigOutMatchesRoute(r))
+  const isSharedSuppressedSkip = (r: Row, i: number, unboundReasons: string[]): boolean => {
+    if (note.shared?.has(r.id) !== true || scheduled.has(r.id)) return false
+    if (!onRoute(r, i)) return true
+    return !unservedParts[i].hasNonPrecondition && unboundReasons.every((w) => w.endsWith("this request has no such field"))
+  }
+
   const unbound = templates.map((r, i) => unboundIn(r.calls as Inner[], inputs[i], new Set([r.id]), 0))
   templates.forEach((r, i) => {
     // A request holding clones of more than one repo binds only a template that names which (bind.ts inputsOf).
@@ -1180,9 +1211,10 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
       }
       return repos.size > 1 ? `more than one ${shape} (${[...repos].sort().join(", ")}), and the template names no repo` : "this request has no such field"
     }
-    const why = [...unserved[i], ...unbound[i].map((p) => `unbound {{ ${p} }}: ${which(p)}`)]
+    const unboundReasons = unbound[i].map((p) => `unbound {{ ${p} }}: ${which(p)}`)
+    const why = [...unserved[i], ...unboundReasons]
     const behind = refsOfReasons(why)
-    if (why.length > 0) skipped.push({ id: r.id, unserved: why, ...(unbound[i].length > 0 ? { unbound: unbound[i] } : {}), ...(behind.length > 0 ? { against_refs: behind } : {}) })
+    if (why.length > 0 && !isSharedSuppressedSkip(r, i, unboundReasons)) skipped.push({ id: r.id, unserved: why, ...(unbound[i].length > 0 ? { unbound: unbound[i] } : {}), ...(behind.length > 0 ? { against_refs: behind } : {}) })
   })
   // A template already run in this root, whose run did not fail, is not run again until a row of a shape it takes in
   // (its sig.in) comes after that run from someone other than the walk: over the same inputs it would make the same
@@ -1233,11 +1265,9 @@ export const applicable = async (pool: Row[], skipped: Skipped[] = [], now = Dat
     const lastSeq = answeredRuns.get(JSON.stringify(calls.map((c, k) => callKey(c.shape, bound[k].value))))
     return lastSeq !== undefined && !pool.some((x) => x.seq > lastSeq && takesIn(r)(x))
   }
-  // On a routed root (note.path carries route.calls), unscheduled templates are offered only when their calls touch
-  // the route (recursing into nested activity_template children); scheduled rhythm templates and unrouted roots stay
-  // governed by their existing rules.
-  const route = note.path
-  const onRoute = (_r: Row, i: number): boolean => !(route !== undefined && "calls" in route) || walked[i].leaves.some((c) => route.calls.includes(c.shape))
+  // On a routed root (note.path carries route.calls), unscheduled templates are offered only when both their calls
+  // touch the route and their sig.out intersects unmet frontier/route shapes; scheduled rhythm templates and unrouted
+  // roots stay governed by their existing rules.
   const run = templates
     .map((r, i) => ({ r, i }))
     .filter(({ i }) => unserved[i].length === 0 && unbound[i].length === 0)

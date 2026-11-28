@@ -138,19 +138,83 @@ export const noPathWeight = (shared: Row[]): number => {
 }
 export const rootWeight = (options: Array<{ root: string; path?: Path }>, root: string, w: number): number =>
   options.some((o) => o.root === root && noRoute(o)) ? w : 1
+export type RootMeta = { role?: string; demandCount?: number; remSteps?: number }
+export const sliceHopsOf = (shared: Row[]): number => {
+  const n = shared.filter((r) => r.role === OWNER && r.shape === STALL_RULE).sort((a, b) => a.seq - b.seq).at(-1)?.slice_hops
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 ? n : 1
+}
+
+export const rootPriorityWeight = (
+  options: Array<{ root: string; path?: Path }>,
+  movePosts: Post[],
+  root: string,
+  w: number,
+  rootPosts?: Map<string, Post>,
+  rootMetas?: Map<string, RootMeta>,
+): number => {
+  const baseW = rootWeight(options, root, w)
+  if (rootPosts === undefined && rootMetas === undefined) return baseW
+  const rp = rootPosts?.get(root) ?? { alpha: 1, beta: 1 }
+  const rpTot = rp.alpha + rp.beta
+  const pHat = rpTot > 0 ? rp.alpha / rpTot : 0.5
+  const sigma = rpTot > 0 ? Math.sqrt((pHat * (1 - pHat)) / (rpTot + 1)) : 0.5
+  const idsFactor = pHat + sigma
+  const meta = rootMetas?.get(root)
+  const askerBoost = meta?.role === "person" ? 4 : 1
+  const demandMass = 1 + Math.log1p(Math.max(0, meta?.demandCount ?? 0))
+  const itsMoves = options.flatMap((o, idx) => (o.root === root ? [movePosts[idx]] : [])).filter((p): p is Post => p !== undefined)
+  const bestMoveP = itsMoves.length > 0
+    ? Math.max(...itsMoves.map((p) => (p.alpha + p.beta > 0 ? p.alpha / (p.alpha + p.beta) : 0.5)))
+    : pHat
+  const rem = Math.max(0, Math.min(6, meta?.remSteps ?? 0))
+  const reachPotential = Math.pow(Math.max(0.25, bestMoveP), rem)
+  return Math.max(1e-2, baseW * askerBoost * idsFactor * demandMass * reachPotential)
+}
+
+export type RootLease = { root: string; remaining: number; seenPersonMaxSeq: number }
+export const nextLeaseState = (
+  prev: RootLease | undefined,
+  roots: Array<{ root: Row; rows: Row[]; dues?: number[] }>,
+  options: Option[],
+  sliceHops: number,
+  now: number,
+): { activeLease?: string; seenPersonMaxSeq: number } => {
+  const personMaxSeq = Math.max(0, ...roots.filter(({ root }) => root.role === "person").map(({ root }) => root.seq))
+  const anyOverdue = roots.some(({ dues }) => (dues ?? []).some((at) => at <= now))
+  const valid = prev !== undefined &&
+    prev.remaining > 0 &&
+    sliceHops > 1 &&
+    personMaxSeq <= prev.seenPersonMaxSeq &&
+    !anyOverdue &&
+    options.some((o) => o.root === prev.root && o.cand.kind !== WAIT_FOR)
+  return { ...(valid ? { activeLease: prev.root } : {}), seenPersonMaxSeq: personMaxSeq }
+}
+
 const SCALE = 2 ** 30
 /**
- * Which option to take: a root first, uniformly among the roots with a move (one with no route at its weight, above),
- * then a move within it by its posterior. A
- * root whose many cells score well cannot take every draw from one with a single move, and every root is drawn. Both
- * from the seed the selection records, so the choice can be replayed.
+ * Which option to take: a root first (honoring active continuity lease, else weighted by IDS x demand x reachability
+ * when root posteriors/meta are given, falling back identically to uniform/no-path weights when omitted), then a move
+ * within it by its posterior. Both from the seed the selection records, so the choice can be replayed.
  */
-export const choose = (seed: number, options: Array<{ root: string; path?: Path }>, posts: Post[], w = 1): number => {
+export const choose = (
+  seed: number,
+  options: Array<{ root: string; path?: Path }>,
+  posts: Post[],
+  w = 1,
+  rootPosts?: Map<string, Post>,
+  rootMetas?: Map<string, RootMeta>,
+  leasedRoot?: string,
+): number => {
   const roots = [...new Set(options.map((o) => o.root))]
-  const weights = roots.map((r) => rootWeight(options, r, w))
-  const total = weights.reduce((a, b) => a + b, 0)
-  let x = (pick(seed, SCALE) / SCALE) * total
-  const root = roots.find((_, j) => (x -= weights[j]) < 0) ?? roots[roots.length - 1]
+  let root: string
+  if (leasedRoot !== undefined && roots.includes(leasedRoot)) {
+    root = leasedRoot
+  } else {
+    const weights = roots.map((r) => rootPriorityWeight(options, posts, r, w, rootPosts, rootMetas))
+    const total = weights.reduce((a, b) => a + b, 0)
+    let x = (pick(seed, SCALE) / SCALE) * total
+    root = roots.find((_, j) => (x -= weights[j]) < 0) ?? roots[roots.length - 1]
+  }
   const its = options.flatMap((o, j) => (o.root === root ? [j] : []))
   return its[draw(seed, its.map((j) => posts[j]))]
 }
@@ -174,6 +238,7 @@ export const isEpisodes = (a: unknown): boolean =>
   Array.isArray(a) || (isObject(a) && Array.isArray(a.roots) && Array.isArray(a.shared))
 export const isPosterior = (cells: number) => (a: unknown): boolean =>
   isObject(a) && typeof a.at_seq === "number" && Number.isFinite(a.at_seq) && Array.isArray(a.posts) && a.posts.length === cells
+const pickRootPosts = ({ posts: list }: { posts?: Post[] }): Post[] => Array.isArray(list) ? list : []
 const SAY_EVERY_MS = 20_000
 export { READ_WAIT_MS }
 // What an answer was, without its values: a list and its length, an object's keys, or its type.
@@ -209,7 +274,16 @@ export type Timing = { episodes_ms: number; episodes_reads: number; choices_ms: 
  * records compares reads it (the cell and its context, pool_refs, input_refs, a, from, root), so two ticks that differ
  * only in how long they took make the same choice look the same.
  */
-export const selectionRow = (arm: string, options: Option[], post: { at_seq: number; posts: Post[] }, seed: number, i: number, timing: Timing, w = 1): Record<string, unknown> => {
+export const selectionRow = (
+  arm: string,
+  options: Option[],
+  post: { at_seq: number; posts: Post[] },
+  seed: number,
+  i: number,
+  timing: Timing,
+  w = 1,
+  leasedRoot?: string,
+): Record<string, unknown> => {
   const { cand: a, context, root } = options[i]
   return {
     shape: SELECTION,
@@ -231,6 +305,7 @@ export const selectionRow = (arm: string, options: Option[], post: { at_seq: num
     cell_scheme: "reads",
     root,
     ...(options[i].rootCell !== undefined ? { root_cell: options[i].rootCell } : {}),
+    ...(leasedRoot !== undefined && root === leasedRoot ? { leased_root: leasedRoot } : {}),
     // A root with no route, and the weight it was drawn under, so the lean is on the row it changed.
     ...(noRoute(options[i]) ? { no_path: true, root_weight: rootWeight(options, root, w) } : {}),
     // The root's newest made row and the calls that take it (applicable.ts), so what a request was allowed is on the row.
@@ -403,11 +478,19 @@ export const tickStalls = (shared: Row[], roots: Array<{ root: Row; rows: Row[] 
 // The tick's draw and the row recording it, at the owner's no-route weight: what chain() writes, so the wiring of the
 // weight into the draw and of the route marks into the row is the one tested.
 // The draw's own time is counted from drawStart, after the draw.
-export const drawn = (arm: string, shared: Row[], options: Option[], post: { at_seq: number; posts: Post[] }, seed: number,
-  timing: Omit<Timing, "draw_ms">, drawStart = performance.now()): { i: number; row: Record<string, unknown> } => {
+export const drawn = (
+  arm: string,
+  shared: Row[],
+  options: Option[],
+  post: { at_seq: number; posts: Post[] },
+  seed: number,
+  timing: Omit<Timing, "draw_ms">,
+  drawStart = performance.now(),
+  extra?: { rootPosts?: Map<string, Post>; rootMetas?: Map<string, RootMeta>; leasedRoot?: string },
+): { i: number; row: Record<string, unknown> } => {
   const w = noPathWeight(shared)
-  const i = choose(seed, options, post.posts, w)
-  return { i, row: selectionRow(arm, options, post, seed, i, { ...timing, draw_ms: Math.round(performance.now() - drawStart) }, w) }
+  const i = choose(seed, options, post.posts, w, extra?.rootPosts, extra?.rootMetas, extra?.leasedRoot)
+  return { i, row: selectionRow(arm, options, post, seed, i, { ...timing, draw_ms: Math.round(performance.now() - drawStart) }, w, extra?.leasedRoot) }
 }
 // What a drawn produce is shown of its request (acts.ts), from the option the draw took: its gates, frontier and route.
 export const factOf = (o: Option, write: (row: object) => Promise<Row>, sel: string): Promise<string | undefined> =>
@@ -422,6 +505,7 @@ export const chain = async (): Promise<void> => {
   let head: number | undefined
   // whether this tick's read follows one that wrote held reasons (below)
   let reread = false
+  let lease: RootLease | undefined
   while (!stopped()) {
     // Each part of the tick is timed and each read's tries counted, so where a tick's time goes is on its row.
     const ms = (t0: number) => Math.round(performance.now() - t0)
@@ -451,19 +535,55 @@ export const chain = async (): Promise<void> => {
     reread = wrote > 0
     if (reread) continue
     const cells = options.map((o) => o.cell)
+    const rootCells = [...new Set(options.map((o) => o.rootCell).filter((x): x is string => typeof x === "string"))]
     const t2 = performance.now()
     const post = (await readUntil(() => { posteriorReads++; return loopCall(POSTERIOR, { cells, as_of_seq: asOf }) }, isPosterior(cells.length), "posterior")) as
       { at_seq: number; posts: Post[] } | undefined
     if (post === undefined) return
     head = post.at_seq
+    let rootPosts: Map<string, Post> | undefined
+    if (rootCells.length > 0 && roots.length > 1) {
+      const rpAns = await loopCall(POSTERIOR, { cells: rootCells, as_of_seq: asOf }).catch(() => undefined)
+      if (rpAns !== undefined && isPosterior(rootCells.length)(rpAns)) {
+        const rpList = pickRootPosts(rpAns as { posts?: Post[] })
+        const rootCellIdx = new Map(rootCells.map((rc, idx) => [rc, rpList[idx]]))
+        rootPosts = new Map<string, Post>()
+        for (const o of options) {
+          if (o.rootCell !== undefined && !rootPosts.has(o.root)) {
+            const rp = rootCellIdx.get(o.rootCell)
+            if (rp !== undefined) rootPosts.set(o.root, rp)
+          }
+        }
+      }
+    }
     const posteriorMs = ms(t2)
+    const rootMetas = new Map<string, RootMeta>()
+    for (const { root, rows } of roots) {
+      const optPath = options.find((o) => o.root === root.id && o.path !== undefined)?.path
+      const metaObj = typeof root.meta === "object" && root.meta !== null ? (root.meta as Record<string, unknown>) : undefined
+      const metaCount = Number(metaObj?.count ?? metaObj?.distinct_roots ?? 0)
+      const citedDemand = Array.isArray(root.input_refs) ? root.input_refs.length : 0
+      const dupRows = rows.filter((x) => x.shape === root.shape && x.id !== root.id).length
+      const demandCount = (Number.isFinite(metaCount) ? metaCount : 0) + citedDemand + dupRows
+      const remSteps = optPath !== undefined && "calls" in optPath
+        ? Math.max(0, optPath.calls.length - optPath.next.length)
+        : optPath !== undefined && "broken" in optPath ? 6 : 2
+      rootMetas.set(root.id, { role: String(root.role), demandCount, remSteps })
+    }
+    const sliceHops = sliceHopsOf(shared)
+    const leaseState = nextLeaseState(lease, roots, options, sliceHops, now)
     const t3 = performance.now()
     const seed = Date.now() >>> 0
     const { i, row } = drawn(arm, shared, options, post, seed, {
       episodes_ms: episodesMs, episodes_reads: episodesReads, choices_ms: choicesMs, posterior_ms: posteriorMs,
       posterior_reads: posteriorReads, cands: options.length, cells: new Set(cells).size,
-    }, t3)
+    }, t3, { rootPosts, rootMetas, leasedRoot: leaseState.activeLease })
     const { cand: a, pool, skipped } = options[i]
+    const chosenRoot = options[i].root
+    const remLease = leaseState.activeLease === chosenRoot ? (lease!.remaining - 1) : (sliceHops - 1)
+    lease = sliceHops > 1 && remLease > 0 && a.kind !== WAIT_FOR
+      ? { root: chosenRoot, remaining: remLease, seenPersonMaxSeq: leaseState.seenPersonMaxSeq }
+      : undefined
     const sel = await writeRow(row)
     await recordSkipped(pool, skipped, sel)
     // No selection_ref on a stall row: the tick's selection is another root's move, and records reads a walk failure's
